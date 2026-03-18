@@ -1,6 +1,8 @@
-from datetime import datetime
+from datetime import datetime, timedelta
+import json
+from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session, selectinload
@@ -9,16 +11,25 @@ from app.core.security import get_current_user
 from app.db import get_db
 from app.models import (
     GameRun,
+    InventoryLot,
     LogisticsShipment,
     LogisticsShipmentOrder,
     MarketProduct,
     ProcurementOrder,
     ProcurementOrderItem,
+    SimBuyerProfile,
+    ShopeeOrderGenerationLog,
     User,
+    WarehouseInboundOrder,
+    WarehouseLandmark,
+    WarehouseStrategy,
 )
+from app.services.shopee_order_simulator import simulate_orders_for_run
 
 
 router = APIRouter(prefix="/game", tags=["game"])
+REAL_SECONDS_PER_GAME_DAY = 30 * 60
+BOOKED_SECONDS = 10
 
 
 class CreateRunRequest(BaseModel):
@@ -47,6 +58,7 @@ class ProcurementSummaryResponse(BaseModel):
     total_cash: int
     spent_total: int
     logistics_spent_total: int
+    warehouse_spent_total: int
     remaining_cash: int
 
 
@@ -116,7 +128,378 @@ class LogisticsCreateShipmentResponse(BaseModel):
     total_fee: int
     spent_total: int
     logistics_spent_total: int
+    warehouse_spent_total: int
     remaining_cash: int
+
+
+class WarehouseInboundCandidateItem(BaseModel):
+    shipment_id: int
+    cargo_value: int
+    total_quantity: int
+    created_at: datetime
+    forwarder_label: str
+    customs_label: str
+    status: str
+
+
+class WarehouseInboundCandidatesResponse(BaseModel):
+    candidates: list[WarehouseInboundCandidateItem]
+
+
+class WarehouseOptionsResponse(BaseModel):
+    warehouse_modes: list[dict]
+    warehouse_locations: list[dict]
+
+
+class WarehouseLandmarkPointResponse(BaseModel):
+    point_code: str
+    point_name: str
+    warehouse_mode: str
+    warehouse_location: str
+    lng: float
+    lat: float
+    sort_order: int
+
+
+class WarehouseLandmarksResponse(BaseModel):
+    market: str
+    points: list[WarehouseLandmarkPointResponse]
+
+
+class WarehouseStrategyCreateRequest(BaseModel):
+    warehouse_mode: str = Field(min_length=2, max_length=32)
+    warehouse_location: str = Field(min_length=2, max_length=32)
+
+
+class WarehouseStrategyResponse(BaseModel):
+    id: int
+    warehouse_mode: str
+    warehouse_location: str
+    one_time_cost: int
+    inbound_cost: int
+    rent_cost: int
+    total_cost: int
+    delivery_eta_score: int
+    fulfillment_accuracy: float
+    warehouse_cost_per_order: int
+    created_at: datetime
+
+
+class WarehouseCreateStrategyResponse(BaseModel):
+    strategy: WarehouseStrategyResponse
+    remaining_cash: int
+
+
+class WarehouseInboundRequest(BaseModel):
+    # 按文档保留接口结构；V1 默认空则代表一次性入全部可入仓物流单
+    shipment_ids: list[int] = Field(default_factory=list, max_length=500)
+
+
+class WarehouseInboundResponse(BaseModel):
+    inbound_count: int
+    shipment_ids: list[int]
+    inventory_lot_count: int
+    remaining_cash: int
+
+
+class WarehouseSummaryResponse(BaseModel):
+    strategy: WarehouseStrategyResponse | None
+    pending_inbound_count: int
+    completed_inbound_count: int
+    inventory_total_quantity: int
+    inventory_total_sku: int
+
+
+class AdminBuyerPoolProfileResponse(BaseModel):
+    id: int
+    buyer_code: str
+    nickname: str
+    gender: str | None
+    age: int | None
+    city: str | None
+    occupation: str | None
+    background: str | None
+    preferred_categories: list[str]
+    base_buy_intent: float
+    price_sensitivity: float
+    quality_sensitivity: float
+    brand_sensitivity: float
+    impulse_level: float
+    purchase_power: float
+    current_hour_active_prob: float
+    current_hour_order_intent_prob: float
+    peak_hour: int
+
+
+class AdminBuyerPoolOverviewResponse(BaseModel):
+    selected_run_id: int | None
+    selected_run_status: str | None
+    selected_run_market: str | None
+    selected_run_username: str | None
+    selected_run_day_index: int | None
+    selected_run_created_at: datetime | None
+    server_time: datetime
+    game_clock: str
+    game_hour: int
+    game_minute: int
+    buyer_count: int
+    currently_active_estimate: float
+    expected_orders_per_hour: float
+    profiles: list[AdminBuyerPoolProfileResponse]
+
+
+class AdminRunOptionResponse(BaseModel):
+    run_id: int
+    user_id: int
+    username: str
+    status: str
+    market: str
+    day_index: int
+    created_at: datetime
+
+
+class AdminRunOptionsResponse(BaseModel):
+    runs: list[AdminRunOptionResponse]
+
+
+class AdminSimulateOrdersResponse(BaseModel):
+    tick_time: datetime
+    active_buyer_count: int
+    candidate_product_count: int
+    generated_order_count: int
+    skip_reasons: dict[str, int] = Field(default_factory=dict)
+    shop_context: dict[str, Any] = Field(default_factory=dict)
+    buyer_journeys: list[dict[str, Any]] = Field(default_factory=list)
+
+
+def _require_super_admin_or_403(current_user: dict):
+    if (current_user.get("role") or "").strip() != "super_admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="仅超级管理员可访问")
+
+
+def _parse_float_list(raw_json: str, expected_len: int, fallback: float) -> list[float]:
+    try:
+        raw = json.loads(raw_json or "[]")
+    except Exception:
+        raw = []
+    if not isinstance(raw, list):
+        raw = []
+    values = []
+    for i in range(expected_len):
+        item = raw[i] if i < len(raw) else fallback
+        try:
+            num = float(item)
+        except Exception:
+            num = fallback
+        values.append(max(0.0, min(1.0, num)))
+    return values
+
+
+def _parse_str_list(raw_json: str) -> list[str]:
+    try:
+        raw = json.loads(raw_json or "[]")
+    except Exception:
+        return []
+    if not isinstance(raw, list):
+        return []
+    result: list[str] = []
+    for item in raw:
+        text = str(item).strip()
+        if text:
+            result.append(text)
+    return result
+
+
+@router.get("/admin/buyer-pool/overview", response_model=AdminBuyerPoolOverviewResponse)
+def get_admin_buyer_pool_overview(
+    run_id: int | None = Query(default=None),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> AdminBuyerPoolOverviewResponse:
+    _require_super_admin_or_403(current_user)
+
+    selected_run: GameRun | None = None
+    selected_run_username: str | None = None
+    if run_id is not None:
+        selected_run = db.query(GameRun).filter(GameRun.id == run_id).first()
+        if not selected_run:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
+    else:
+        selected_run = db.query(GameRun).order_by(GameRun.id.desc()).first()
+    if selected_run:
+        selected_run_username = (
+            db.query(User.username).filter(User.id == selected_run.user_id).scalar()
+        )
+
+    now = datetime.now()
+    if selected_run:
+        run_created = selected_run.created_at
+        elapsed_seconds = max(0, int((now - run_created).total_seconds()))
+        total_real_seconds = 7 * 24 * 60 * 60
+        game_day_float = (elapsed_seconds / total_real_seconds) * 365 + 1
+        frac = game_day_float - int(game_day_float)
+        seconds_of_day = max(0, int(frac * 24 * 60 * 60))
+    else:
+        seconds_of_day = now.hour * 3600 + now.minute * 60 + now.second
+    game_minutes = seconds_of_day % (24 * 60)
+    game_hour = game_minutes // 60
+    game_minute = game_minutes % 60
+    game_clock = f"{game_hour:02d}:{game_minute:02d}:{now.second:02d}"
+
+    rows = (
+        db.query(SimBuyerProfile)
+        .filter(SimBuyerProfile.is_active == True)
+        .order_by(SimBuyerProfile.buyer_code.asc())
+        .all()
+    )
+
+    profiles: list[AdminBuyerPoolProfileResponse] = []
+    currently_active_estimate = 0.0
+    expected_orders_per_hour = 0.0
+
+    for row in rows:
+        active_hours = _parse_float_list(row.active_hours_json, 24, 0.05)
+        current_hour_active = active_hours[game_hour]
+        peak_hour = max(range(24), key=lambda i: active_hours[i])
+        base_intent = max(0.0, min(1.0, float(row.base_buy_intent or 0.0)))
+        current_hour_order_intent = max(0.0, min(1.0, current_hour_active * base_intent))
+
+        currently_active_estimate += current_hour_active
+        expected_orders_per_hour += current_hour_order_intent
+
+        profiles.append(
+            AdminBuyerPoolProfileResponse(
+                id=row.id,
+                buyer_code=row.buyer_code,
+                nickname=row.nickname,
+                gender=row.gender,
+                age=row.age,
+                city=row.city,
+                occupation=row.occupation,
+                background=row.background,
+                preferred_categories=_parse_str_list(row.preferred_categories_json),
+                base_buy_intent=base_intent,
+                price_sensitivity=max(0.0, min(1.0, float(row.price_sensitivity or 0.0))),
+                quality_sensitivity=max(0.0, min(1.0, float(row.quality_sensitivity or 0.0))),
+                brand_sensitivity=max(0.0, min(1.0, float(row.brand_sensitivity or 0.0))),
+                impulse_level=max(0.0, min(1.0, float(row.impulse_level or 0.0))),
+                purchase_power=max(0.0, min(1.0, float(row.purchase_power or 0.0))),
+                current_hour_active_prob=current_hour_active,
+                current_hour_order_intent_prob=current_hour_order_intent,
+                peak_hour=peak_hour,
+            )
+        )
+
+    return AdminBuyerPoolOverviewResponse(
+        selected_run_id=selected_run.id if selected_run else None,
+        selected_run_status=selected_run.status if selected_run else None,
+        selected_run_market=selected_run.market if selected_run else None,
+        selected_run_username=selected_run_username,
+        selected_run_day_index=selected_run.day_index if selected_run else None,
+        selected_run_created_at=selected_run.created_at if selected_run else None,
+        server_time=now,
+        game_clock=game_clock,
+        game_hour=game_hour,
+        game_minute=game_minute,
+        buyer_count=len(profiles),
+        currently_active_estimate=round(currently_active_estimate, 3),
+        expected_orders_per_hour=round(expected_orders_per_hour, 3),
+        profiles=profiles,
+    )
+
+
+@router.get("/admin/runs/options", response_model=AdminRunOptionsResponse)
+def get_admin_run_options(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> AdminRunOptionsResponse:
+    _require_super_admin_or_403(current_user)
+
+    rows = (
+        db.query(GameRun, User.username)
+        .join(User, User.id == GameRun.user_id)
+        .order_by(GameRun.id.desc())
+        .limit(200)
+        .all()
+    )
+    runs = [
+        AdminRunOptionResponse(
+            run_id=run.id,
+            user_id=run.user_id,
+            username=username,
+            status=run.status,
+            market=run.market,
+            day_index=run.day_index,
+            created_at=run.created_at,
+        )
+        for run, username in rows
+    ]
+    return AdminRunOptionsResponse(runs=runs)
+
+
+@router.post("/admin/runs/{run_id}/orders/simulate", response_model=AdminSimulateOrdersResponse)
+def admin_simulate_orders(
+    run_id: int,
+    tick_time: datetime | None = None,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> AdminSimulateOrdersResponse:
+    _require_super_admin_or_403(current_user)
+    run = db.query(GameRun).filter(GameRun.id == run_id).first()
+    if not run:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
+    if (run.status or "").strip() != "running":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Run is not running")
+
+    effective_tick_time = tick_time
+    if effective_tick_time is None:
+        last_log = (
+            db.query(ShopeeOrderGenerationLog)
+            .filter(
+                ShopeeOrderGenerationLog.run_id == run.id,
+                ShopeeOrderGenerationLog.user_id == run.user_id,
+            )
+            .order_by(ShopeeOrderGenerationLog.tick_time.desc(), ShopeeOrderGenerationLog.id.desc())
+            .first()
+        )
+        if last_log and last_log.tick_time:
+            effective_tick_time = last_log.tick_time + timedelta(hours=1)
+        else:
+            effective_tick_time = datetime.utcnow()
+
+    result = simulate_orders_for_run(db, run_id=run.id, user_id=run.user_id, tick_time=effective_tick_time)
+    owner_username = db.query(User.username).filter(User.id == run.user_id).scalar()
+    return AdminSimulateOrdersResponse(
+        tick_time=result["tick_time"],
+        active_buyer_count=result["active_buyer_count"],
+        candidate_product_count=result["candidate_product_count"],
+        generated_order_count=result["generated_order_count"],
+        skip_reasons=result["skip_reasons"],
+        shop_context={
+            "run_id": run.id,
+            "user_id": run.user_id,
+            "username": owner_username,
+            "market": run.market,
+            "status": run.status,
+        },
+        buyer_journeys=result.get("buyer_journeys") or [],
+    )
+
+
+def _to_warehouse_strategy_response(row: WarehouseStrategy) -> WarehouseStrategyResponse:
+    return WarehouseStrategyResponse(
+        id=row.id,
+        warehouse_mode=row.warehouse_mode,
+        warehouse_location=row.warehouse_location,
+        one_time_cost=row.one_time_cost,
+        inbound_cost=row.inbound_cost,
+        rent_cost=row.rent_cost,
+        total_cost=row.total_cost,
+        delivery_eta_score=row.delivery_eta_score,
+        fulfillment_accuracy=row.fulfillment_accuracy,
+        warehouse_cost_per_order=row.warehouse_cost_per_order,
+        created_at=row.created_at,
+    )
 
 
 def _to_run_response(run: GameRun) -> RunResponse:
@@ -155,6 +538,76 @@ def _calc_run_procurement_spent(db: Session, run_id: int) -> int:
 def _calc_run_logistics_spent(db: Session, run_id: int) -> int:
     spent = db.query(func.coalesce(func.sum(LogisticsShipment.total_fee), 0)).filter(LogisticsShipment.run_id == run_id).scalar()
     return int(spent or 0)
+
+
+def _calc_run_warehouse_spent(db: Session, run_id: int) -> int:
+    spent = db.query(func.coalesce(func.sum(WarehouseStrategy.total_cost), 0)).filter(WarehouseStrategy.run_id == run_id).scalar()
+    return int(spent or 0)
+
+
+def _warehouse_mode_options() -> dict[str, dict]:
+    return {
+        "official": {
+            "label": "Shopee 官方仓",
+            "one_time_base": 0,
+            "inbound_rate": 0.018,
+            "rent_base": 8000,
+            "delivery_eta_score": 92,
+            "fulfillment_accuracy": 0.992,
+            "warehouse_cost_per_order": 6,
+        },
+        "third_party": {
+            "label": "第三方仓",
+            "one_time_base": 0,
+            "inbound_rate": 0.012,
+            "rent_base": 5200,
+            "delivery_eta_score": 78,
+            "fulfillment_accuracy": 0.945,
+            "warehouse_cost_per_order": 4,
+        },
+        "self_built": {
+            "label": "自建仓",
+            "one_time_base": 50000,
+            "inbound_rate": 0.009,
+            "rent_base": 2800,
+            "delivery_eta_score": 95,
+            "fulfillment_accuracy": 0.995,
+            "warehouse_cost_per_order": 3,
+        },
+    }
+
+
+def _warehouse_location_options() -> dict[str, dict]:
+    return {
+        "near_kl": {
+            "label": "近吉隆坡仓位",
+            "rent_delta": 2200,
+            "eta_delta": 4,
+        },
+        "far_kl": {
+            "label": "远吉隆坡仓位",
+            "rent_delta": -1000,
+            "eta_delta": -3,
+        },
+    }
+
+
+def _calc_shipment_status(shipment: LogisticsShipment, now: datetime) -> str:
+    created = shipment.created_at
+    if created.tzinfo is not None and now.tzinfo is None:
+        now = now.replace(tzinfo=created.tzinfo)
+    elif created.tzinfo is None and now.tzinfo is not None:
+        now = now.replace(tzinfo=None)
+    elapsed_seconds = max(0, int((now - created).total_seconds()))
+    transport_seconds = max(1, int(shipment.transport_days * REAL_SECONDS_PER_GAME_DAY))
+    customs_seconds = max(1, int(shipment.customs_days * REAL_SECONDS_PER_GAME_DAY))
+    if elapsed_seconds >= BOOKED_SECONDS + transport_seconds + customs_seconds:
+        return "customs_cleared"
+    if elapsed_seconds >= BOOKED_SECONDS + transport_seconds:
+        return "customs_processing"
+    if elapsed_seconds >= BOOKED_SECONDS:
+        return "in_transit"
+    return "booked"
 
 
 @router.get("/runs/current", response_model=CurrentRunResponse)
@@ -254,12 +707,14 @@ def get_procurement_cart_summary(
     run = _get_owned_running_run_or_404(db, run_id=run_id, user_id=current_user["id"])
     spent_total = _calc_run_procurement_spent(db, run.id)
     logistics_spent_total = _calc_run_logistics_spent(db, run.id)
-    remaining_cash = max(0, run.initial_cash - spent_total - logistics_spent_total)
+    warehouse_spent_total = _calc_run_warehouse_spent(db, run.id)
+    remaining_cash = max(0, run.initial_cash - spent_total - logistics_spent_total - warehouse_spent_total)
     return ProcurementSummaryResponse(
         run_id=run.id,
         total_cash=run.initial_cash,
         spent_total=spent_total,
         logistics_spent_total=logistics_spent_total,
+        warehouse_spent_total=warehouse_spent_total,
         remaining_cash=remaining_cash,
     )
 
@@ -336,7 +791,8 @@ def create_procurement_order(
 
     spent_total = _calc_run_procurement_spent(db, run.id)
     logistics_spent_total = _calc_run_logistics_spent(db, run.id)
-    remaining_cash = run.initial_cash - spent_total - logistics_spent_total
+    warehouse_spent_total = _calc_run_warehouse_spent(db, run.id)
+    remaining_cash = run.initial_cash - spent_total - logistics_spent_total - warehouse_spent_total
     if order_total > remaining_cash:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -371,7 +827,7 @@ def create_procurement_order(
         order_id=order.id,
         total_amount=order_total,
         spent_total=updated_spent,
-        remaining_cash=max(0, run.initial_cash - updated_spent - logistics_spent_total),
+        remaining_cash=max(0, run.initial_cash - updated_spent - logistics_spent_total - warehouse_spent_total),
     )
 
 
@@ -468,7 +924,8 @@ def create_logistics_shipment(
 
     procurement_spent_total = _calc_run_procurement_spent(db, run.id)
     logistics_spent_total = _calc_run_logistics_spent(db, run.id)
-    remaining_cash = run.initial_cash - procurement_spent_total - logistics_spent_total
+    warehouse_spent_total = _calc_run_warehouse_spent(db, run.id)
+    remaining_cash = run.initial_cash - procurement_spent_total - logistics_spent_total - warehouse_spent_total
     if total_fee > remaining_cash:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -512,5 +969,334 @@ def create_logistics_shipment(
         total_fee=total_fee,
         spent_total=procurement_spent_total,
         logistics_spent_total=updated_logistics_spent,
-        remaining_cash=max(0, run.initial_cash - procurement_spent_total - updated_logistics_spent),
+        warehouse_spent_total=warehouse_spent_total,
+        remaining_cash=max(0, run.initial_cash - procurement_spent_total - updated_logistics_spent - warehouse_spent_total),
+    )
+
+
+@router.get("/runs/{run_id}/warehouse/options", response_model=WarehouseOptionsResponse)
+def get_warehouse_options(
+    run_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> WarehouseOptionsResponse:
+    _get_owned_running_run_or_404(db, run_id=run_id, user_id=current_user["id"])
+    mode_items = []
+    for key, val in _warehouse_mode_options().items():
+        mode_items.append(
+            {
+                "key": key,
+                "label": val["label"],
+                "one_time_base": val["one_time_base"],
+                "inbound_rate": val["inbound_rate"],
+                "rent_base": val["rent_base"],
+                "delivery_eta_score": val["delivery_eta_score"],
+                "fulfillment_accuracy": val["fulfillment_accuracy"],
+                "warehouse_cost_per_order": val["warehouse_cost_per_order"],
+            }
+        )
+    location_items = []
+    for key, val in _warehouse_location_options().items():
+        location_items.append(
+            {
+                "key": key,
+                "label": val["label"],
+                "rent_delta": val["rent_delta"],
+                "eta_delta": val["eta_delta"],
+            }
+        )
+    return WarehouseOptionsResponse(warehouse_modes=mode_items, warehouse_locations=location_items)
+
+
+@router.get("/runs/{run_id}/warehouse/landmarks", response_model=WarehouseLandmarksResponse)
+def get_warehouse_landmarks(
+    run_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> WarehouseLandmarksResponse:
+    run = _get_owned_running_run_or_404(db, run_id=run_id, user_id=current_user["id"])
+    points = (
+        db.query(WarehouseLandmark)
+        .filter(
+            WarehouseLandmark.market == run.market,
+            WarehouseLandmark.is_active.is_(True),
+        )
+        .order_by(
+            WarehouseLandmark.warehouse_location.asc(),
+            WarehouseLandmark.warehouse_mode.asc(),
+            WarehouseLandmark.sort_order.asc(),
+            WarehouseLandmark.id.asc(),
+        )
+        .all()
+    )
+    return WarehouseLandmarksResponse(
+        market=run.market,
+        points=[
+            WarehouseLandmarkPointResponse(
+                point_code=row.point_code,
+                point_name=row.point_name,
+                warehouse_mode=row.warehouse_mode,
+                warehouse_location=row.warehouse_location,
+                lng=float(row.lng),
+                lat=float(row.lat),
+                sort_order=row.sort_order,
+            )
+            for row in points
+        ],
+    )
+
+
+@router.get("/runs/{run_id}/warehouse/inbound-candidates", response_model=WarehouseInboundCandidatesResponse)
+def get_warehouse_inbound_candidates(
+    run_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> WarehouseInboundCandidatesResponse:
+    run = _get_owned_running_run_or_404(db, run_id=run_id, user_id=current_user["id"])
+    inbounded_shipment_ids = {
+        row[0]
+        for row in db.query(WarehouseInboundOrder.shipment_id).filter(WarehouseInboundOrder.run_id == run.id).all()
+    }
+
+    shipments = (
+        db.query(LogisticsShipment)
+        .options(selectinload(LogisticsShipment.orders))
+        .filter(LogisticsShipment.run_id == run.id)
+        .order_by(LogisticsShipment.id.desc())
+        .all()
+    )
+    now = datetime.utcnow()
+    candidates: list[WarehouseInboundCandidateItem] = []
+    for shipment in shipments:
+        if shipment.id in inbounded_shipment_ids:
+            continue
+        status = _calc_shipment_status(shipment, now)
+        if status != "customs_cleared":
+            continue
+        total_qty = int(sum(item.order_total_quantity for item in shipment.orders))
+        candidates.append(
+            WarehouseInboundCandidateItem(
+                shipment_id=shipment.id,
+                cargo_value=shipment.cargo_value,
+                total_quantity=total_qty,
+                created_at=shipment.created_at,
+                forwarder_label=shipment.forwarder_label,
+                customs_label=shipment.customs_label,
+                status=status,
+            )
+        )
+    return WarehouseInboundCandidatesResponse(candidates=candidates)
+
+
+@router.post("/runs/{run_id}/warehouse/strategy", response_model=WarehouseCreateStrategyResponse, status_code=status.HTTP_201_CREATED)
+def create_warehouse_strategy(
+    run_id: int,
+    payload: WarehouseStrategyCreateRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> WarehouseCreateStrategyResponse:
+    run = _get_owned_running_run_or_404(db, run_id=run_id, user_id=current_user["id"])
+    mode_options = _warehouse_mode_options()
+    location_options = _warehouse_location_options()
+    if payload.warehouse_mode not in mode_options:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid warehouse_mode")
+    if payload.warehouse_location not in location_options:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid warehouse_location")
+
+    candidates_resp = get_warehouse_inbound_candidates(run.id, current_user=current_user, db=db)
+    if not candidates_resp.candidates:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No customs-cleared shipments available for inbound")
+
+    cargo_total = int(sum(item.cargo_value for item in candidates_resp.candidates))
+    selected_mode = mode_options[payload.warehouse_mode]
+    selected_location = location_options[payload.warehouse_location]
+
+    is_first_self_built = (
+        payload.warehouse_mode == "self_built"
+        and db.query(WarehouseStrategy)
+        .filter(WarehouseStrategy.run_id == run.id, WarehouseStrategy.warehouse_mode == "self_built")
+        .count()
+        == 0
+    )
+    one_time_cost = selected_mode["one_time_base"] if is_first_self_built else 0
+    inbound_cost = int(round(cargo_total * selected_mode["inbound_rate"]))
+    rent_cost = int(max(0, selected_mode["rent_base"] + selected_location["rent_delta"]))
+    total_cost = one_time_cost + inbound_cost + rent_cost
+
+    procurement_spent_total = _calc_run_procurement_spent(db, run.id)
+    logistics_spent_total = _calc_run_logistics_spent(db, run.id)
+    warehouse_spent_total = _calc_run_warehouse_spent(db, run.id)
+    remaining_cash = run.initial_cash - procurement_spent_total - logistics_spent_total - warehouse_spent_total
+    if total_cost > remaining_cash:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Insufficient cash balance, remaining {max(0, remaining_cash)}",
+        )
+
+    strategy = WarehouseStrategy(
+        run_id=run.id,
+        user_id=current_user["id"],
+        market=run.market,
+        warehouse_mode=payload.warehouse_mode,
+        warehouse_location=payload.warehouse_location,
+        one_time_cost=one_time_cost,
+        inbound_cost=inbound_cost,
+        rent_cost=rent_cost,
+        total_cost=total_cost,
+        delivery_eta_score=max(1, min(100, selected_mode["delivery_eta_score"] + selected_location["eta_delta"])),
+        fulfillment_accuracy=selected_mode["fulfillment_accuracy"],
+        warehouse_cost_per_order=selected_mode["warehouse_cost_per_order"],
+        status="active",
+    )
+    db.add(strategy)
+    db.commit()
+    db.refresh(strategy)
+
+    return WarehouseCreateStrategyResponse(
+        strategy=_to_warehouse_strategy_response(strategy),
+        remaining_cash=max(0, remaining_cash - total_cost),
+    )
+
+
+@router.post("/runs/{run_id}/warehouse/inbound", response_model=WarehouseInboundResponse, status_code=status.HTTP_201_CREATED)
+def warehouse_inbound(
+    run_id: int,
+    payload: WarehouseInboundRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> WarehouseInboundResponse:
+    run = _get_owned_running_run_or_404(db, run_id=run_id, user_id=current_user["id"])
+    strategy = (
+        db.query(WarehouseStrategy)
+        .filter(WarehouseStrategy.run_id == run.id, WarehouseStrategy.status == "active")
+        .order_by(WarehouseStrategy.id.desc())
+        .first()
+    )
+    if not strategy:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Please create warehouse strategy first")
+
+    candidates_resp = get_warehouse_inbound_candidates(run.id, current_user=current_user, db=db)
+    candidate_ids = [item.shipment_id for item in candidates_resp.candidates]
+    if not candidate_ids:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No customs-cleared shipments available for inbound")
+
+    if payload.shipment_ids:
+        requested = set(payload.shipment_ids)
+        if not requested.issubset(set(candidate_ids)):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Some shipment_ids are invalid for inbound")
+        target_ids = [sid for sid in candidate_ids if sid in requested]
+    else:
+        # V1：一次性入仓全部可入仓物流单
+        target_ids = candidate_ids
+
+    shipments = (
+        db.query(LogisticsShipment)
+        .options(selectinload(LogisticsShipment.orders))
+        .filter(LogisticsShipment.id.in_(target_ids), LogisticsShipment.run_id == run.id)
+        .all()
+    )
+    shipment_map = {row.id: row for row in shipments}
+    now = datetime.utcnow()
+    created_inbound_count = 0
+    created_lot_count = 0
+
+    for shipment_id in target_ids:
+        shipment = shipment_map.get(shipment_id)
+        if not shipment:
+            continue
+        total_quantity = int(sum(item.order_total_quantity for item in shipment.orders))
+        inbound_order = WarehouseInboundOrder(
+            run_id=run.id,
+            strategy_id=strategy.id,
+            shipment_id=shipment.id,
+            total_quantity=total_quantity,
+            total_value=shipment.cargo_value,
+            status="completed",
+            completed_at=now,
+        )
+        db.add(inbound_order)
+        db.flush()
+        created_inbound_count += 1
+
+        order_ids = [item.procurement_order_id for item in shipment.orders]
+        if not order_ids:
+            continue
+        order_items = (
+            db.query(ProcurementOrderItem)
+            .filter(ProcurementOrderItem.order_id.in_(order_ids))
+            .all()
+        )
+        for row in order_items:
+            db.add(
+                InventoryLot(
+                    run_id=run.id,
+                    product_id=row.product_id,
+                    inbound_order_id=inbound_order.id,
+                    quantity_available=row.quantity,
+                    quantity_locked=0,
+                    unit_cost=row.unit_price,
+                )
+            )
+            created_lot_count += 1
+
+    db.commit()
+
+    procurement_spent_total = _calc_run_procurement_spent(db, run.id)
+    logistics_spent_total = _calc_run_logistics_spent(db, run.id)
+    warehouse_spent_total = _calc_run_warehouse_spent(db, run.id)
+    remaining_cash = max(0, run.initial_cash - procurement_spent_total - logistics_spent_total - warehouse_spent_total)
+
+    return WarehouseInboundResponse(
+        inbound_count=created_inbound_count,
+        shipment_ids=target_ids,
+        inventory_lot_count=created_lot_count,
+        remaining_cash=remaining_cash,
+    )
+
+
+@router.get("/runs/{run_id}/warehouse/summary", response_model=WarehouseSummaryResponse)
+def get_warehouse_summary(
+    run_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> WarehouseSummaryResponse:
+    run = _get_owned_running_run_or_404(db, run_id=run_id, user_id=current_user["id"])
+    strategy = (
+        db.query(WarehouseStrategy)
+        .filter(WarehouseStrategy.run_id == run.id, WarehouseStrategy.status == "active")
+        .order_by(WarehouseStrategy.id.desc())
+        .first()
+    )
+
+    completed_count = (
+        db.query(func.count(WarehouseInboundOrder.id))
+        .filter(WarehouseInboundOrder.run_id == run.id, WarehouseInboundOrder.status == "completed")
+        .scalar()
+        or 0
+    )
+    pending_count = (
+        db.query(func.count(WarehouseInboundOrder.id))
+        .filter(WarehouseInboundOrder.run_id == run.id, WarehouseInboundOrder.status != "completed")
+        .scalar()
+        or 0
+    )
+    inventory_total_quantity = (
+        db.query(func.coalesce(func.sum(InventoryLot.quantity_available), 0))
+        .filter(InventoryLot.run_id == run.id)
+        .scalar()
+        or 0
+    )
+    inventory_total_sku = (
+        db.query(func.count(func.distinct(InventoryLot.product_id)))
+        .filter(InventoryLot.run_id == run.id)
+        .scalar()
+        or 0
+    )
+
+    return WarehouseSummaryResponse(
+        strategy=_to_warehouse_strategy_response(strategy) if strategy else None,
+        pending_inbound_count=int(pending_count),
+        completed_inbound_count=int(completed_count),
+        inventory_total_quantity=int(inventory_total_quantity),
+        inventory_total_sku=int(inventory_total_sku),
     )

@@ -31,6 +31,11 @@
   .custom-scrollbar::-webkit-scrollbar-thumb:hover {
     background: #d0d0d0;
   }
+
+  .warehouse-map-wrap .maplibregl-ctrl-top-right {
+    top: 44px;
+    right: 8px;
+  }
 }
 
 @keyframes logo-breathe {

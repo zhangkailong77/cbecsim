@@ -218,9 +218,11 @@ export default function Dashboard() {
 
 function StatItem({ label, value }: { label: string, value: string }) {
   return (
-    <div className="text-center flex-1 border-r border-gray-100 last:border-0">
-      <div className="text-[24px] font-bold text-blue-500">{value}</div>
-      <div className="text-[13px] text-gray-500 mt-1">{label}</div>
+    <div className="text-center flex-1 border-r border-gray-100 last:border-0 px-3">
+      <div className="rounded-md px-4 py-3 transition-all duration-200 hover:bg-[#f1f1f1] hover:shadow-[inset_0_0_0_1px_rgba(0,0,0,0.02)]">
+        <div className="text-[24px] font-bold text-blue-500">{value}</div>
+        <div className="text-[13px] text-gray-500 mt-1">{label}</div>
+      </div>
     </div>
   );
 }

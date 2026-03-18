@@ -14,11 +14,13 @@ import {
   Ship,
   ShoppingCart,
   Store,
+  Users,
   UserRound,
   Warehouse,
 } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import logoImg from '../../assets/home/logo.png';
+import AdminBuyerPoolPage from '../admin/AdminBuyerPoolPage';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000';
 const ACCESS_TOKEN_KEY = 'cbec_access_token';
@@ -29,12 +31,17 @@ const TOTAL_GAME_DAYS = 365;
 const STAGE_COUNTDOWN_SECONDS = 8 * 60 * 60; // 当前阶段默认8小时，可后续改成后端下发
 const REAL_SECONDS_PER_GAME_DAY = 30 * 60;
 const BOOKED_SECONDS = 10;
+const GAME_MONTH_DAY_COUNTS = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31] as const;
+const GAME_MONTH_NAMES = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'] as const;
+const GAME_WEEKDAY_NAMES = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'] as const;
 
 export interface CreateRunPayload {
   initial_cash: number;
   market: string;
   duration_days: number;
 }
+
+type SetupSubView = 'default' | 'run-data' | 'finance' | 'history' | 'admin-buyer-pool';
 
 interface GameSetupPageProps {
   isSubmitting: boolean;
@@ -60,9 +67,12 @@ interface GameSetupPageProps {
   onSubmit: (payload: CreateRunPayload) => Promise<void>;
   onEnterRunningRun: () => void;
   onEnterLogistics: () => void;
+  onEnterWarehouse: () => void;
   onEnterShopee: () => void;
   onResetCurrentRun: () => Promise<void>;
   onLogout: () => void;
+  setupSubView?: SetupSubView;
+  onSetupSubViewChange?: (subView: SetupSubView) => void;
 }
 
 interface ProcurementSummary {
@@ -83,6 +93,18 @@ interface ShipmentApi {
 
 interface LogisticsShipmentsResp {
   shipments: ShipmentApi[];
+}
+
+interface WarehouseSummaryResp {
+  strategy: {
+    id: number;
+    warehouse_mode: string;
+    warehouse_location: string;
+  } | null;
+  pending_inbound_count: number;
+  completed_inbound_count: number;
+  inventory_total_quantity: number;
+  inventory_total_sku: number;
 }
 
 interface LocalShipment {
@@ -119,6 +141,49 @@ function parseServerDateMs(value: string) {
   return Number.isFinite(ms) ? ms : Date.now();
 }
 
+function getGameCalendarInfo(dayIndex: number) {
+  const safeDay = Math.min(TOTAL_GAME_DAYS, Math.max(1, dayIndex));
+  let remain = safeDay;
+  let monthIndex = 0;
+  for (let i = 0; i < GAME_MONTH_DAY_COUNTS.length; i += 1) {
+    if (remain <= GAME_MONTH_DAY_COUNTS[i]) {
+      monthIndex = i;
+      break;
+    }
+    remain -= GAME_MONTH_DAY_COUNTS[i];
+  }
+  const dayOfMonth = remain;
+  const dayOfYear = safeDay;
+  const weekdayIndex = (dayOfYear - 1) % 7; // Day1 -> 周一
+  const isWeekend = weekdayIndex >= 5;
+  const quarter = Math.floor(monthIndex / 3) + 1;
+  const seasonLabel = quarter === 1 ? '春季' : quarter === 2 ? '夏季' : quarter === 3 ? '秋季' : '冬季';
+  const daysBeforeMonth = dayOfYear - dayOfMonth;
+  const firstWeekdayIndex = daysBeforeMonth % 7;
+
+  return {
+    dayOfYear,
+    monthIndex,
+    dayOfMonth,
+    weekdayIndex,
+    isWeekend,
+    quarter,
+    seasonLabel,
+    firstWeekdayIndex,
+  };
+}
+
+function getGameClockLabel(elapsedSeconds: number) {
+  const safeElapsed = Math.max(0, elapsedSeconds);
+  const gameDayFloat = (safeElapsed / TOTAL_REAL_SECONDS) * TOTAL_GAME_DAYS + 1;
+  const frac = gameDayFloat - Math.floor(gameDayFloat);
+  const totalSeconds = Math.max(0, Math.floor(frac * 24 * 60 * 60));
+  const hour = Math.floor(totalSeconds / 3600) % 24;
+  const minute = Math.floor((totalSeconds % 3600) / 60);
+  const second = totalSeconds % 60;
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:${String(second).padStart(2, '0')}`;
+}
+
 function calcShipmentRuntime(shipment: LocalShipment, nowMs: number) {
   const createdMs = parseServerDateMs(shipment.createdAt);
   const elapsedSeconds = Math.max(0, Math.floor((nowMs - createdMs) / 1000));
@@ -151,9 +216,12 @@ export default function GameSetupPage({
   onSubmit,
   onEnterRunningRun,
   onEnterLogistics,
+  onEnterWarehouse,
   onEnterShopee,
   onResetCurrentRun,
   onLogout,
+  setupSubView = 'default',
+  onSetupSubViewChange,
 }: GameSetupPageProps) {
   const [scale, setScale] = useState(1);
   const [initialCash, setInitialCash] = useState(200000);
@@ -162,9 +230,19 @@ export default function GameSetupPage({
   const [nowMs, setNowMs] = useState(Date.now());
   const [procurementSummary, setProcurementSummary] = useState<ProcurementSummary | null>(null);
   const [latestShipment, setLatestShipment] = useState<LocalShipment | null>(null);
+  const [warehouseSummary, setWarehouseSummary] = useState<WarehouseSummaryResp | null>(null);
   const [stageDeadlineMs, setStageDeadlineMs] = useState<number | null>(null);
-  const [activeMenu, setActiveMenu] = useState<'overview' | 'run-data' | 'finance' | 'history'>('overview');
+  const [activeMenu, setActiveMenu] = useState<'overview' | 'run-data' | 'finance' | 'history' | 'buyer-pool'>('overview');
   const [showPlayerPanel, setShowPlayerPanel] = useState(false);
+  const [adminSelectedRunContext, setAdminSelectedRunContext] = useState<{
+    runId: number | null;
+    username: string | null;
+    status: string | null;
+    market: string | null;
+    dayIndex: number | null;
+    createdAt: string | null;
+    gameClock: string | null;
+  } | null>(null);
   const playerPanelRef = useRef<HTMLDivElement | null>(null);
 
   const hasRunningRun = Boolean(currentRun);
@@ -172,6 +250,33 @@ export default function GameSetupPage({
   const lockedMarket = currentRun?.market ?? market;
   const lockedDuration = currentRun?.duration_days ?? durationDays;
   const playerDisplayName = currentUser?.full_name?.trim() || currentUser?.username || '玩家';
+  const canEnterAdminBuyerPool =
+    (currentUser?.role || '').trim() === 'super_admin' &&
+    (currentUser?.username || '').trim().toLowerCase() === 'yzcube';
+
+  useEffect(() => {
+    if (setupSubView === 'admin-buyer-pool' && canEnterAdminBuyerPool) {
+      setActiveMenu('buyer-pool');
+      return;
+    }
+    if (setupSubView === 'run-data') {
+      setActiveMenu('run-data');
+      return;
+    }
+    if (setupSubView === 'finance') {
+      setActiveMenu('finance');
+      return;
+    }
+    if (setupSubView === 'history') {
+      setActiveMenu('history');
+      return;
+    }
+    if (!canEnterAdminBuyerPool && activeMenu === 'buyer-pool') {
+      setActiveMenu('overview');
+      return;
+    }
+    setActiveMenu('overview');
+  }, [setupSubView, canEnterAdminBuyerPool]);
 
   useEffect(() => {
     const resize = () => {
@@ -222,15 +327,19 @@ export default function GameSetupPage({
       if (!currentRun?.id) {
         setProcurementSummary(null);
         setLatestShipment(null);
+        setWarehouseSummary(null);
         return;
       }
       const token = localStorage.getItem(ACCESS_TOKEN_KEY);
       if (!token) return;
-      const [summaryResp, shipmentResp] = await Promise.all([
+      const [summaryResp, shipmentResp, warehouseResp] = await Promise.all([
         fetch(`${API_BASE_URL}/game/runs/${currentRun.id}/procurement/cart-summary`, {
           headers: { Authorization: `Bearer ${token}` },
         }),
         fetch(`${API_BASE_URL}/game/runs/${currentRun.id}/logistics/shipments`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+        fetch(`${API_BASE_URL}/game/runs/${currentRun.id}/warehouse/summary`, {
           headers: { Authorization: `Bearer ${token}` },
         }),
       ]);
@@ -254,36 +363,49 @@ export default function GameSetupPage({
           setLatestShipment(null);
         }
       }
+      if (warehouseResp.ok) {
+        const data = (await warehouseResp.json()) as WarehouseSummaryResp;
+        setWarehouseSummary(data);
+      }
     };
     void loadSetupData();
   }, [currentRun?.id]);
 
+  const sidebarUsingAdminRun = activeMenu === 'buyer-pool' && !!adminSelectedRunContext?.runId;
+  const timelineCreatedAt = sidebarUsingAdminRun
+    ? adminSelectedRunContext?.createdAt ?? null
+    : currentRun?.created_at ?? null;
   const elapsedSeconds = useMemo(() => {
-    if (!currentRun?.created_at) return 0;
-    const diffMs = nowMs - new Date(currentRun.created_at).getTime();
+    if (!timelineCreatedAt) return 0;
+    const diffMs = nowMs - new Date(timelineCreatedAt).getTime();
     return Math.max(0, Math.floor(diffMs / 1000));
-  }, [currentRun?.created_at, nowMs]);
+  }, [timelineCreatedAt, nowMs]);
+  const hasTimelineRun = sidebarUsingAdminRun ? Boolean(adminSelectedRunContext?.runId) : Boolean(timelineCreatedAt);
 
   const remainSeconds = Math.max(0, TOTAL_REAL_SECONDS - elapsedSeconds);
-  const gameDayMapped = hasRunningRun
+  const derivedDayByTimeline = Math.min(
+    TOTAL_GAME_DAYS,
+    Math.max(1, Math.floor((elapsedSeconds / TOTAL_REAL_SECONDS) * TOTAL_GAME_DAYS) + 1),
+  );
+  const gameDayMapped = sidebarUsingAdminRun
     ? Math.min(
         TOTAL_GAME_DAYS,
-        Math.max(1, Math.floor((elapsedSeconds / TOTAL_REAL_SECONDS) * TOTAL_GAME_DAYS) + 1),
+        Math.max(1, adminSelectedRunContext?.dayIndex ?? derivedDayByTimeline),
       )
-    : 1;
+    : hasTimelineRun
+      ? derivedDayByTimeline
+      : 1;
   const remainGameDays = Math.max(0, TOTAL_GAME_DAYS - gameDayMapped);
+  const gameClockLabel = useMemo(() => {
+    if (sidebarUsingAdminRun && adminSelectedRunContext?.gameClock) {
+      return adminSelectedRunContext.gameClock;
+    }
+    return getGameClockLabel(elapsedSeconds);
+  }, [elapsedSeconds, sidebarUsingAdminRun, adminSelectedRunContext?.gameClock]);
   const latestShipmentRuntime = useMemo(() => {
     if (!latestShipment) return null;
     return { shipment: latestShipment, runtime: calcShipmentRuntime(latestShipment, nowMs) };
   }, [latestShipment, nowMs]);
-  const stageRemainSeconds = useMemo(() => {
-    if (latestShipmentRuntime && latestShipmentRuntime.runtime.status !== 'customs_cleared') {
-      return latestShipmentRuntime.runtime.remainSeconds;
-    }
-    if (!hasRunningRun || !stageDeadlineMs) return 0;
-    return Math.max(0, Math.floor((stageDeadlineMs - nowMs) / 1000));
-  }, [hasRunningRun, stageDeadlineMs, nowMs, latestShipmentRuntime]);
-
   const stageCards = [
     {
       step: 'Step 02',
@@ -319,20 +441,24 @@ export default function GameSetupPage({
       step: 'Step 04',
       title: '海外仓与入仓',
       desc: '官方仓/第三方仓/自建仓入仓管理',
-      metric: '待接入仓储模块',
-      action: '即将开放',
-      onClick: () => undefined,
-      disabled: true,
+      metric: warehouseSummary?.strategy
+        ? `已入仓 ${warehouseSummary.completed_inbound_count} 单 · SKU ${warehouseSummary.inventory_total_sku}`
+        : '待确认入仓策略',
+      action: '进入入仓',
+      onClick: onEnterWarehouse,
+      disabled: !hasRunningRun,
       icon: <Warehouse size={16} />,
     },
     {
       step: 'Step 05',
       title: '店铺运营（Shopee）',
       desc: '店铺运营、定价与上架销售',
-      metric: `局状态 ${currentRun?.status ?? '未开局'}`,
+      metric: warehouseSummary?.completed_inbound_count
+        ? `已入仓 ${warehouseSummary.completed_inbound_count} 单，满足运营条件`
+        : '需先完成 Step 04 入仓',
       action: '进入运营',
       onClick: onEnterShopee,
-      disabled: !hasRunningRun,
+      disabled: !hasRunningRun || (warehouseSummary?.completed_inbound_count ?? 0) <= 0,
       icon: <Store size={16} />,
     },
   ];
@@ -342,6 +468,9 @@ export default function GameSetupPage({
     { key: 'run-data', label: '当前对局数据', icon: <BarChart3 size={15} /> },
     { key: 'finance', label: '营业额与资金', icon: <Coins size={15} /> },
     { key: 'history', label: '历史经营记录', icon: <History size={15} /> },
+    ...(canEnterAdminBuyerPool
+      ? ([{ key: 'buyer-pool', label: '买家池总览', icon: <Users size={15} /> }] as const)
+      : []),
   ] as const;
 
   return (
@@ -438,7 +567,20 @@ export default function GameSetupPage({
                   <button
                     key={item.key}
                     type="button"
-                    onClick={() => setActiveMenu(item.key)}
+                    onClick={() => {
+                      setActiveMenu(item.key);
+                      const mappedSubView: SetupSubView =
+                        item.key === 'buyer-pool'
+                          ? 'admin-buyer-pool'
+                          : item.key === 'run-data'
+                            ? 'run-data'
+                            : item.key === 'finance'
+                              ? 'finance'
+                              : item.key === 'history'
+                                ? 'history'
+                                : 'default';
+                      onSetupSubViewChange?.(mappedSubView);
+                    }}
                     className={`mb-1 block w-full rounded-lg px-3 py-2 text-left transition ${
                       active ? 'bg-[#e8f1ff] font-bold text-[#2563eb]' : 'text-[#374151] hover:bg-[#f3f7ff]'
                     }`}
@@ -580,6 +722,12 @@ export default function GameSetupPage({
                         </div>
                       </div>
                     </>
+                  ) : activeMenu === 'buyer-pool' ? (
+                    <AdminBuyerPoolPage
+                      currentUser={currentUser}
+                      embedded
+                      onRunContextChange={setAdminSelectedRunContext}
+                    />
                   ) : (
                     <div className="rounded-2xl border border-[#e5ecfb] bg-white" style={{ minHeight: '620px' }} />
                   )}
@@ -623,31 +771,22 @@ export default function GameSetupPage({
                       统一倒计时中心
                     </div>
                     <div className="space-y-3 text-[13px]">
-                  <CountCard title="本局总倒计时" value={hasRunningRun ? fmtDurationSeconds(remainSeconds) : '--'} sub="规则：1局=7天映射365游戏天（秒级实时）" />
-                  <CountCard title="当前游戏日" value={hasRunningRun ? `Day ${gameDayMapped}` : 'Day 1'} sub={`剩余 ${remainGameDays} 游戏天`} />
-                  <StageDigestCard
-                    stageLabel={latestShipmentRuntime ? 'Step 03 国际物流与清关' : 'Step 02 选品与采购'}
-                    statusLabel={
-                      latestShipmentRuntime
-                        ? latestShipmentRuntime.runtime.status === 'booked'
-                          ? '已订舱'
-                          : latestShipmentRuntime.runtime.status === 'in_transit'
-                            ? '运输中'
-                            : latestShipmentRuntime.runtime.status === 'customs_processing'
-                              ? '清关中'
-                              : '清关完成'
-                        : '进行中'
-                    }
-                    progress={latestShipmentRuntime?.runtime.progressPercent ?? 35}
-                    nextAction={
-                      latestShipmentRuntime
-                        ? latestShipmentRuntime.runtime.status === 'customs_cleared'
-                          ? '可进入 Step 04 海外仓入仓'
-                          : '等待物流清关流程自动推进'
-                        : '进入 Step 02 完成选品采购'
-                    }
-                  />
-                </div>
+                      <CountCard
+                        title={sidebarUsingAdminRun ? '选中对局倒计时' : '本局总倒计时'}
+                        value={hasTimelineRun ? fmtDurationSeconds(remainSeconds) : '--'}
+                        sub="规则：1局=7天映射365游戏天（秒级实时）"
+                      />
+                      <CountCard
+                        title="当前游戏日"
+                        value={hasTimelineRun ? `Day ${gameDayMapped}` : '--'}
+                        sub={
+                          sidebarUsingAdminRun
+                            ? `对局 #${adminSelectedRunContext?.runId ?? '--'} · 玩家 ${adminSelectedRunContext?.username ?? '--'} · ${adminSelectedRunContext?.status ?? '--'}`
+                            : `剩余 ${remainGameDays} 游戏天`
+                        }
+                      />
+                      <GameCalendarCard dayIndex={hasTimelineRun ? gameDayMapped : 1} gameClockLabel={gameClockLabel} />
+                    </div>
               </div>
 
                   <div className="rounded-2xl border border-[#e5ecfb] bg-white p-4">
@@ -657,6 +796,12 @@ export default function GameSetupPage({
                       <OverviewRow label="已采购" value={fmtMoney(procurementSummary?.spent_total ?? 0)} />
                       <OverviewRow label="采购剩余" value={fmtMoney(procurementSummary?.remaining_cash ?? lockedInitialCash)} />
                       <OverviewRow label="目标市场" value={lockedMarket} />
+                      {sidebarUsingAdminRun && (
+                        <OverviewRow
+                          label="选中对局"
+                          value={`#${adminSelectedRunContext?.runId ?? '--'} · ${adminSelectedRunContext?.status ?? '--'}`}
+                        />
+                      )}
                     </div>
                   </div>
 
@@ -668,6 +813,7 @@ export default function GameSetupPage({
                       <li>3. 阶段入口按主流程串联，支持一键跳转。</li>
                     </ul>
                   </div>
+
                 </aside>
               </div>
             </div>
@@ -678,7 +824,7 @@ export default function GameSetupPage({
   );
 }
 
-function InfoCard({ label, value, icon }: { label: string; value: string; icon: JSX.Element }) {
+function InfoCard({ label, value, icon }: { label: string; value: string; icon: ReactNode }) {
   return (
     <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
       <div className="inline-flex items-center gap-1 text-[11px] text-slate-500">{icon}<span>{label}</span></div>
@@ -697,36 +843,121 @@ function CountCard({ title, value, sub }: { title: string; value: string; sub: s
   );
 }
 
-function StageDigestCard({
-  stageLabel,
-  statusLabel,
-  progress,
-  nextAction,
-}: {
-  stageLabel: string;
-  statusLabel: string;
-  progress: number;
-  nextAction: string;
-}) {
-  return (
-    <div className="rounded-xl border border-blue-100 bg-blue-50/70 px-3 py-3">
-      <div className="text-[11px] text-slate-500">当前阶段摘要</div>
-      <div className="mt-1 text-[14px] font-black text-blue-700">{stageLabel}</div>
-      <div className="mt-1 text-[12px] text-slate-600">阶段状态：{statusLabel}</div>
-      <div className="mt-2 h-2 overflow-hidden rounded-full bg-blue-100">
-        <div className="h-full rounded-full bg-blue-500 transition-all" style={{ width: `${Math.max(0, Math.min(100, progress))}%` }} />
-      </div>
-      <div className="mt-1 text-[11px] text-slate-500">阶段完成度：{Math.max(0, Math.min(100, progress))}%</div>
-      <div className="mt-1 text-[11px] text-slate-500">下一动作：{nextAction}</div>
-    </div>
-  );
-}
-
 function OverviewRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2">
       <span className="text-slate-500">{label}</span>
       <span className="font-semibold text-slate-800">{value}</span>
+    </div>
+  );
+}
+
+function GameCalendarCard({ dayIndex, gameClockLabel }: { dayIndex: number; gameClockLabel: string }) {
+  const info = getGameCalendarInfo(dayIndex);
+  const [viewMonthIndex, setViewMonthIndex] = useState(info.monthIndex);
+
+  useEffect(() => {
+    setViewMonthIndex(info.monthIndex);
+  }, [info.monthIndex]);
+
+  const daysBeforeViewMonth = GAME_MONTH_DAY_COUNTS.slice(0, viewMonthIndex).reduce((sum, dayCount) => sum + dayCount, 0);
+  const viewFirstWeekdayIndex = daysBeforeViewMonth % 7; // Day1 -> 周一
+  const monthDays = GAME_MONTH_DAY_COUNTS[viewMonthIndex];
+  const leadingEmpty = Array.from({ length: viewFirstWeekdayIndex }, (_, idx) => `lead-${idx}`);
+  const dayCells = Array.from({ length: monthDays }, (_, idx) => idx + 1);
+  const totalCells = Math.ceil((leadingEmpty.length + dayCells.length) / 7) * 7;
+  const tailCount = Math.max(0, totalCells - leadingEmpty.length - dayCells.length);
+  const trailingEmpty = Array.from({ length: tailCount }, (_, idx) => `tail-${idx}`);
+  const canPrev = viewMonthIndex > 0;
+  const canNext = viewMonthIndex < GAME_MONTH_NAMES.length - 1;
+
+  return (
+    <div className="rounded-xl border border-[#dbeafe] bg-white px-3 py-3">
+      <div className="flex items-center justify-between">
+        <div className="text-[11px] text-slate-500">游戏日历（实时）</div>
+        <div className="text-[11px] font-semibold text-blue-700">{GAME_MONTH_NAMES[info.monthIndex]} · {info.seasonLabel}</div>
+      </div>
+      <div className="mt-1 flex items-baseline justify-between">
+        <div className="text-[14px] font-black text-slate-800">
+          Day {info.dayOfYear}
+        </div>
+        <div className="text-[11px] text-slate-600">
+          {GAME_MONTH_NAMES[info.monthIndex]} {info.dayOfMonth}日 · {GAME_WEEKDAY_NAMES[info.weekdayIndex]}
+        </div>
+      </div>
+      <div className="mt-2 rounded-lg border border-blue-100 bg-gradient-to-r from-blue-50 to-cyan-50 px-2 py-2">
+        <div className="text-[10px] text-slate-500">当前游戏时刻</div>
+        <div className="mt-1 flex items-center justify-between">
+          <span className="text-[11px] text-slate-500">Game Time</span>
+          <span className="rounded-md bg-blue-600 px-2 py-0.5 font-mono text-[18px] font-black tracking-wide text-white">
+            {gameClockLabel}
+          </span>
+        </div>
+      </div>
+      <div className="mt-2 flex items-center justify-between">
+        <div className="text-[11px] font-semibold text-slate-700">{GAME_MONTH_NAMES[viewMonthIndex]}</div>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => canPrev && setViewMonthIndex((v) => Math.max(0, v - 1))}
+            disabled={!canPrev}
+            className="h-6 w-6 rounded-md border border-slate-200 text-[12px] text-slate-600 disabled:cursor-not-allowed disabled:opacity-40"
+            aria-label="查看上个月"
+          >
+            ‹
+          </button>
+          <button
+            type="button"
+            onClick={() => setViewMonthIndex(info.monthIndex)}
+            className="h-6 rounded-md border border-slate-200 px-2 text-[10px] font-semibold text-slate-600"
+          >
+            回到今日
+          </button>
+          <button
+            type="button"
+            onClick={() => canNext && setViewMonthIndex((v) => Math.min(GAME_MONTH_NAMES.length - 1, v + 1))}
+            disabled={!canNext}
+            className="h-6 w-6 rounded-md border border-slate-200 text-[12px] text-slate-600 disabled:cursor-not-allowed disabled:opacity-40"
+            aria-label="查看下个月"
+          >
+            ›
+          </button>
+        </div>
+      </div>
+      <div className="mt-2 grid grid-cols-7 gap-1 text-center text-[10px] text-slate-500">
+        {GAME_WEEKDAY_NAMES.map((day) => (
+          <div key={day}>{day.replace('周', '')}</div>
+        ))}
+      </div>
+      <div className="mt-1 grid grid-cols-7 gap-1">
+        {leadingEmpty.map((key) => (
+          <div key={key} className="h-6 rounded-md bg-slate-50/30" />
+        ))}
+        {dayCells.map((day) => {
+          const isToday = viewMonthIndex === info.monthIndex && day === info.dayOfMonth;
+          return (
+            <div
+              key={`d-${day}`}
+              className={`flex h-6 items-center justify-center rounded-md text-[11px] ${
+                isToday
+                  ? 'bg-blue-600 font-black text-white'
+                  : 'bg-slate-50 text-slate-700'
+              }`}
+            >
+              {day}
+            </div>
+          );
+        })}
+        {trailingEmpty.map((key) => (
+          <div key={key} className="h-6 rounded-md bg-slate-50/30" />
+        ))}
+      </div>
+      <div className="mt-2 flex items-center justify-between text-[11px]">
+        <span className="text-slate-500">季度：Q{info.quarter}</span>
+        <span className={info.isWeekend ? 'font-semibold text-amber-600' : 'text-slate-500'}>
+          {info.isWeekend ? '周末流量期' : '工作日'}
+        </span>
+      </div>
     </div>
   );
 }

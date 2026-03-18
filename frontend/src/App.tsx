@@ -8,13 +8,55 @@ import LoginModal, {
 import GameSetupPage, { CreateRunPayload } from './modules/game-setup/GameSetupPage';
 import MarketIntelPage from './modules/market-intel/MarketIntelPage';
 import LogisticsClearancePage from './modules/logistics-clearance/LogisticsClearancePage';
+import WarehouseInboundPage from './modules/warehouse-inbound/WarehouseInboundPage';
 import ShopeePage from './modules/shopee/ShopeePage';
 import homeLogo from './assets/home/logo.png';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000';
 const ACCESS_TOKEN_KEY = 'cbec_access_token';
 
-type AppStage = 'loading' | 'setup' | 'intel' | 'logistics' | 'shopee';
+type AppStage = 'loading' | 'setup' | 'intel' | 'logistics' | 'warehouse' | 'shopee';
+type RoutedStage = Exclude<AppStage, 'loading'>;
+type SetupSubView = 'default' | 'run-data' | 'finance' | 'history' | 'admin-buyer-pool';
+
+function parseStageFromPath(
+  pathname: string
+): { publicId: string; stage: RoutedStage; setupSubView: SetupSubView } | null {
+  const matched = pathname.match(
+    /^\/u\/([^/]+)\/(setup|intel|logistics|warehouse|shopee)(?:\/(.*))?\/?$/
+  );
+  if (!matched) return null;
+  const stage = matched[2] as RoutedStage;
+  const tail = (matched[3] || '').replace(/^\/+|\/+$/g, '');
+  let setupSubView: SetupSubView = 'default';
+  if (stage === 'setup') {
+    if (tail === 'admin/buyer-pool') setupSubView = 'admin-buyer-pool';
+    else if (tail === 'run-data') setupSubView = 'run-data';
+    else if (tail === 'finance') setupSubView = 'finance';
+    else if (tail === 'history') setupSubView = 'history';
+  }
+  return {
+    publicId: decodeURIComponent(matched[1]),
+    stage,
+    setupSubView,
+  };
+}
+
+function buildStagePath(publicId: string, stage: RoutedStage, setupSubView: SetupSubView = 'default'): string {
+  if (stage === 'setup' && setupSubView === 'admin-buyer-pool') {
+    return `/u/${encodeURIComponent(publicId)}/setup/admin/buyer-pool`;
+  }
+  if (stage === 'setup' && setupSubView === 'run-data') {
+    return `/u/${encodeURIComponent(publicId)}/setup/run-data`;
+  }
+  if (stage === 'setup' && setupSubView === 'finance') {
+    return `/u/${encodeURIComponent(publicId)}/setup/finance`;
+  }
+  if (stage === 'setup' && setupSubView === 'history') {
+    return `/u/${encodeURIComponent(publicId)}/setup/history`;
+  }
+  return `/u/${encodeURIComponent(publicId)}/${stage}`;
+}
 
 interface CurrentRunResponse {
   run: {
@@ -31,6 +73,7 @@ interface CurrentRunResponse {
 
 interface MeResponse {
   id: number;
+  public_id: string;
   username: string;
   role: string;
   full_name: string | null;
@@ -52,6 +95,7 @@ export default function App() {
   const [isStartingRun, setIsStartingRun] = useState(false);
   const [isResettingRun, setIsResettingRun] = useState(false);
   const [currentUser, setCurrentUser] = useState<MeResponse | null>(null);
+  const [setupSubView, setSetupSubView] = useState<SetupSubView>('default');
   const [schoolKeyword, setSchoolKeyword] = useState('');
   const [schoolOptions, setSchoolOptions] = useState<SchoolOption[]>([]);
   const [isSchoolLoading, setIsSchoolLoading] = useState(false);
@@ -70,7 +114,33 @@ export default function App() {
     confirmPassword: '',
   });
 
-  const resolveStageByCurrentRun = async (token: string) => {
+  const navigateToStage = (
+    stage: RoutedStage,
+    options?: { replace?: boolean; setupSubView?: SetupSubView }
+  ) => {
+    if (!currentUser?.public_id) {
+      setAppStage(stage);
+      if (stage === 'setup') {
+        setSetupSubView(options?.setupSubView ?? 'default');
+      } else {
+        setSetupSubView('default');
+      }
+      return;
+    }
+    const nextSetupSubView = stage === 'setup' ? options?.setupSubView ?? 'default' : 'default';
+    const path = buildStagePath(currentUser.public_id, stage, nextSetupSubView);
+    if (window.location.pathname !== path) {
+      if (options?.replace) {
+        window.history.replaceState(null, '', path);
+      } else {
+        window.history.pushState(null, '', path);
+      }
+    }
+    setAppStage(stage);
+    setSetupSubView(nextSetupSubView);
+  };
+
+  const resolveStageByCurrentRun = async (token: string, publicId: string) => {
     setSetupError('');
     setAppStage('loading');
 
@@ -82,18 +152,35 @@ export default function App() {
       if (!response.ok) {
         setSetupError('读取开局信息失败，请重试。');
         setCurrentRun(null);
+        const fallbackPath = buildStagePath(publicId, 'setup');
+        window.history.replaceState(null, '', fallbackPath);
         setAppStage('setup');
         return;
       }
 
       const data = (await response.json()) as CurrentRunResponse;
       setCurrentRun(data.run);
-      // Always land on setup page first; user enters Shopee manually.
-      setAppStage('setup');
+      const parsed = parseStageFromPath(window.location.pathname);
+      const parsedMatched = parsed && parsed.publicId === publicId;
+      const stageFromPath = parsedMatched ? parsed.stage : 'setup';
+      const setupSubViewFromPath = parsedMatched ? parsed.setupSubView : 'default';
+      const canKeepSetupSubView = !data.run && stageFromPath === 'setup';
+      const nextStage: RoutedStage = data.run ? stageFromPath : 'setup';
+      const nextSetupSubView: SetupSubView =
+        nextStage === 'setup' ? (data.run ? setupSubViewFromPath : canKeepSetupSubView ? setupSubViewFromPath : 'default') : 'default';
+      const nextPath =
+        parsedMatched && (data.run || canKeepSetupSubView)
+          ? window.location.pathname
+          : buildStagePath(publicId, nextStage, nextSetupSubView);
+      window.history.replaceState(null, '', nextPath);
+      setAppStage(nextStage);
+      setSetupSubView(nextSetupSubView);
     } catch {
       setSetupError('读取开局信息失败，请检查网络后重试。');
       setCurrentRun(null);
+      window.history.replaceState(null, '', buildStagePath(publicId, 'setup'));
       setAppStage('setup');
+      setSetupSubView('default');
     }
   };
 
@@ -129,7 +216,7 @@ export default function App() {
 
       setCurrentUser(me);
       setIsAuthenticated(true);
-      await resolveStageByCurrentRun(token);
+      await resolveStageByCurrentRun(token, me.public_id);
       setIsAuthChecking(false);
     };
 
@@ -168,6 +255,23 @@ export default function App() {
     };
   }, [authMode, schoolKeyword]);
 
+  useEffect(() => {
+    if (!isAuthenticated || !currentUser?.public_id) return;
+    const onPopState = () => {
+      const parsed = parseStageFromPath(window.location.pathname);
+      if (!parsed || parsed.publicId !== currentUser.public_id) {
+        window.history.replaceState(null, '', buildStagePath(currentUser.public_id, 'setup'));
+        setAppStage('setup');
+        setSetupSubView('default');
+        return;
+      }
+      setAppStage(parsed.stage);
+      setSetupSubView(parsed.setupSubView);
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, [isAuthenticated, currentUser?.public_id]);
+
   const handleLoginSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setAuthError('');
@@ -200,7 +304,7 @@ export default function App() {
       setIsAuthenticated(true);
       setAppStage('loading');
       setLoginForm({ username: '', password: '' });
-      await resolveStageByCurrentRun(result.access_token);
+      await resolveStageByCurrentRun(result.access_token, me.public_id);
     } catch {
       setAuthError('登录服务暂不可用，请稍后再试。');
     } finally {
@@ -299,12 +403,16 @@ export default function App() {
       if (response.status === 201) {
         const created = (await response.json()) as NonNullable<CurrentRunResponse['run']>;
         setCurrentRun(created);
-        setAppStage('intel');
+        navigateToStage('intel');
         return;
       }
 
       if (response.status === 409) {
-        await resolveStageByCurrentRun(token);
+        if (!currentUser?.public_id) {
+          setSetupError('读取用户信息失败，请重新登录。');
+          return;
+        }
+        await resolveStageByCurrentRun(token, currentUser.public_id);
         return;
       }
 
@@ -323,37 +431,46 @@ export default function App() {
     setCurrentUser(null);
     setAuthMode('login');
     setAppStage('loading');
+    window.history.replaceState(null, '', '/');
     setAuthError('');
     setSetupError('');
     setLoginForm({ username: '', password: '' });
   };
 
   const handleEnterRunningRun = () => {
-    setAppStage('intel');
+    navigateToStage('intel');
   };
 
   const handleEnterLogisticsFromSetup = () => {
-    setAppStage('logistics');
+    navigateToStage('logistics');
   };
 
   const handleEnterShopeeFromSetup = () => {
-    setAppStage('shopee');
+    navigateToStage('shopee');
   };
 
   const handleEnterShopeeFromIntel = () => {
-    setAppStage('logistics');
+    navigateToStage('logistics');
   };
 
   const handleEnterShopeeFromLogistics = () => {
-    setAppStage('shopee');
+    navigateToStage('warehouse');
+  };
+
+  const handleEnterShopeeFromWarehouse = () => {
+    navigateToStage('shopee');
   };
 
   const handleBackToSetupFromIntel = () => {
-    setAppStage('setup');
+    navigateToStage('setup');
   };
 
   const handleBackToSetupFromLogistics = () => {
-    setAppStage('setup');
+    navigateToStage('setup');
+  };
+
+  const handleBackToSetupFromWarehouse = () => {
+    navigateToStage('setup');
   };
 
   const handleResetCurrentRun = async () => {
@@ -378,7 +495,11 @@ export default function App() {
         setSetupError(data.detail || '重置当前局失败，请稍后重试。');
         return;
       }
-      await resolveStageByCurrentRun(token);
+      if (!currentUser?.public_id) {
+        setSetupError('读取用户信息失败，请重新登录。');
+        return;
+      }
+      await resolveStageByCurrentRun(token, currentUser.public_id);
     } catch {
       setSetupError('重置当前局失败，请检查网络后重试。');
     } finally {
@@ -386,10 +507,16 @@ export default function App() {
     }
   };
 
-  let mainContent: JSX.Element = <div className="fixed inset-0 bg-[#f5f5f5]" />;
+  let mainContent = <div className="fixed inset-0 bg-[#f5f5f5]" />;
   if (isAuthenticated) {
     if (appStage === 'shopee') {
-      mainContent = <ShopeePage />;
+      mainContent = (
+        <ShopeePage
+          run={currentRun}
+          currentUser={currentUser}
+          onBackToSetup={handleBackToSetupFromWarehouse}
+        />
+      );
     } else if (appStage === 'logistics') {
       mainContent = (
         <LogisticsClearancePage
@@ -397,6 +524,15 @@ export default function App() {
           currentUser={currentUser}
           onBackToSetup={handleBackToSetupFromLogistics}
           onEnterShopee={handleEnterShopeeFromLogistics}
+        />
+      );
+    } else if (appStage === 'warehouse') {
+      mainContent = (
+        <WarehouseInboundPage
+          run={currentRun}
+          currentUser={currentUser}
+          onBackToSetup={handleBackToSetupFromWarehouse}
+          onEnterShopee={handleEnterShopeeFromWarehouse}
         />
       );
     } else if (appStage === 'intel') {
@@ -419,9 +555,14 @@ export default function App() {
           onSubmit={handleCreateRun}
           onEnterRunningRun={handleEnterRunningRun}
           onEnterLogistics={handleEnterLogisticsFromSetup}
+          onEnterWarehouse={() => navigateToStage('warehouse')}
           onEnterShopee={handleEnterShopeeFromSetup}
           onResetCurrentRun={handleResetCurrentRun}
           onLogout={handleLogout}
+          setupSubView={setupSubView}
+          onSetupSubViewChange={(next) =>
+            navigateToStage('setup', { setupSubView: next })
+          }
         />
       );
     } else {

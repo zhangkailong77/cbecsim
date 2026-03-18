@@ -3,11 +3,13 @@ from dotenv import load_dotenv
 from pathlib import Path
 import os
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app.api.routes.auth import router as auth_router
 from app.api.routes.game import router as game_router
 from app.api.routes.health import router as health_router
 from app.api.routes.market import router as market_router
+from app.api.routes.shopee import router as shopee_router
 from app.db import init_database
 
 load_dotenv(Path(__file__).resolve().parents[3] / ".env")
@@ -47,5 +49,10 @@ app.include_router(health_router)
 app.include_router(auth_router)
 app.include_router(game_router)
 app.include_router(market_router)
+app.include_router(shopee_router)
+
+uploads_root = Path(__file__).resolve().parent / "uploads"
+uploads_root.mkdir(parents=True, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=uploads_root), name="uploads")
 
 init_database()

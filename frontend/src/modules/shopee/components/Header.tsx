@@ -1,17 +1,72 @@
 import React from 'react';
-import { Grid, BookOpen, Bell, User } from 'lucide-react';
+import { Grid, BookOpen, Bell, User, ArrowLeft } from 'lucide-react';
 import shopeeLogo from '../assets/shopee-logo.svg';
 
-export default function Header() {
+interface HeaderProps {
+  playerName: string;
+  runId: number | null;
+  onBackToSetup: () => void;
+  onBackToDashboard: () => void;
+  onNavigateToView: (view: 'dashboard' | 'my-orders' | 'my-products' | 'new-product') => void;
+  activeView: 'dashboard' | 'my-orders' | 'my-products' | 'new-product';
+}
+
+export default function Header({
+  playerName,
+  runId,
+  onBackToSetup,
+  onBackToDashboard,
+  onNavigateToView,
+  activeView,
+}: HeaderProps) {
+  const renderBreadcrumb = () => {
+    if (activeView === 'dashboard') return null;
+    if (activeView === 'my-orders') {
+      return (
+        <div className="flex items-center gap-2 text-[14px]">
+          <span className="text-gray-300">{'>'}</span>
+          <button type="button" onClick={() => onNavigateToView('my-orders')} className="text-gray-700 hover:text-[#ee4d2d]">
+            我的订单
+          </button>
+        </div>
+      );
+    }
+    if (activeView === 'my-products') {
+      return (
+        <div className="flex items-center gap-2 text-[14px]">
+          <span className="text-gray-300">{'>'}</span>
+          <button type="button" onClick={() => onNavigateToView('my-products')} className="text-gray-700 hover:text-[#ee4d2d]">
+            我的产品
+          </button>
+        </div>
+      );
+    }
+    return (
+      <div className="flex items-center gap-2 text-[14px]">
+        <span className="text-gray-300">{'>'}</span>
+        <button type="button" onClick={() => onNavigateToView('my-products')} className="text-gray-700 hover:text-[#ee4d2d]">
+          我的产品
+        </button>
+        <span className="text-gray-300">{'>'}</span>
+        <button type="button" onClick={() => onNavigateToView('new-product')} className="text-gray-700 hover:text-[#ee4d2d]">
+          添加新商品
+        </button>
+      </div>
+    );
+  };
+
   return (
     <header className="h-[60px] bg-white border-b border-gray-200 flex items-center justify-between px-6 sticky top-0 z-50">
-      <div className="flex items-center gap-2">
-        <img 
-          src={shopeeLogo}
-          alt="Shopee Logo" 
-          className="h-8"
-        />
-        <span className="text-[17px] font-normal text-[#333333] ml-1">卖家中心</span>
+      <div className="flex items-center gap-3">
+        <button type="button" onClick={onBackToDashboard} className="flex items-center gap-2">
+          <img 
+            src={shopeeLogo}
+            alt="Shopee Logo" 
+            className="h-8"
+          />
+          <span className="text-[17px] font-normal text-[#333333] ml-1 hover:text-[#ee4d2d]">卖家中心</span>
+        </button>
+        {renderBreadcrumb()}
       </div>
       
       <div className="flex items-center gap-6">
@@ -30,38 +85,25 @@ export default function Header() {
         
         <div className="h-6 w-[1px] bg-gray-200"></div>
         
-        <div className="flex items-center gap-3 cursor-pointer group">
-          <div className="flex flex-col items-center">
-            <div className="w-8 h-8 flex items-center justify-center">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#ee4d2d" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-                <polyline points="9 22 9 12 15 12 15 22" />
-              </svg>
-            </div>
-            <span className="text-[10px] text-[#ee4d2d] -mt-1 font-bold scale-75">Homeneat</span>
-          </div>
-          <span className="text-[16px] text-[#333333] group-hover:text-[#ee4d2d] ml-1">霍尼特</span>
-          <ChevronDown size={16} className="text-gray-400" />
+        <div className="h-6 w-[1px] bg-gray-200"></div>
+
+        <button
+          type="button"
+          onClick={onBackToSetup}
+          className="inline-flex items-center gap-1 rounded-full border border-slate-200 px-3 py-1.5 text-[12px] font-semibold text-slate-700 hover:bg-slate-50"
+        >
+          <ArrowLeft size={14} />
+          返回工作台
+        </button>
+
+        <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5">
+          <User size={14} className="text-slate-500" />
+          <span className="text-[12px] font-semibold text-slate-700">玩家: {playerName}</span>
+        </div>
+        <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1.5">
+          <span className="text-[12px] font-semibold text-slate-700">局 #{runId ?? '-'}</span>
         </div>
       </div>
     </header>
-  );
-}
-
-function ChevronDown({ size, className }: { size: number, className: string }) {
-  return (
-    <svg 
-      width={size} 
-      height={size} 
-      viewBox="0 0 24 24" 
-      fill="none" 
-      stroke="currentColor" 
-      strokeWidth="2" 
-      strokeLinecap="round" 
-      strokeLinejoin="round" 
-      className={className}
-    >
-      <path d="m6 9 6 6 6-6" />
-    </svg>
   );
 }

@@ -501,3 +501,247 @@ def test_procurement_rejects_order_when_quantity_below_minimum():
         },
     )
     assert response.status_code == 422
+
+
+def test_shopee_product_draft_flow_and_publish(monkeypatch):
+    from app.api.routes import shopee as shopee_route
+
+    monkeypatch.setattr(
+        shopee_route,
+        "_save_shopee_image",
+        lambda _db, img: f"https://oss.example.com/{(img.filename or 'image.jpg').replace(' ', '_')}",
+    )
+    monkeypatch.setattr(
+        shopee_route,
+        "_save_shopee_video",
+        lambda _db, video: f"https://oss.example.com/{(video.filename or 'video.mp4').replace(' ', '_')}",
+    )
+
+    token = _register_or_login_player("13800138201")
+    run = _create_running_run(token)
+
+    create_draft = client.post(
+        f"/shopee/runs/{run['id']}/product-drafts",
+        headers={"Authorization": f"Bearer {token}"},
+        data={
+            "title": "便携榨汁杯",
+            "category": "厨房电器",
+            "gtin": "6901234567890",
+            "description": "支持 USB 充电，适合宿舍和办公室。",
+            "cover_index": "0",
+            "cover_index_34": "0",
+        },
+        files=[
+            ("images", ("cover.jpg", b"mock-image-11", "image/jpeg")),
+            ("images_34", ("cover34.jpg", b"mock-image-34", "image/jpeg")),
+        ],
+    )
+    assert create_draft.status_code == 201
+    draft_body = create_draft.json()
+    assert draft_body["title"] == "便携榨汁杯"
+    assert draft_body["gtin"] == "6901234567890"
+    assert draft_body["image_count_11"] == 1
+    assert draft_body["image_count_34"] == 1
+    assert draft_body["cover_url"].startswith("https://oss.example.com/")
+
+    draft_id = draft_body["id"]
+
+    get_draft = client.get(
+        f"/shopee/runs/{run['id']}/product-drafts/{draft_id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert get_draft.status_code == 200
+    get_body = get_draft.json()
+    assert get_body["id"] == draft_id
+    assert get_body["title"] == "便携榨汁杯"
+    assert get_body["description"] == "支持 USB 充电，适合宿舍和办公室。"
+    assert len(get_body["images_11"]) == 1
+    assert len(get_body["images_34"]) == 1
+
+    update_draft = client.put(
+        f"/shopee/runs/{run['id']}/product-drafts/{draft_id}",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "title": "便携榨汁杯 Pro",
+            "category": "厨房电器",
+            "gtin": "6901234567890",
+            "description": "支持 USB 充电，续航升级。",
+        },
+    )
+    assert update_draft.status_code == 200
+    assert update_draft.json()["title"] == "便携榨汁杯 Pro"
+
+    append_assets = client.post(
+        f"/shopee/runs/{run['id']}/product-drafts/{draft_id}/assets",
+        headers={"Authorization": f"Bearer {token}"},
+        files=[
+            ("images", ("more.jpg", b"more-image-11", "image/jpeg")),
+            ("images_34", ("more34.jpg", b"more-image-34", "image/jpeg")),
+            ("video", ("intro.mp4", b"mock-video", "video/mp4")),
+        ],
+    )
+    assert append_assets.status_code == 200
+    assets_body = append_assets.json()
+    assert assets_body["image_count_11"] == 2
+    assert assets_body["image_count_34"] == 2
+    assert assets_body["video_url"].endswith("intro.mp4")
+
+    save_and_delist = client.post(
+        f"/shopee/runs/{run['id']}/product-drafts/{draft_id}/publish",
+        headers={"Authorization": f"Bearer {token}"},
+        data={"status_value": "unpublished"},
+    )
+    assert save_and_delist.status_code == 201
+    delist_body = save_and_delist.json()
+    assert delist_body["status"] == "unpublished"
+    assert delist_body["draft_id"] == draft_id
+
+
+def test_shopee_draft_publish_live(monkeypatch):
+    from app.api.routes import shopee as shopee_route
+
+    monkeypatch.setattr(
+        shopee_route,
+        "_save_shopee_image",
+        lambda _db, img: f"https://oss.example.com/{(img.filename or 'image.jpg').replace(' ', '_')}",
+    )
+
+    token = _register_or_login_player("13800138202")
+    run = _create_running_run(token)
+
+    create_draft = client.post(
+        f"/shopee/runs/{run['id']}/product-drafts",
+        headers={"Authorization": f"Bearer {token}"},
+        data={
+            "title": "蓝牙耳机",
+            "category": "手机数码",
+            "gtin": "1234567890123",
+            "cover_index": "0",
+        },
+        files=[("images", ("cover.jpg", b"mock-image-11", "image/jpeg"))],
+    )
+    assert create_draft.status_code == 201
+    draft_id = create_draft.json()["id"]
+
+    publish_live = client.post(
+        f"/shopee/runs/{run['id']}/product-drafts/{draft_id}/publish",
+        headers={"Authorization": f"Bearer {token}"},
+        data={"status_value": "live"},
+    )
+    assert publish_live.status_code == 201
+    publish_body = publish_live.json()
+    assert publish_body["status"] == "live"
+    assert publish_body["listing_id"] > 0
+
+    products = client.get(
+        f"/shopee/runs/{run['id']}/products",
+        headers={"Authorization": f"Bearer {token}"},
+        params={"type": "live"},
+    )
+    assert products.status_code == 200
+    rows = products.json()["listings"]
+    assert any(row["id"] == publish_body["listing_id"] for row in rows)
+
+
+def _create_live_listing_for_run(monkeypatch, token: str, run_id: int, *, stock: int, price: int = 129) -> int:
+    from app.api.routes import shopee as shopee_route
+
+    monkeypatch.setattr(
+        shopee_route,
+        "_save_shopee_image",
+        lambda _db, img: f"https://oss.example.com/{(img.filename or 'image.jpg').replace(' ', '_')}",
+    )
+
+    create_draft = client.post(
+        f"/shopee/runs/{run_id}/product-drafts",
+        headers={"Authorization": f"Bearer {token}"},
+        data={
+            "title": "模拟订单测试商品",
+            "category": "美妆个护",
+            "gtin": "9988776655443",
+            "cover_index": "0",
+        },
+        files=[("images", ("cover.jpg", b"mock-image-11", "image/jpeg"))],
+    )
+    assert create_draft.status_code == 201
+    draft_id = create_draft.json()["id"]
+
+    publish_live = client.post(
+        f"/shopee/runs/{run_id}/product-drafts/{draft_id}/publish",
+        headers={"Authorization": f"Bearer {token}"},
+        data={
+            "status_value": "live",
+            "quality_status": "内容合格",
+            "price": str(price),
+            "stock_available": str(stock),
+            "shipping_standard": "true",
+        },
+    )
+    assert publish_live.status_code == 201
+    return int(publish_live.json()["listing_id"])
+
+
+def test_admin_simulate_orders_generates_orders_and_visible_to_player(monkeypatch):
+    player_token = _register_or_login_player("13800138211")
+    run = _create_running_run(player_token)
+    _create_live_listing_for_run(monkeypatch, player_token, run["id"], stock=30, price=99)
+
+    admin_login = client.post("/auth/login", json={"username": "yzcube", "password": "yzcube123"})
+    assert admin_login.status_code == 200
+    admin_token = admin_login.json()["access_token"]
+
+    simulate_resp = client.post(
+        f"/game/admin/runs/{run['id']}/orders/simulate",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert simulate_resp.status_code == 200
+    payload = simulate_resp.json()
+    assert payload["generated_order_count"] > 0
+    assert payload["active_buyer_count"] > 0
+
+    orders_resp = client.get(
+        f"/shopee/runs/{run['id']}/orders",
+        headers={"Authorization": f"Bearer {player_token}"},
+        params={"type": "all"},
+    )
+    assert orders_resp.status_code == 200
+    orders_payload = orders_resp.json()
+    assert orders_payload["total"] >= payload["generated_order_count"]
+    assert orders_payload["simulated_recent_1h"] >= payload["generated_order_count"]
+
+
+def test_admin_simulate_orders_skips_when_no_live_products():
+    player_token = _register_or_login_player("13800138212")
+    run = _create_running_run(player_token)
+
+    admin_login = client.post("/auth/login", json={"username": "yzcube", "password": "yzcube123"})
+    assert admin_login.status_code == 200
+    admin_token = admin_login.json()["access_token"]
+
+    simulate_resp = client.post(
+        f"/game/admin/runs/{run['id']}/orders/simulate",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert simulate_resp.status_code == 200
+    payload = simulate_resp.json()
+    assert payload["generated_order_count"] == 0
+    assert "no_live_products" in payload["skip_reasons"]
+
+
+def test_admin_simulate_orders_skips_when_no_stock(monkeypatch):
+    player_token = _register_or_login_player("13800138213")
+    run = _create_running_run(player_token)
+    _create_live_listing_for_run(monkeypatch, player_token, run["id"], stock=0, price=99)
+
+    admin_login = client.post("/auth/login", json={"username": "yzcube", "password": "yzcube123"})
+    assert admin_login.status_code == 200
+    admin_token = admin_login.json()["access_token"]
+
+    simulate_resp = client.post(
+        f"/game/admin/runs/{run['id']}/orders/simulate",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert simulate_resp.status_code == 200
+    payload = simulate_resp.json()
+    assert payload["generated_order_count"] == 0
+    assert "no_stock" in payload["skip_reasons"]

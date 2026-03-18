@@ -10,7 +10,7 @@ from app.core.security import (
     hash_password,
     verify_password,
 )
-from app.db import get_db
+from app.db import generate_public_user_id, get_db
 from app.models import School, User
 
 
@@ -30,6 +30,7 @@ class RegisterRequest(BaseModel):
 
 class RegisterResponse(BaseModel):
     id: int
+    public_id: str
     username: str
     role: str
 
@@ -51,6 +52,7 @@ class SchoolResponse(BaseModel):
 
 class MeResponse(BaseModel):
     id: int
+    public_id: str
     username: str
     role: str
     full_name: str | None = None
@@ -97,6 +99,7 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)) -> Registe
         )
 
     user = User(
+        public_id=generate_public_user_id(),
         username=payload.username,
         password_hash=hash_password(payload.password),
         role="player",
@@ -109,7 +112,7 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)) -> Registe
     db.add(user)
     db.commit()
     db.refresh(user)
-    return RegisterResponse(id=user.id, username=user.username, role=user.role)
+    return RegisterResponse(id=user.id, public_id=user.public_id, username=user.username, role=user.role)
 
 
 @router.post("/login", response_model=LoginResponse)
@@ -146,6 +149,7 @@ def me(current_user: dict = Depends(get_current_user), db: Session = Depends(get
 
     return MeResponse(
         id=user.id,
+        public_id=user.public_id,
         username=user.username,
         role=user.role,
         full_name=user.full_name,

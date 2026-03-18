@@ -348,9 +348,9 @@ export default function LogisticsClearancePage({ run, currentUser, onBackToSetup
                 onClick={onEnterShopee}
                 disabled={!canEnterShopee}
                 className="rounded-full bg-[#2563eb] px-5 py-1.5 text-white disabled:cursor-not-allowed disabled:opacity-40"
-                title={canEnterShopee ? '' : '至少完成 1 票清关后可进入运营'}
+                title={canEnterShopee ? '' : '至少完成 1 票清关后可进入 Step 04 入仓'}
               >
-                进入运营
+                进入入仓
               </button>
             </div>
           </div>

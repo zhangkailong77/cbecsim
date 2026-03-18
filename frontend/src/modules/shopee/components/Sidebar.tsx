@@ -2,6 +2,9 @@ import React from 'react';
 import { 
   ChevronDown
 } from 'lucide-react';
+import { useState } from 'react';
+
+type ShopeeView = 'dashboard' | 'my-orders' | 'my-products' | 'new-product';
 
 const menuItems = [
   {
@@ -30,26 +33,76 @@ const menuItems = [
   }
 ];
 
-export default function Sidebar() {
+interface SidebarProps {
+  activeView: ShopeeView;
+  onSelectView: (view: ShopeeView) => void;
+}
+
+export default function Sidebar({ activeView, onSelectView }: SidebarProps) {
+  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
+    命令: true,
+    产品: true,
+    营销中心: true,
+    客户服务: true,
+    金融: true,
+    数据: true,
+  });
+
+  const toggleSection = (title: string) => {
+    setExpandedSections((prev) => ({
+      ...prev,
+      [title]: !prev[title],
+    }));
+  };
+
   return (
     <div className="w-[200px] bg-white border-r border-gray-200 h-full overflow-y-auto custom-scrollbar flex-shrink-0">
       <div className="py-4">
         {menuItems.map((item, index) => (
           <div key={index} className="mb-4">
-            <div className="px-6 py-2 flex items-center justify-between text-[#999999] cursor-pointer hover:bg-gray-50 group">
+            <button
+              type="button"
+              onClick={() => toggleSection(item.title)}
+              className="w-full px-6 py-2 flex items-center justify-between text-[#999999] cursor-pointer hover:bg-gray-50 group"
+            >
               <span className="text-[14px] font-normal group-hover:text-[#333333] transition-colors">{item.title}</span>
-              <ChevronDown size={14} className="text-[#cccccc]" />
-            </div>
-            <div className="mt-0.5">
-              {item.children.map((child, childIndex) => (
-                <div 
-                  key={childIndex} 
-                  className="pl-10 pr-6 py-2 text-[14px] text-[#333333] cursor-pointer hover:text-[#ee4d2d] transition-colors font-normal"
-                >
-                  {child}
-                </div>
-              ))}
-            </div>
+              <ChevronDown
+                size={14}
+                className={`text-[#cccccc] transition-transform ${
+                  expandedSections[item.title] ? 'rotate-0' : '-rotate-90'
+                }`}
+              />
+            </button>
+            {expandedSections[item.title] && (
+              <div className="mt-0.5">
+                {item.children.map((child, childIndex) => (
+                  <button
+                    key={childIndex}
+                    type="button"
+                    onClick={() => {
+                      if (child === '我的订单') {
+                        onSelectView('my-orders');
+                      }
+                      if (child === '我的产品') {
+                        onSelectView('my-products');
+                      }
+                      if (child === '添加新产品') {
+                        onSelectView('new-product');
+                      }
+                    }}
+                    className={`w-full text-left pl-10 pr-6 py-2 text-[14px] transition-colors font-normal ${
+                      ((child === '我的订单' && activeView === 'my-orders') ||
+                        (child === '我的产品' && activeView === 'my-products') ||
+                        (child === '添加新产品' && activeView === 'new-product'))
+                        ? 'text-[#ee4d2d] border-l-2 border-[#ee4d2d] bg-[#fff7f5]'
+                        : 'text-[#333333] hover:text-[#ee4d2d]'
+                    }`}
+                  >
+                    {child}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         ))}
       </div>
