@@ -310,13 +310,6 @@ export default function MyIncomeView({ runId }: MyIncomeViewProps) {
       page: '1',
       page_size: '100',
     });
-    const toShipParams = new URLSearchParams({
-      type: 'toship',
-      source: 'to_process',
-      sort_by: 'ship_by_date_asc',
-      page: '1',
-      page_size: '100',
-    });
     const completedParams = new URLSearchParams({
       type: 'completed',
       page: '1',
@@ -324,15 +317,13 @@ export default function MyIncomeView({ runId }: MyIncomeViewProps) {
     });
     if (queryKeyword) {
       shippingParams.set('keyword', queryKeyword);
-      toShipParams.set('keyword', queryKeyword);
       completedParams.set('keyword', queryKeyword);
     }
 
     setLoading(true);
     try {
-      const [shippingResp, toShipResp, completedResp] = await Promise.all([
+      const [shippingResp, completedResp] = await Promise.all([
         authedFetch<PendingOrdersResponse>(`${API_BASE_URL}/shopee/runs/${runId}/orders?${shippingParams.toString()}`),
-        authedFetch<PendingOrdersResponse>(`${API_BASE_URL}/shopee/runs/${runId}/orders?${toShipParams.toString()}`),
         authedFetch<PendingOrdersResponse>(`${API_BASE_URL}/shopee/runs/${runId}/orders?${completedParams.toString()}`),
       ]);
       const unreleasedCompleted = (completedResp.orders ?? []).filter((row) => {
@@ -343,7 +334,7 @@ export default function MyIncomeView({ runId }: MyIncomeViewProps) {
         const releaseAt = new Date(deliveredAt.getTime() + 3 * 24 * 60 * 60 * 1000);
         return anchorTick < releaseAt;
       });
-      const merged = [...(toShipResp.orders ?? []), ...(shippingResp.orders ?? []), ...unreleasedCompleted];
+      const merged = [...(shippingResp.orders ?? []), ...unreleasedCompleted];
       merged.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
       setPendingRows(merged);
     } catch (error) {
