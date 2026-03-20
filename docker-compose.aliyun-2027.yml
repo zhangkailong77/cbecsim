@@ -1,0 +1,28 @@
+services:
+  api:
+    build:
+      context: ./backend/apps/api-gateway
+      dockerfile: Dockerfile
+    container_name: cbec_api_2027
+    environment:
+      DATABASE_URL: ${CBEC_DATABASE_URL}
+      DB_NAME: ${CBEC_DB_NAME:-cbec_sim}
+      JWT_SECRET: ${CBEC_JWT_SECRET}
+      JWT_ALGORITHM: ${CBEC_JWT_ALGORITHM:-HS256}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${CBEC_ACCESS_TOKEN_EXPIRE_MINUTES:-10080}
+      CORS_ALLOW_ORIGINS: ${CBEC_CORS_ALLOW_ORIGINS:-http://112.124.32.196:2027}
+      CORS_ALLOW_ORIGIN_REGEX: ${CBEC_CORS_ALLOW_ORIGIN_REGEX:-^https?://(112\\.124\\.32\\.196)(:2027)?$}
+    restart: always
+
+  web:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: ${CBEC_VITE_API_BASE_URL:-http://112.124.32.196:2027/api}
+    container_name: cbec_web_2027
+    ports:
+      - "2027:80"
+    depends_on:
+      - api
+    restart: always
