@@ -1,6 +1,6 @@
 from datetime import date, datetime
 
-from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
@@ -690,6 +690,21 @@ class ShopeeOrderSettlement(Base):
 
 class ShopeeOrderGenerationLog(Base):
     __tablename__ = "shopee_order_generation_logs"
+    __table_args__ = (
+        Index(
+            "ix_shopee_order_generation_logs_run_user_tick_id",
+            "run_id",
+            "user_id",
+            "tick_time",
+            "id",
+        ),
+        Index(
+            "ix_shopee_order_generation_logs_run_user_created_at",
+            "run_id",
+            "user_id",
+            "created_at",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     run_id: Mapped[int] = mapped_column(ForeignKey("game_runs.id"), nullable=False, index=True)

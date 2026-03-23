@@ -91,6 +91,7 @@ def init_database():
     _ensure_shopee_spec_templates_columns()
     _ensure_sim_buyer_profiles_columns()
     _ensure_shopee_orders_fulfillment_columns()
+    _ensure_shopee_order_generation_log_indexes()
     _cleanup_game_runs_legacy_columns()
     _ensure_table_comments()
     _ensure_column_comments()
@@ -1044,6 +1045,40 @@ def _ensure_shopee_orders_fulfillment_columns():
         if "must_restock_before_at" not in existing_columns:
             try:
                 conn.execute(text("CREATE INDEX ix_shopee_orders_must_restock_before_at ON shopee_orders (must_restock_before_at)"))
+            except Exception:
+                pass
+
+
+def _ensure_shopee_order_generation_log_indexes():
+    if DATABASE_URL.startswith("sqlite"):
+        return
+
+    inspector = inspect(engine)
+    if "shopee_order_generation_logs" not in inspector.get_table_names():
+        return
+
+    existing_indexes = {
+        idx["name"] for idx in inspector.get_indexes("shopee_order_generation_logs")
+    }
+    with engine.begin() as conn:
+        if "ix_shopee_order_generation_logs_run_user_tick_id" not in existing_indexes:
+            try:
+                conn.execute(
+                    text(
+                        "CREATE INDEX ix_shopee_order_generation_logs_run_user_tick_id "
+                        "ON shopee_order_generation_logs (run_id, user_id, tick_time, id)"
+                    )
+                )
+            except Exception:
+                pass
+        if "ix_shopee_order_generation_logs_run_user_created_at" not in existing_indexes:
+            try:
+                conn.execute(
+                    text(
+                        "CREATE INDEX ix_shopee_order_generation_logs_run_user_created_at "
+                        "ON shopee_order_generation_logs (run_id, user_id, created_at)"
+                    )
+                )
             except Exception:
                 pass
 

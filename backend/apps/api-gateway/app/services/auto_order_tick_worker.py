@@ -6,6 +6,7 @@ import os
 import time
 from datetime import datetime, timedelta
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.db import SessionLocal
@@ -44,16 +45,15 @@ def _run_one_cycle(db: Session, now: datetime) -> tuple[int, int]:
     simulated_tick_count = 0
 
     for run in running_runs:
-        last_log = (
-            db.query(ShopeeOrderGenerationLog)
+        latest_tick_time = (
+            db.query(func.max(ShopeeOrderGenerationLog.tick_time))
             .filter(
                 ShopeeOrderGenerationLog.run_id == run.id,
                 ShopeeOrderGenerationLog.user_id == run.user_id,
             )
-            .order_by(ShopeeOrderGenerationLog.tick_time.desc(), ShopeeOrderGenerationLog.id.desc())
-            .first()
+            .scalar()
         )
-        base_tick = last_log.tick_time if (last_log and last_log.tick_time) else run.created_at
+        base_tick = latest_tick_time or run.created_at
         if not base_tick:
             continue
         target_tick = _resolve_target_game_tick(run, now)

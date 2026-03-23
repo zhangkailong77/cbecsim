@@ -746,17 +746,16 @@ def admin_simulate_orders(
 
     effective_tick_time = tick_time
     if effective_tick_time is None:
-        last_log = (
-            db.query(ShopeeOrderGenerationLog)
+        latest_tick_time = (
+            db.query(func.max(ShopeeOrderGenerationLog.tick_time))
             .filter(
                 ShopeeOrderGenerationLog.run_id == run.id,
                 ShopeeOrderGenerationLog.user_id == run.user_id,
             )
-            .order_by(ShopeeOrderGenerationLog.tick_time.desc(), ShopeeOrderGenerationLog.id.desc())
-            .first()
+            .scalar()
         )
-        if last_log and last_log.tick_time:
-            effective_tick_time = last_log.tick_time + timedelta(hours=1)
+        if latest_tick_time:
+            effective_tick_time = latest_tick_time + timedelta(hours=1)
         else:
             effective_tick_time = datetime.utcnow()
 
@@ -2009,13 +2008,11 @@ def get_warehouse_backorder_risk_overview(
     run = _get_owned_running_run_or_404(db, run_id=run_id, user_id=current_user["id"])
 
     current_tick = (
-        db.query(ShopeeOrderGenerationLog.tick_time)
+        db.query(func.max(ShopeeOrderGenerationLog.tick_time))
         .filter(
             ShopeeOrderGenerationLog.run_id == run.id,
             ShopeeOrderGenerationLog.user_id == current_user["id"],
         )
-        .order_by(ShopeeOrderGenerationLog.tick_time.desc(), ShopeeOrderGenerationLog.id.desc())
-        .limit(1)
         .scalar()
     ) or datetime.utcnow()
 
