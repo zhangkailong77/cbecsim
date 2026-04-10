@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { HelpCircle, ChevronDown, RotateCcw } from 'lucide-react';
+import { HelpCircle, ChevronDown, RotateCcw, X } from 'lucide-react';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000';
 const ACCESS_TOKEN_KEY = 'cbec_access_token';
@@ -18,6 +18,9 @@ interface ProductRow {
   original_price: number;
   stock_available: number;
   quality_status: string;
+  quality_total_score?: number | null;
+  quality_scored_at?: string | null;
+  quality_score_version?: string | null;
   status: string;
   created_at: string;
   variants: ProductVariantRow[];
@@ -48,6 +51,35 @@ interface ProductsResponse {
   page_size: number;
   total: number;
   listings: ProductRow[];
+}
+
+interface QualityImageFeedbackItem {
+  image_ref: string;
+  image_label: string;
+  score?: number | null;
+  good: string;
+  bad: string;
+  suggestion: string;
+}
+
+interface QualityDetailResponse {
+  listing_id: number;
+  score_version: string;
+  provider: string;
+  text_model?: string | null;
+  vision_model?: string | null;
+  summary?: string | null;
+  total_score: number;
+  quality_status: string;
+  rule_score: number;
+  vision_score: number;
+  text_score: number;
+  consistency_score: number;
+  scoring_dimensions: Record<string, string[]>;
+  reasons: string[];
+  suggestions: string[];
+  image_feedback: QualityImageFeedbackItem[];
+  quality_scored_at: string;
 }
 
 interface MyProductsViewProps {
@@ -105,6 +137,8 @@ export default function MyProductsView({ runId, readOnly = false, onGotoNewProdu
   const [selectedProductIds, setSelectedProductIds] = useState<number[]>([]);
   const headerCheckboxRef = useRef<HTMLInputElement | null>(null);
   const [batchActing, setBatchActing] = useState(false);
+  const [qualityActionListingId, setQualityActionListingId] = useState<number | null>(null);
+  const [qualityDetail, setQualityDetail] = useState<QualityDetailResponse | null>(null);
 
   const switchType = (nextType: ProductType) => {
     const params = new URLSearchParams(window.location.search);
@@ -184,6 +218,50 @@ export default function MyProductsView({ runId, readOnly = false, onGotoNewProdu
       window.alert(`批量${actionLabel}失败，请稍后重试`);
     } finally {
       setBatchActing(false);
+    }
+  };
+
+  const recomputeQuality = async (listingId: number) => {
+    if (readOnly) {
+      window.alert(HISTORY_READONLY_DETAIL);
+      return;
+    }
+    if (!runId) return;
+    const token = localStorage.getItem(ACCESS_TOKEN_KEY);
+    if (!token) return;
+    setQualityActionListingId(listingId);
+    try {
+      const res = await fetch(`${API_BASE_URL}/shopee/runs/${runId}/listings/${listingId}/quality/recompute`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(data?.detail || '重评失败');
+      window.alert(`质量重评完成：${data?.quality_status || '-'}（${data?.total_score ?? '-'}分）`);
+      fetchData(activeType, keyword);
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : '重评失败，请稍后重试');
+    } finally {
+      setQualityActionListingId(null);
+    }
+  };
+
+  const viewQualityDetail = async (listingId: number) => {
+    if (!runId) return;
+    const token = localStorage.getItem(ACCESS_TOKEN_KEY);
+    if (!token) return;
+    setQualityActionListingId(listingId);
+    try {
+      const res = await fetch(`${API_BASE_URL}/shopee/runs/${runId}/listings/${listingId}/quality`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = (await res.json().catch(() => null)) as (QualityDetailResponse & { detail?: string }) | null;
+      if (!res.ok) throw new Error(data?.detail || '暂无质量详情');
+      setQualityDetail(data);
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : '查看质量详情失败');
+    } finally {
+      setQualityActionListingId(null);
     }
   };
 
@@ -390,10 +468,27 @@ export default function MyProductsView({ runId, readOnly = false, onGotoNewProdu
                     </div>
                     <div className="text-gray-700">{stockTotal}</div>
                     <div className="text-gray-500">-</div>
-                    <div className="inline-flex items-center gap-2 text-gray-700">
-                      <span className="h-2 w-2 rounded-full bg-[#19b26b]" />
-                      <span>{row.quality_status || '内容待完善'}</span>
-                    </div>
+                    <button
+                      type="button"
+                      disabled={qualityActionListingId === row.id}
+                      onClick={() => void viewQualityDetail(row.id)}
+                      className="inline-flex items-center gap-2 text-left text-gray-700 hover:text-[#3478f6] disabled:opacity-50"
+                      title="点击查看评分详情与优化建议"
+                    >
+                      <span
+                        className={`h-2 w-2 rounded-full ${
+                          (row.quality_total_score ?? 0) >= 85
+                            ? 'bg-[#19b26b]'
+                            : (row.quality_total_score ?? 0) >= 60
+                              ? 'bg-[#f59e0b]'
+                              : 'bg-[#ef4444]'
+                        }`}
+                      />
+                      <span>
+                        {row.quality_status || '内容待完善'}
+                        {typeof row.quality_total_score === 'number' ? `（${row.quality_total_score}）` : ''}
+                      </span>
+                    </button>
                     <div className="flex flex-col gap-2">
                       <button
                         type="button"
@@ -408,8 +503,22 @@ export default function MyProductsView({ runId, readOnly = false, onGotoNewProdu
                       >
                         {readOnly ? '查看' : '编辑'}
                       </button>
-                      <button className="text-left text-[#3478f6] hover:underline">提升</button>
-                      <button className="text-left text-[#3478f6] hover:underline">更多</button>
+                      <button
+                        type="button"
+                        disabled={qualityActionListingId === row.id}
+                        onClick={() => void recomputeQuality(row.id)}
+                        className="text-left text-[#3478f6] hover:underline disabled:opacity-50"
+                      >
+                        {qualityActionListingId === row.id ? '处理中...' : '提升'}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={qualityActionListingId === row.id}
+                        onClick={() => void viewQualityDetail(row.id)}
+                        className="text-left text-[#3478f6] hover:underline disabled:opacity-50"
+                      >
+                        更多
+                      </button>
                     </div>
                   </div>
 
@@ -467,6 +576,141 @@ export default function MyProductsView({ runId, readOnly = false, onGotoNewProdu
           </div>
         </div>
       </div>
+
+      {qualityDetail && (
+        <div className="fixed inset-0 z-50 bg-black/45 p-4 sm:p-8" onClick={() => setQualityDetail(null)}>
+          <div
+            className="mx-auto flex h-full w-full max-w-[1080px] flex-col overflow-hidden rounded border border-[#e5e5e5] bg-white shadow-[0_20px_56px_rgba(0,0,0,0.26)]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between border-b border-[#efefef] px-6 py-5">
+              <div>
+                <div className="text-[34px] leading-none font-semibold text-[#222]">评分详情与优化建议</div>
+                <div className="mt-2 text-[12px] text-[#888]">
+                  来源：{qualityDetail.provider} / {qualityDetail.vision_model || qualityDetail.text_model || '-'} · 时间：{qualityDetail.quality_scored_at}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setQualityDetail(null)}
+                className="rounded p-1 text-[#999] hover:bg-[#f5f5f5] hover:text-[#666]"
+                title="关闭"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="grid gap-3 border-b border-[#efefef] bg-[#fafafa] px-6 py-4 md:grid-cols-5">
+              {[
+                ['总分', qualityDetail.total_score],
+                ['规则分', qualityDetail.rule_score],
+                ['图像分', qualityDetail.vision_score],
+                ['文本分', qualityDetail.text_score],
+                ['一致性', qualityDetail.consistency_score],
+              ].map(([label, value]) => (
+                <div key={String(label)} className="rounded border border-[#efefef] bg-white px-3 py-2">
+                  <div className="text-[12px] text-[#999]">{label}</div>
+                  <div className="mt-1 text-[28px] leading-none font-semibold text-[#ee4d2d]">{value}</div>
+                </div>
+              ))}
+            </div>
+
+            <div className="border-b border-[#efefef] px-6 py-4">
+              <div className="rounded border border-[#efefef] bg-white px-4 py-3">
+                <div className="text-[14px] text-[#333]">
+                  综合评分：<span className="font-semibold">{(qualityDetail.total_score / 10).toFixed(1)} / 10</span>
+                </div>
+                <div className="mt-2 text-[13px] text-[#444]">
+                  评价总结（AI生成）：{(qualityDetail.summary || '').trim() || '模型暂未返回评价总结。'}
+                </div>
+              </div>
+            </div>
+
+            <div className="grid min-h-0 flex-1 gap-4 overflow-hidden px-6 py-5 lg:grid-cols-[1.05fr_0.95fr]">
+              <div className="min-h-0 space-y-4 overflow-y-auto pr-1">
+                <div className="rounded border border-[#efefef] bg-white p-4">
+                  <div className="text-[14px] font-semibold text-[#333]">维度详细分析与评分</div>
+                  <div className="mt-3 space-y-2 text-[12px] text-[#555]">
+                    {Object.entries(qualityDetail.scoring_dimensions || {}).map(([key, dims]) => (
+                      <div key={key} className="rounded border border-[#f3d5cc] bg-[#fff8f5] p-2.5">
+                        <div className="font-semibold text-[#cf4e2c]">
+                          {key === 'rule_score'
+                            ? '1. 规则维度 (Rule Engine)'
+                            : key === 'vision_score'
+                              ? '2. 图像维度 (Vision)'
+                              : key === 'text_score'
+                                ? '3. 文本维度 (Text)'
+                                : '4. 一致性维度 (Consistency)'}
+                        </div>
+                        <div className="mt-1 text-[#555]">
+                          分析：本维度重点评估 {(Array.isArray(dims) ? dims.map((x) => String(x)) : []).join('、') || '-'}。
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="rounded border border-[#efefef] bg-white p-4">
+                  <div className="text-[14px] font-semibold text-[#333]">主要问题</div>
+                  <ul className="mt-3 list-disc space-y-1 pl-5 text-[12px] text-[#555]">
+                    {(qualityDetail.reasons || []).map((item, idx) => (
+                      <li key={`${idx}-${item}`}>{item}</li>
+                    ))}
+                    {(!qualityDetail.reasons || qualityDetail.reasons.length === 0) && <li>暂无</li>}
+                  </ul>
+                </div>
+
+                <div className="rounded border border-[#efefef] bg-white p-4">
+                  <div className="text-[14px] font-semibold text-[#333]">专业建议与优化方向</div>
+                  <ol className="mt-3 list-decimal space-y-1 pl-5 text-[12px] text-[#555]">
+                    {(qualityDetail.suggestions || []).map((item, idx) => (
+                      <li key={`${idx}-${item}`}>{item}</li>
+                    ))}
+                    {(!qualityDetail.suggestions || qualityDetail.suggestions.length === 0) && <li>暂无</li>}
+                  </ol>
+                </div>
+              </div>
+
+              <div className="min-h-0 overflow-y-auto pr-1">
+                <div className="mb-3 text-[14px] font-semibold text-[#333]">逐图评价（主图 + SKU图）</div>
+                <div className="space-y-2">
+                  {(qualityDetail.image_feedback || []).map((item, idx) => (
+                    <div key={`${item.image_ref}-${idx}`} className="rounded border border-[#f3d5cc] bg-[#fff8f5] p-3">
+                      <div className="text-[13px] font-semibold text-[#cf4e2c]">{item.image_label || item.image_ref}</div>
+                      <div className="mt-1 text-[12px] text-[#555]">评分：{typeof item.score === 'number' ? `${(item.score / 10).toFixed(1)} / 10` : '-'}</div>
+                      <div className="mt-1 text-[12px] text-[#555]">优点：{item.good || '无'}</div>
+                      <div className="mt-1 text-[12px] text-[#555]">问题：{item.bad || '无'}</div>
+                      <div className="mt-1 text-[12px] text-[#555]">建议：{item.suggestion || '无'}</div>
+                    </div>
+                  ))}
+                  {(!qualityDetail.image_feedback || qualityDetail.image_feedback.length === 0) && (
+                    <div className="rounded border border-dashed border-[#f0cdbc] bg-[#fff8f5] p-3 text-[12px] text-[#a25a45]">
+                      当前模型未返回逐图评价，请点击“提升”后重评查看。
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 border-t border-[#efefef] bg-[#fafafa] px-6 py-3">
+              <button
+                type="button"
+                onClick={() => setQualityDetail(null)}
+                className="h-8 rounded border border-[#d9d9d9] px-4 text-[13px] text-[#555] hover:bg-white"
+              >
+                关闭
+              </button>
+              <button
+                type="button"
+                onClick={() => setQualityDetail(null)}
+                className="h-8 rounded bg-[#ee4d2d] px-4 text-[13px] text-white hover:bg-[#d84326]"
+              >
+                确定
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {selectedProductIds.length > 0 && (
         <div className="sticky bottom-0 z-40 -mx-6">

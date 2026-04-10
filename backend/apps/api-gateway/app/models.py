@@ -330,6 +330,9 @@ class ShopeeListing(Base):
     parent_sku: Mapped[str | None] = mapped_column(String(64), nullable=True)
     status: Mapped[str] = mapped_column(String(24), nullable=False, default="live", index=True)
     quality_status: Mapped[str] = mapped_column(String(64), nullable=False, default="内容合格")
+    quality_total_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    quality_scored_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    quality_score_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -347,6 +350,44 @@ class ShopeeListing(Base):
     specs = relationship("ShopeeListingSpecValue", back_populates="listing", cascade="all, delete-orphan")
     variants = relationship("ShopeeListingVariant", back_populates="listing", cascade="all, delete-orphan")
     wholesale_tiers = relationship("ShopeeListingWholesaleTier", back_populates="listing", cascade="all, delete-orphan")
+    quality_scores = relationship("ShopeeListingQualityScore", back_populates="listing", cascade="all, delete-orphan")
+
+
+class ShopeeListingQualityScore(Base):
+    __tablename__ = "shopee_listing_quality_scores"
+    __table_args__ = (
+        Index("ix_shopee_listing_quality_scores_listing_latest", "listing_id", "is_latest"),
+        Index("ix_shopee_listing_quality_scores_run_user_created", "run_id", "user_id", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    listing_id: Mapped[int] = mapped_column(ForeignKey("shopee_listings.id"), nullable=False, index=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("game_runs.id"), nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    score_version: Mapped[str] = mapped_column(String(32), nullable=False, default="v1")
+    provider: Mapped[str] = mapped_column(String(32), nullable=False, default="none")
+    text_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    vision_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    prompt_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    rule_score: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    vision_score: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    text_score: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    consistency_score: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_score: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    quality_status: Mapped[str] = mapped_column(String(32), nullable=False, default="内容待完善")
+    reasons_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    suggestions_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    raw_result_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    is_latest: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        index=True,
+    )
+
+    listing = relationship("ShopeeListing", back_populates="quality_scores")
 
 
 class ShopeeListingDraft(Base):

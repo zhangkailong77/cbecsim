@@ -87,6 +87,7 @@ def init_database():
     _ensure_shopee_listing_variants_columns()
     _ensure_shopee_listing_wholesale_tiers_columns()
     _ensure_shopee_listings_columns()
+    _ensure_shopee_listing_quality_scores_table()
     _ensure_shopee_listing_drafts_columns()
     _ensure_shopee_spec_templates_columns()
     _ensure_sim_buyer_profiles_columns()
@@ -898,6 +899,12 @@ def _ensure_shopee_listings_columns():
         missing_sql.append("ALTER TABLE shopee_listings ADD COLUMN schedule_publish_at DATETIME NULL")
     if "parent_sku" not in existing_columns:
         missing_sql.append("ALTER TABLE shopee_listings ADD COLUMN parent_sku VARCHAR(64) NULL")
+    if "quality_total_score" not in existing_columns:
+        missing_sql.append("ALTER TABLE shopee_listings ADD COLUMN quality_total_score INTEGER NULL")
+    if "quality_scored_at" not in existing_columns:
+        missing_sql.append("ALTER TABLE shopee_listings ADD COLUMN quality_scored_at DATETIME NULL")
+    if "quality_score_version" not in existing_columns:
+        missing_sql.append("ALTER TABLE shopee_listings ADD COLUMN quality_score_version VARCHAR(32) NULL")
 
     if not missing_sql:
         return
@@ -905,6 +912,13 @@ def _ensure_shopee_listings_columns():
     with engine.begin() as conn:
         for sql in missing_sql:
             conn.execute(text(sql))
+
+
+def _ensure_shopee_listing_quality_scores_table():
+    inspector = inspect(engine)
+    if "shopee_listing_quality_scores" in inspector.get_table_names():
+        return
+    Base.metadata.create_all(bind=engine, tables=[Base.metadata.tables["shopee_listing_quality_scores"]])
 
 
 def _ensure_shopee_listing_drafts_columns():
@@ -1102,6 +1116,7 @@ def _ensure_table_comments():
         "inventory_lots": "库存批次表",
         "inventory_stock_movements": "库存变动流水表（采购入库/订单占用/取消释放/补货冲减）",
         "shopee_listings": "Shopee 正式商品表",
+        "shopee_listing_quality_scores": "Shopee 商品内容质量评分记录表",
         "shopee_listing_drafts": "Shopee 商品草稿主表",
         "shopee_listing_draft_images": "Shopee 草稿图片表",
         "shopee_spec_templates": "Shopee 类目规格模板字段定义表",
@@ -1330,8 +1345,34 @@ def _ensure_column_comments():
             "parent_sku": "父SKU",
             "status": "商品状态",
             "quality_status": "质检状态",
+            "quality_total_score": "内容质量总分",
+            "quality_scored_at": "最近评分时间",
+            "quality_score_version": "评分规则版本",
             "created_at": "创建时间",
             "updated_at": "更新时间",
+        },
+        "shopee_listing_quality_scores": {
+            "id": "主键ID",
+            "listing_id": "商品ID",
+            "run_id": "对局ID",
+            "user_id": "用户ID",
+            "score_version": "评分版本",
+            "provider": "评分提供方",
+            "text_model": "文本评分模型",
+            "vision_model": "视觉评分模型",
+            "prompt_hash": "评分提示词哈希",
+            "content_hash": "内容哈希",
+            "rule_score": "规则评分",
+            "vision_score": "视觉评分",
+            "text_score": "文案评分",
+            "consistency_score": "图文一致性评分",
+            "total_score": "总分",
+            "quality_status": "内容质量状态",
+            "reasons_json": "扣分原因JSON",
+            "suggestions_json": "优化建议JSON",
+            "raw_result_json": "模型原始结果JSON",
+            "is_latest": "是否为最新评分",
+            "created_at": "创建时间",
         },
         "shopee_listing_drafts": {
             "id": "主键ID",

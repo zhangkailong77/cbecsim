@@ -1283,7 +1283,7 @@ def test_shopee_draft_publish_live(monkeypatch):
         headers={"Authorization": f"Bearer {token}"},
         data={
             "title": "蓝牙耳机",
-            "category": "手机数码",
+            "category": "美妆个护",
             "gtin": "1234567890123",
             "cover_index": "0",
         },
@@ -1295,21 +1295,140 @@ def test_shopee_draft_publish_live(monkeypatch):
     publish_live = client.post(
         f"/shopee/runs/{run['id']}/product-drafts/{draft_id}/publish",
         headers={"Authorization": f"Bearer {token}"},
-        data={"status_value": "live"},
+        data={"status_value": "unpublished"},
     )
     assert publish_live.status_code == 201
     publish_body = publish_live.json()
-    assert publish_body["status"] == "live"
+    assert publish_body["status"] == "unpublished"
     assert publish_body["listing_id"] > 0
 
     products = client.get(
         f"/shopee/runs/{run['id']}/products",
         headers={"Authorization": f"Bearer {token}"},
-        params={"type": "live"},
+        params={"type": "all"},
     )
     assert products.status_code == 200
     rows = products.json()["listings"]
     assert any(row["id"] == publish_body["listing_id"] for row in rows)
+
+
+def test_shopee_listing_quality_scored_after_publish(monkeypatch):
+    from app.api.routes import shopee as shopee_route
+
+    monkeypatch.setattr(
+        shopee_route,
+        "_save_shopee_image",
+        lambda _db, img: f"https://oss.example.com/{(img.filename or 'image.jpg').replace(' ', '_')}",
+    )
+
+    token = _register_or_login_player("13800138235")
+    run = _create_running_run(token)
+
+    draft_resp = client.post(
+        f"/shopee/runs/{run['id']}/product-drafts",
+        headers={"Authorization": f"Bearer {token}"},
+        data={
+            "title": "质量评分测试商品",
+            "category": "美妆个护",
+            "gtin": "8877665544332",
+            "cover_index": "0",
+        },
+        files=[("images", ("cover.jpg", b"mock-image-11", "image/jpeg"))],
+    )
+    assert draft_resp.status_code == 201
+    draft_id = int(draft_resp.json()["id"])
+
+    publish_resp = client.post(
+        f"/shopee/runs/{run['id']}/product-drafts/{draft_id}/publish",
+        headers={"Authorization": f"Bearer {token}"},
+        data={"status_value": "unpublished", "price": "129", "stock_available": "100"},
+    )
+    assert publish_resp.status_code == 201
+    listing_id = int(publish_resp.json()["listing_id"])
+
+    products = client.get(
+        f"/shopee/runs/{run['id']}/products",
+        headers={"Authorization": f"Bearer {token}"},
+        params={"type": "all"},
+    )
+    assert products.status_code == 200
+    row = next((item for item in products.json()["listings"] if int(item["id"]) == listing_id), None)
+    assert row is not None
+    assert isinstance(row.get("quality_total_score"), int)
+    assert row.get("quality_status") in {"内容待完善", "内容合格", "内容优秀"}
+
+    quality = client.get(
+        f"/shopee/runs/{run['id']}/listings/{listing_id}/quality",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert quality.status_code == 200
+    quality_body = quality.json()
+    assert int(quality_body["listing_id"]) == listing_id
+    assert isinstance(quality_body["total_score"], int)
+    assert quality_body["quality_status"] in {"内容待完善", "内容合格", "内容优秀"}
+
+
+def test_shopee_listing_quality_recompute_creates_new_snapshot(monkeypatch):
+    from app.api.routes import shopee as shopee_route
+    from app.db import SessionLocal
+    from app.models import ShopeeListingQualityScore
+
+    monkeypatch.setattr(
+        shopee_route,
+        "_save_shopee_image",
+        lambda _db, img: f"https://oss.example.com/{(img.filename or 'image.jpg').replace(' ', '_')}",
+    )
+
+    token = _register_or_login_player("13800138236")
+    run = _create_running_run(token)
+    draft_resp = client.post(
+        f"/shopee/runs/{run['id']}/product-drafts",
+        headers={"Authorization": f"Bearer {token}"},
+        data={
+            "title": "质量重评测试商品",
+            "category": "美妆个护",
+            "gtin": "7766554433221",
+            "cover_index": "0",
+        },
+        files=[("images", ("cover.jpg", b"mock-image-11", "image/jpeg"))],
+    )
+    assert draft_resp.status_code == 201
+    draft_id = int(draft_resp.json()["id"])
+
+    publish_resp = client.post(
+        f"/shopee/runs/{run['id']}/product-drafts/{draft_id}/publish",
+        headers={"Authorization": f"Bearer {token}"},
+        data={"status_value": "unpublished", "price": "139", "stock_available": "100"},
+    )
+    assert publish_resp.status_code == 201
+    listing_id = int(publish_resp.json()["listing_id"])
+
+    with SessionLocal() as db:
+        before_count = (
+            db.query(ShopeeListingQualityScore)
+            .filter(ShopeeListingQualityScore.listing_id == listing_id)
+            .count()
+        )
+
+    recompute_resp = client.post(
+        f"/shopee/runs/{run['id']}/listings/{listing_id}/quality/recompute",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert recompute_resp.status_code == 200
+    payload = recompute_resp.json()
+    assert int(payload["listing_id"]) == listing_id
+    assert payload["quality_status"] in {"内容待完善", "内容合格", "内容优秀"}
+
+    with SessionLocal() as db:
+        after_rows = (
+            db.query(ShopeeListingQualityScore)
+            .filter(ShopeeListingQualityScore.listing_id == listing_id)
+            .order_by(ShopeeListingQualityScore.id.asc())
+            .all()
+        )
+        assert len(after_rows) >= before_count + 1
+        latest_rows = [row for row in after_rows if bool(row.is_latest)]
+        assert len(latest_rows) == 1
 
 
 def _create_live_listing_for_run(monkeypatch, token: str, run_id: int, *, stock: int, price: int = 129) -> int:

@@ -61,6 +61,22 @@ def _safe_load_str_list(raw: str) -> list[str]:
     return values
 
 
+def _resolve_listing_quality_score(listing: ShopeeListing) -> float:
+    status = (listing.quality_status or "").strip()
+    if status == "内容优秀":
+        return 1.0
+    if status == "内容合格":
+        return 0.85
+    if status == "内容待完善":
+        return 0.45
+    score = int(listing.quality_total_score or 0)
+    if score >= 85:
+        return 1.0
+    if score >= 60:
+        return 0.85
+    return 0.45
+
+
 def _pick_variant(listing: ShopeeListing) -> ShopeeListingVariant | None:
     variants = sorted(list(listing.variants or []), key=lambda row: (row.sort_order, row.id))
     for row in variants:
@@ -308,7 +324,7 @@ def simulate_orders_for_run(
             price = max(1, int(listing.price or 0))
             price_gap = abs(price - target_price) / max(target_price, 1)
             price_score = _clamp(1 - price_gap, 0.0, 1.0)
-            quality_score = 1.0 if (listing.quality_status or "").strip() == "内容合格" else 0.45
+            quality_score = _resolve_listing_quality_score(listing)
             stock_score = _clamp(float(_listing_sellable_cap(listing)) / 40.0, 0.0, 1.0)
             base_intent = _clamp(float(buyer.base_buy_intent or 0.0), 0.0, 1.0)
             impulse = _clamp(float(buyer.impulse_level or 0.0), 0.0, 1.0)

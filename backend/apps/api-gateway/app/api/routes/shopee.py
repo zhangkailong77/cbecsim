@@ -29,6 +29,7 @@ from app.models import (
     ShopeeListingDraftImage,
     ShopeeListingDraftSpecValue,
     ShopeeListingImage,
+    ShopeeListingQualityScore,
     ShopeeListingVariant,
     ShopeeListingWholesaleTier,
     ShopeeListingSpecValue,
@@ -59,6 +60,7 @@ from app.services.shopee_order_cancellation import (
     rebalance_backorders_from_current_inventory as service_rebalance_backorders_from_current_inventory,
 )
 from app.services.inventory_lot_sync import consume_reserved_inventory_lots
+from app.services.shopee_listing_quality import recompute_listing_quality
 from app.services.shopee_order_simulator import simulate_orders_for_run
 
 
@@ -438,9 +440,49 @@ class ShopeeListingRowResponse(BaseModel):
     original_price: int
     stock_available: int
     quality_status: str
+    quality_total_score: int | None = None
+    quality_scored_at: datetime | None = None
+    quality_score_version: str | None = None
     status: str
     created_at: datetime
     variants: list["ShopeeListingVariantPreviewResponse"] = Field(default_factory=list)
+
+
+class ShopeeListingQualityDetailResponse(BaseModel):
+    listing_id: int
+    score_version: str
+    provider: str
+    text_model: str | None
+    vision_model: str | None
+    summary: str | None = None
+    total_score: int
+    quality_status: str
+    rule_score: int
+    vision_score: int
+    text_score: int
+    consistency_score: int
+    scoring_dimensions: dict[str, list[str]]
+    reasons: list[str]
+    suggestions: list[str]
+    image_feedback: list["ShopeeListingQualityImageFeedbackItem"] = Field(default_factory=list)
+    quality_scored_at: datetime
+
+
+class ShopeeListingQualityRecomputeResponse(BaseModel):
+    listing_id: int
+    total_score: int
+    quality_status: str
+    score_version: str
+    scored_at: datetime
+
+
+class ShopeeListingQualityImageFeedbackItem(BaseModel):
+    image_ref: str
+    image_label: str
+    score: int | None = None
+    good: str = ""
+    bad: str = ""
+    suggestion: str = ""
 
 
 class ShopeeListingVariantPreviewResponse(BaseModel):
@@ -676,6 +718,134 @@ def _get_owned_order_readable_run_or_404(db: Session, run_id: int, user_id: int)
     if not run:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Game not found")
     return run
+
+
+def _safe_load_json_list(raw: str | None) -> list[str]:
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return []
+    if not isinstance(data, list):
+        return []
+    return [str(item) for item in data if str(item).strip()]
+
+
+def _extract_image_feedback(raw: str | None) -> list[ShopeeListingQualityImageFeedbackItem]:
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return []
+    if not isinstance(data, dict):
+        return []
+    model_data = data.get("model") if isinstance(data.get("model"), dict) else {}
+    feedback_raw = model_data.get("image_feedback")
+    image_inputs_raw = model_data.get("image_inputs")
+    feedback_rows = feedback_raw if isinstance(feedback_raw, list) else []
+    image_inputs = image_inputs_raw if isinstance(image_inputs_raw, list) else []
+
+    out: list[ShopeeListingQualityImageFeedbackItem] = []
+    by_ref: dict[str, ShopeeListingQualityImageFeedbackItem] = {}
+    for idx, row in enumerate(feedback_rows, start=1):
+        if isinstance(row, str):
+            text = row.strip()
+            if text:
+                item = ShopeeListingQualityImageFeedbackItem(
+                    image_ref=f"IMG{idx}",
+                    image_label=f"图片{idx}",
+                    score=None,
+                    good=text,
+                    bad="",
+                    suggestion="",
+                )
+                out.append(item)
+                by_ref[item.image_ref] = item
+            continue
+        if not isinstance(row, dict):
+            continue
+        image_ref = str(row.get("image_ref") or row.get("image") or f"IMG{idx}").strip()
+        image_label = str(row.get("image_label") or row.get("label") or f"图片{idx}").strip() or f"图片{idx}"
+        score = row.get("score")
+        good = str(row.get("good") or row.get("strength") or "").strip() or "无"
+        bad = str(row.get("bad") or row.get("issue") or "").strip() or "无"
+        suggestion = str(row.get("suggestion") or "").strip() or "无"
+        item = ShopeeListingQualityImageFeedbackItem(
+            image_ref=image_ref,
+            image_label=image_label,
+            score=int(score) if isinstance(score, (int, float)) else None,
+            good=good,
+            bad=bad,
+            suggestion=suggestion,
+        )
+        out.append(item)
+        by_ref[item.image_ref] = item
+
+    # Ensure each input image has a row (prevents "missing main image" in UI).
+    for idx, row in enumerate(image_inputs, start=1):
+        if not isinstance(row, dict):
+            continue
+        image_ref = str(row.get("image_ref") or f"IMG{idx}").strip() or f"IMG{idx}"
+        if image_ref in by_ref:
+            continue
+        image_label = str(row.get("image_label") or f"图片{idx}").strip() or f"图片{idx}"
+        out.append(
+            ShopeeListingQualityImageFeedbackItem(
+                image_ref=image_ref,
+                image_label=image_label,
+                score=None,
+                good="",
+                bad="",
+                suggestion="",
+            )
+        )
+    return out
+
+
+def _extract_quality_summary(raw: str | None) -> str | None:
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return None
+    if not isinstance(data, dict):
+        return None
+    model_data = data.get("model") if isinstance(data.get("model"), dict) else {}
+    summary = str(model_data.get("summary") or "").strip()
+    if summary:
+        return summary
+    single_pass = model_data.get("single_pass") if isinstance(model_data.get("single_pass"), dict) else {}
+    summary = str(
+        single_pass.get("summary")
+        or single_pass.get("evaluation_summary")
+        or single_pass.get("overall_summary")
+        or ""
+    ).strip()
+    return summary or None
+
+
+def _try_recompute_listing_quality(
+    db: Session,
+    *,
+    listing_id: int,
+    run_id: int,
+    user_id: int,
+    force_recompute: bool = False,
+) -> None:
+    try:
+        recompute_listing_quality(
+            db,
+            listing_id=listing_id,
+            run_id=run_id,
+            user_id=user_id,
+            force_recompute=force_recompute,
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
 
 
 def _align_compare_time(ref: datetime, val: datetime) -> datetime:
@@ -3032,6 +3202,9 @@ def list_shopee_products(
                 original_price=row.original_price,
                 stock_available=row.stock_available,
                 quality_status=row.quality_status,
+                quality_total_score=row.quality_total_score,
+                quality_scored_at=row.quality_scored_at,
+                quality_score_version=row.quality_score_version,
                 status=row.status,
                 created_at=row.created_at,
                 variants=[
@@ -3052,6 +3225,107 @@ def list_shopee_products(
             )
             for row in rows
         ],
+    )
+
+
+@router.get("/runs/{run_id}/listings/{listing_id}/quality", response_model=ShopeeListingQualityDetailResponse)
+def get_shopee_listing_quality(
+    run_id: int,
+    listing_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> ShopeeListingQualityDetailResponse:
+    user_id = int(current_user["id"])
+    _get_owned_order_readable_run_or_404(db, run_id, user_id)
+    listing = (
+        db.query(ShopeeListing)
+        .filter(
+            ShopeeListing.id == listing_id,
+            ShopeeListing.run_id == run_id,
+            ShopeeListing.user_id == user_id,
+        )
+        .first()
+    )
+    if not listing:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="商品不存在")
+
+    latest = (
+        db.query(ShopeeListingQualityScore)
+        .filter(
+            ShopeeListingQualityScore.listing_id == listing_id,
+            ShopeeListingQualityScore.is_latest == True,
+        )
+        .order_by(ShopeeListingQualityScore.id.desc())
+        .first()
+    )
+    if not latest:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="尚无评分记录")
+
+    return ShopeeListingQualityDetailResponse(
+        listing_id=listing_id,
+        score_version=latest.score_version,
+        provider=latest.provider,
+        text_model=latest.text_model,
+        vision_model=latest.vision_model,
+        summary=_extract_quality_summary(latest.raw_result_json),
+        total_score=int(latest.total_score or 0),
+        quality_status=latest.quality_status,
+        rule_score=int(latest.rule_score or 0),
+        vision_score=int(latest.vision_score or 0),
+        text_score=int(latest.text_score or 0),
+        consistency_score=int(latest.consistency_score or 0),
+        scoring_dimensions={
+            "rule_score": ["基础结构完整度", "类目与价格有效性", "图片数量门槛", "变体字段完整性"],
+            "vision_score": ["清晰度", "主体完整度", "构图", "背景干净度", "违规视觉元素"],
+            "text_score": ["标题信息密度", "描述完整性", "表达可读性", "文案合规性"],
+            "consistency_score": ["标题与图片一致性", "类目与图片一致性", "变体与图片一致性"],
+        },
+        reasons=_safe_load_json_list(latest.reasons_json),
+        suggestions=_safe_load_json_list(latest.suggestions_json),
+        image_feedback=_extract_image_feedback(latest.raw_result_json),
+        quality_scored_at=latest.created_at,
+    )
+
+
+@router.post("/runs/{run_id}/listings/{listing_id}/quality/recompute", response_model=ShopeeListingQualityRecomputeResponse)
+def recompute_shopee_listing_quality(
+    run_id: int,
+    listing_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> ShopeeListingQualityRecomputeResponse:
+    user_id = int(current_user["id"])
+    run = _get_owned_running_run_or_404(db, run_id, user_id)
+    _ensure_run_writable_or_400(db, run)
+    listing = (
+        db.query(ShopeeListing)
+        .filter(
+            ShopeeListing.id == listing_id,
+            ShopeeListing.run_id == run_id,
+            ShopeeListing.user_id == user_id,
+        )
+        .first()
+    )
+    if not listing:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="商品不存在")
+
+    snapshot = recompute_listing_quality(
+        db,
+        listing_id=listing_id,
+        run_id=run_id,
+        user_id=user_id,
+        force_recompute=True,
+    )
+    if not snapshot:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="重评失败")
+    db.commit()
+
+    return ShopeeListingQualityRecomputeResponse(
+        listing_id=listing_id,
+        total_score=int(snapshot.total_score or 0),
+        quality_status=snapshot.quality_status,
+        score_version=snapshot.score_version,
+        scored_at=snapshot.created_at,
     )
 
 
@@ -3844,6 +4118,13 @@ def publish_shopee_product_draft(
     # ShopeeListingDraft relationships use ORM cascade to delete images/spec rows together.
     db.delete(draft)
     db.commit()
+    _try_recompute_listing_quality(
+        db,
+        listing_id=int(listing.id),
+        run_id=int(run.id),
+        user_id=user_id,
+        force_recompute=True,
+    )
     return ShopeeDraftPublishResponse(draft_id=draft_id_value, listing_id=listing.id, status=final_status)
 
 
@@ -3999,4 +4280,11 @@ def create_shopee_product(
 
     db.commit()
     db.refresh(row)
+    _try_recompute_listing_quality(
+        db,
+        listing_id=int(row.id),
+        run_id=int(run.id),
+        user_id=user_id,
+        force_recompute=True,
+    )
     return ShopeeCreateListingResponse(id=row.id, title=row.title, cover_url=row.cover_url)

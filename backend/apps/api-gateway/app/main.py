@@ -7,6 +7,12 @@ import os
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+_main_file = Path(__file__).resolve()
+if len(_main_file.parents) > 3:
+    dotenv_path = _main_file.parents[3] / ".env"
+    if dotenv_path.exists():
+        load_dotenv(dotenv_path)
+
 from app.api.routes.auth import router as auth_router
 from app.api.routes.game import router as game_router
 from app.api.routes.health import router as health_router
@@ -14,12 +20,6 @@ from app.api.routes.market import router as market_router
 from app.api.routes.shopee import router as shopee_router
 from app.db import init_database
 from app.services.auto_order_tick_worker import AUTO_ORDER_TICK_ENABLED, run_auto_order_tick_worker
-
-_main_file = Path(__file__).resolve()
-if len(_main_file.parents) > 3:
-    dotenv_path = _main_file.parents[3] / ".env"
-    if dotenv_path.exists():
-        load_dotenv(dotenv_path)
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
