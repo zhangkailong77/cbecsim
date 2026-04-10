@@ -42,20 +42,28 @@ function parseStageFromPath(
   };
 }
 
-function buildStagePath(publicId: string, stage: RoutedStage, setupSubView: SetupSubView = 'default'): string {
+function buildStagePath(
+  publicId: string,
+  stage: RoutedStage,
+  setupSubView: SetupSubView = 'default',
+  runId: number | null = null
+): string {
+  let path = '';
   if (stage === 'setup' && setupSubView === 'admin-buyer-pool') {
-    return `/u/${encodeURIComponent(publicId)}/setup/admin/buyer-pool`;
+    path = `/u/${encodeURIComponent(publicId)}/setup/admin/buyer-pool`;
+  } else if (stage === 'setup' && setupSubView === 'run-data') {
+    path = `/u/${encodeURIComponent(publicId)}/setup/run-data`;
+  } else if (stage === 'setup' && setupSubView === 'finance') {
+    path = `/u/${encodeURIComponent(publicId)}/setup/finance`;
+  } else if (stage === 'setup' && setupSubView === 'history') {
+    path = `/u/${encodeURIComponent(publicId)}/setup/history`;
+  } else {
+    path = `/u/${encodeURIComponent(publicId)}/${stage}`;
   }
-  if (stage === 'setup' && setupSubView === 'run-data') {
-    return `/u/${encodeURIComponent(publicId)}/setup/run-data`;
-  }
-  if (stage === 'setup' && setupSubView === 'finance') {
-    return `/u/${encodeURIComponent(publicId)}/setup/finance`;
-  }
-  if (stage === 'setup' && setupSubView === 'history') {
-    return `/u/${encodeURIComponent(publicId)}/setup/history`;
-  }
-  return `/u/${encodeURIComponent(publicId)}/${stage}`;
+  if (!runId || runId <= 0) return path;
+  const params = new URLSearchParams();
+  params.set('run_id', String(runId));
+  return `${path}?${params.toString()}`;
 }
 
 interface CurrentRunResponse {
@@ -71,6 +79,8 @@ interface CurrentRunResponse {
   } | null;
 }
 
+type RunContext = NonNullable<CurrentRunResponse['run']>;
+
 interface MeResponse {
   id: number;
   public_id: string;
@@ -82,6 +92,21 @@ interface MeResponse {
   school_name: string | null;
 }
 
+function parseRunIdFromSearch(search: string): number | null {
+  const params = new URLSearchParams(search);
+  const raw = Number(params.get('run_id') || '');
+  if (!Number.isFinite(raw) || raw <= 0) return null;
+  return Math.floor(raw);
+}
+
+function withRunId(search: string, runId: number | null): string {
+  const params = new URLSearchParams(search);
+  if (runId && runId > 0) params.set('run_id', String(runId));
+  else params.delete('run_id');
+  const next = params.toString();
+  return next ? `?${next}` : '';
+}
+
 export default function App() {
   const [authMode, setAuthMode] = useState<AuthMode>('login');
   const [showPassword, setShowPassword] = useState(false);
@@ -91,6 +116,7 @@ export default function App() {
   const [isAuthChecking, setIsAuthChecking] = useState(false);
   const [appStage, setAppStage] = useState<AppStage>('loading');
   const [currentRun, setCurrentRun] = useState<CurrentRunResponse['run']>(null);
+  const [viewRun, setViewRun] = useState<RunContext | null>(null);
   const [setupError, setSetupError] = useState('');
   const [isStartingRun, setIsStartingRun] = useState(false);
   const [isResettingRun, setIsResettingRun] = useState(false);
@@ -114,10 +140,24 @@ export default function App() {
     confirmPassword: '',
   });
 
+  const fetchRunContext = async (token: string, runId: number): Promise<RunContext | null> => {
+    if (!Number.isFinite(runId) || runId <= 0) return null;
+    try {
+      const resp = await fetch(`${API_BASE_URL}/game/runs/${runId}/context`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!resp.ok) return null;
+      return (await resp.json()) as RunContext;
+    } catch {
+      return null;
+    }
+  };
+
   const navigateToStage = (
     stage: RoutedStage,
-    options?: { replace?: boolean; setupSubView?: SetupSubView }
+    options?: { replace?: boolean; setupSubView?: SetupSubView; runId?: number | null }
   ) => {
+    const nextRunId = options?.runId === undefined ? (viewRun?.id ?? null) : (options.runId ?? null);
     if (!currentUser?.public_id) {
       setAppStage(stage);
       if (stage === 'setup') {
@@ -128,8 +168,9 @@ export default function App() {
       return;
     }
     const nextSetupSubView = stage === 'setup' ? options?.setupSubView ?? 'default' : 'default';
-    const path = buildStagePath(currentUser.public_id, stage, nextSetupSubView);
-    if (window.location.pathname !== path) {
+    const path = buildStagePath(currentUser.public_id, stage, nextSetupSubView, nextRunId);
+    const currentFullPath = `${window.location.pathname}${window.location.search}`;
+    if (currentFullPath !== path) {
       if (options?.replace) {
         window.history.replaceState(null, '', path);
       } else {
@@ -164,20 +205,27 @@ export default function App() {
       const parsedMatched = parsed && parsed.publicId === publicId;
       const stageFromPath = parsedMatched ? parsed.stage : 'setup';
       const setupSubViewFromPath = parsedMatched ? parsed.setupSubView : 'default';
-      const canKeepSetupSubView = !data.run && stageFromPath === 'setup';
-      const nextStage: RoutedStage = data.run ? stageFromPath : 'setup';
+      const queryRunId = parseRunIdFromSearch(window.location.search);
+      const queryRun = queryRunId ? await fetchRunContext(token, queryRunId) : null;
+      setViewRun(queryRun);
+      const hasAnyRun = Boolean(data.run || queryRun);
+      const canKeepSetupSubView = !hasAnyRun && stageFromPath === 'setup';
+      const nextStage: RoutedStage = hasAnyRun ? stageFromPath : 'setup';
       const nextSetupSubView: SetupSubView =
-        nextStage === 'setup' ? (data.run ? setupSubViewFromPath : canKeepSetupSubView ? setupSubViewFromPath : 'default') : 'default';
-      const nextPath =
-        parsedMatched && (data.run || canKeepSetupSubView)
-          ? window.location.pathname
-          : buildStagePath(publicId, nextStage, nextSetupSubView);
+        nextStage === 'setup'
+          ? (hasAnyRun ? setupSubViewFromPath : canKeepSetupSubView ? setupSubViewFromPath : 'default')
+          : 'default';
+      const nextRunId = queryRun?.id ?? null;
+      const nextPath = parsedMatched && (hasAnyRun || canKeepSetupSubView)
+        ? `${window.location.pathname}${withRunId(window.location.search, nextRunId)}`
+        : buildStagePath(publicId, nextStage, nextSetupSubView, nextRunId);
       window.history.replaceState(null, '', nextPath);
       setAppStage(nextStage);
       setSetupSubView(nextSetupSubView);
     } catch {
       setSetupError('读取开局信息失败，请检查网络后重试。');
       setCurrentRun(null);
+      setViewRun(null);
       window.history.replaceState(null, '', buildStagePath(publicId, 'setup'));
       setAppStage('setup');
       setSetupSubView('default');
@@ -257,19 +305,35 @@ export default function App() {
 
   useEffect(() => {
     if (!isAuthenticated || !currentUser?.public_id) return;
-    const onPopState = () => {
+    const onPopState = async () => {
       const parsed = parseStageFromPath(window.location.pathname);
       if (!parsed || parsed.publicId !== currentUser.public_id) {
         window.history.replaceState(null, '', buildStagePath(currentUser.public_id, 'setup'));
         setAppStage('setup');
         setSetupSubView('default');
+        setViewRun(null);
         return;
       }
       setAppStage(parsed.stage);
       setSetupSubView(parsed.setupSubView);
+      const token = localStorage.getItem(ACCESS_TOKEN_KEY);
+      if (!token) {
+        setViewRun(null);
+        return;
+      }
+      const runId = parseRunIdFromSearch(window.location.search);
+      if (!runId) {
+        setViewRun(null);
+        return;
+      }
+      const context = await fetchRunContext(token, runId);
+      setViewRun(context);
     };
-    window.addEventListener('popstate', onPopState);
-    return () => window.removeEventListener('popstate', onPopState);
+    const onPopStateSync = () => {
+      void onPopState();
+    };
+    window.addEventListener('popstate', onPopStateSync);
+    return () => window.removeEventListener('popstate', onPopStateSync);
   }, [isAuthenticated, currentUser?.public_id]);
 
   const handleLoginSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -403,7 +467,8 @@ export default function App() {
       if (response.status === 201) {
         const created = (await response.json()) as NonNullable<CurrentRunResponse['run']>;
         setCurrentRun(created);
-        navigateToStage('intel');
+        setViewRun(null);
+        navigateToStage('intel', { runId: null });
         return;
       }
 
@@ -429,6 +494,7 @@ export default function App() {
     localStorage.removeItem(ACCESS_TOKEN_KEY);
     setIsAuthenticated(false);
     setCurrentUser(null);
+    setViewRun(null);
     setAuthMode('login');
     setAppStage('loading');
     window.history.replaceState(null, '', '/');
@@ -438,7 +504,7 @@ export default function App() {
   };
 
   const handleEnterRunningRun = () => {
-    navigateToStage('intel');
+    navigateToStage('intel', { runId: null });
   };
 
   const handleEnterLogisticsFromSetup = () => {
@@ -462,15 +528,27 @@ export default function App() {
   };
 
   const handleBackToSetupFromIntel = () => {
-    navigateToStage('setup');
+    if (viewRun?.status === 'finished') {
+      navigateToStage('setup', { setupSubView: 'history', runId: viewRun.id });
+      return;
+    }
+    navigateToStage('setup', { runId: null });
   };
 
   const handleBackToSetupFromLogistics = () => {
-    navigateToStage('setup');
+    if (viewRun?.status === 'finished') {
+      navigateToStage('setup', { setupSubView: 'history', runId: viewRun.id });
+      return;
+    }
+    navigateToStage('setup', { runId: null });
   };
 
   const handleBackToSetupFromWarehouse = () => {
-    navigateToStage('setup');
+    if (viewRun?.status === 'finished') {
+      navigateToStage('setup', { setupSubView: 'history', runId: viewRun.id });
+      return;
+    }
+    navigateToStage('setup', { runId: null });
   };
 
   const handleResetCurrentRun = async () => {
@@ -507,41 +585,58 @@ export default function App() {
     }
   };
 
+  const handleSelectHistoryRun = (run: RunContext) => {
+    setViewRun(run);
+    navigateToStage('setup', { setupSubView: 'history', runId: run.id });
+  };
+
+  const handleOpenHistoryStage = (stage: Exclude<RoutedStage, 'setup'>, run: RunContext) => {
+    setViewRun(run);
+    navigateToStage(stage, { runId: run.id });
+  };
+
+  const activeRun = viewRun ?? currentRun;
+  const isHistoryReadonly = (viewRun?.status || '').trim() === 'finished';
+
   let mainContent = <div className="fixed inset-0 bg-[#f5f5f5]" />;
   if (isAuthenticated) {
     if (appStage === 'shopee') {
       mainContent = (
         <ShopeePage
-          run={currentRun}
+          run={activeRun}
           currentUser={currentUser}
           onBackToSetup={handleBackToSetupFromWarehouse}
+          readOnly={isHistoryReadonly}
         />
       );
     } else if (appStage === 'logistics') {
       mainContent = (
         <LogisticsClearancePage
-          run={currentRun}
+          run={activeRun}
           currentUser={currentUser}
           onBackToSetup={handleBackToSetupFromLogistics}
           onEnterShopee={handleEnterShopeeFromLogistics}
+          readOnly={isHistoryReadonly}
         />
       );
     } else if (appStage === 'warehouse') {
       mainContent = (
         <WarehouseInboundPage
-          run={currentRun}
+          run={activeRun}
           currentUser={currentUser}
           onBackToSetup={handleBackToSetupFromWarehouse}
           onEnterShopee={handleEnterShopeeFromWarehouse}
+          readOnly={isHistoryReadonly}
         />
       );
     } else if (appStage === 'intel') {
       mainContent = (
         <MarketIntelPage
-          run={currentRun}
+          run={activeRun}
           currentUser={currentUser}
           onBackToSetup={handleBackToSetupFromIntel}
           onEnterShopee={handleEnterShopeeFromIntel}
+          readOnly={isHistoryReadonly}
         />
       );
     } else if (appStage === 'setup') {
@@ -550,7 +645,7 @@ export default function App() {
           isSubmitting={isStartingRun}
           isResetting={isResettingRun}
           error={setupError}
-          currentRun={currentRun}
+          currentRun={activeRun}
           currentUser={currentUser}
           onSubmit={handleCreateRun}
           onEnterRunningRun={handleEnterRunningRun}
@@ -560,9 +655,17 @@ export default function App() {
           onResetCurrentRun={handleResetCurrentRun}
           onLogout={handleLogout}
           setupSubView={setupSubView}
-          onSetupSubViewChange={(next) =>
-            navigateToStage('setup', { setupSubView: next })
-          }
+          onSetupSubViewChange={(next) => {
+            if (next !== 'history') {
+              setViewRun(null);
+              navigateToStage('setup', { setupSubView: next, runId: null });
+              return;
+            }
+            navigateToStage('setup', { setupSubView: next, runId: viewRun?.id ?? null });
+          }}
+          onSelectHistoryRun={handleSelectHistoryRun}
+          onOpenHistoryStage={handleOpenHistoryStage}
+          activeHistoryRunId={viewRun?.id ?? null}
         />
       );
     } else {

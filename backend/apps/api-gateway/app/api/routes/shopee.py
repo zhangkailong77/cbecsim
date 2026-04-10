@@ -1,4 +1,5 @@
 from datetime import date, datetime, timedelta
+import hashlib
 import json
 import os
 from typing import Any
@@ -11,6 +12,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.security import get_current_user
+from app.core.cache import cache_delete_prefix, cache_get_json, cache_set_json
+from app.core.distributed_lock import acquire_distributed_lock, release_distributed_lock
+from app.core.rate_limit import check_rate_limit
 from app.db import get_db
 from app.models import (
     GameRun,
@@ -52,6 +56,7 @@ from app.services.shopee_fulfillment import (
 from app.services.shopee_order_cancellation import (
     auto_cancel_overdue_orders_by_tick as service_auto_cancel_overdue_orders_by_tick,
     cancel_order as service_cancel_order,
+    rebalance_backorders_from_current_inventory as service_rebalance_backorders_from_current_inventory,
 )
 from app.services.inventory_lot_sync import consume_reserved_inventory_lots
 from app.services.shopee_order_simulator import simulate_orders_for_run
@@ -63,6 +68,12 @@ REAL_SECONDS_PER_GAME_HOUR = REAL_SECONDS_PER_GAME_DAY / 24
 ORDER_SIM_TICK_GAME_HOURS = 8
 ORDER_INCOME_RELEASE_DELAY_GAME_DAYS = 3
 RM_TO_RMB_RATE = float(os.getenv("RM_TO_RMB_RATE", "1.74"))
+REDIS_CACHE_TTL_ORDERS_LIST_SEC = max(3, int(os.getenv("REDIS_CACHE_TTL_ORDERS_LIST_SEC", "10")))
+REDIS_PREFIX = os.getenv("REDIS_PREFIX", "cbec")
+REDIS_LOCK_TTL_SEC = max(10, int(os.getenv("REDIS_LOCK_TTL_SEC", "45")))
+REDIS_RATE_LIMIT_SIMULATE_PER_MIN = max(1, int(os.getenv("REDIS_RATE_LIMIT_SIMULATE_PER_MIN", "5")))
+REDIS_RATE_LIMIT_ORDERS_LIST_PER_MIN = max(10, int(os.getenv("REDIS_RATE_LIMIT_ORDERS_LIST_PER_MIN", "120")))
+RUN_FINISHED_DETAIL = "当前对局已结束，无法继续订单演化操作"
 LINE_TRANSIT_DAY_BOUNDS: dict[str, tuple[int, int]] = {
     "economy": (8, 18),
     "standard": (5, 12),
@@ -78,6 +89,96 @@ FORWARDER_KEY_TO_LABEL: dict[str, str] = {
     "standard": "标准线（马来）",
     "express": "快速线（马来）",
 }
+
+
+def _shopee_orders_cache_prefix(run_id: int, user_id: int) -> str:
+    return f"{REDIS_PREFIX}:cache:shopee:orders:list:{run_id}:{user_id}:"
+
+
+def _build_shopee_orders_cache_key(
+    *,
+    run_id: int,
+    user_id: int,
+    type_value: str,
+    source: str | None,
+    sort_by: str | None,
+    order: str,
+    order_type: str,
+    order_status: str,
+    priority: str,
+    keyword: str | None,
+    channel: str | None,
+    page: int,
+    page_size: int,
+) -> str:
+    query_payload = {
+        "type": type_value or "all",
+        "source": source or "",
+        "sort_by": sort_by or "",
+        "order": order or "asc",
+        "order_type": order_type or "all",
+        "order_status": order_status or "all",
+        "priority": priority or "all",
+        "keyword": keyword or "",
+        "channel": channel or "",
+        "page": int(page),
+        "page_size": int(page_size),
+    }
+    digest = hashlib.sha1(
+        json.dumps(query_payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    return f"{_shopee_orders_cache_prefix(run_id, user_id)}{digest}"
+
+
+def _get_shopee_orders_cache_payload(**kwargs) -> dict[str, Any] | None:
+    key = _build_shopee_orders_cache_key(**kwargs)
+    payload = cache_get_json(key)
+    if isinstance(payload, dict):
+        return payload
+    return None
+
+
+def _set_shopee_orders_cache_payload(*, payload: dict[str, Any], **kwargs) -> None:
+    key = _build_shopee_orders_cache_key(**kwargs)
+    cache_set_json(key, payload, REDIS_CACHE_TTL_ORDERS_LIST_SEC)
+
+
+def _invalidate_shopee_orders_cache_for_user(*, run_id: int, user_id: int) -> None:
+    cache_delete_prefix(_shopee_orders_cache_prefix(run_id, user_id))
+
+
+def _enforce_shopee_orders_list_rate_limit(*, user_id: int) -> None:
+    limited, _remaining, reset_at = check_rate_limit(
+        key=f"{REDIS_PREFIX}:ratelimit:shopee:orders:list:user:{user_id}",
+        limit=REDIS_RATE_LIMIT_ORDERS_LIST_PER_MIN,
+        window_sec=60,
+    )
+    if limited:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"请求过于频繁，请在 {reset_at} 后重试",
+        )
+
+
+def _enforce_shopee_simulate_rate_limit(*, user_id: int) -> None:
+    limited, _remaining, reset_at = check_rate_limit(
+        key=f"{REDIS_PREFIX}:ratelimit:shopee:simulate:user:{user_id}",
+        limit=REDIS_RATE_LIMIT_SIMULATE_PER_MIN,
+        window_sec=60,
+    )
+    if limited:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"模拟请求过于频繁，请在 {reset_at} 后重试",
+        )
+
+
+def _acquire_shopee_simulate_lock_or_409(*, run_id: int, user_id: int) -> tuple[str, str]:
+    lock_key = f"{REDIS_PREFIX}:lock:shopee:simulate:{run_id}:{user_id}"
+    token = acquire_distributed_lock(lock_key, REDIS_LOCK_TTL_SEC)
+    if token is None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="订单模拟正在进行中，请稍后重试")
+    return lock_key, token
 
 
 class ShopeeOrderItemResponse(BaseModel):
@@ -560,6 +661,59 @@ def _get_owned_running_run_or_404(db: Session, run_id: int, user_id: int) -> Gam
     if not run:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Running game not found")
     return run
+
+
+def _get_owned_order_readable_run_or_404(db: Session, run_id: int, user_id: int) -> GameRun:
+    run = (
+        db.query(GameRun)
+        .filter(
+            GameRun.id == run_id,
+            GameRun.user_id == user_id,
+            GameRun.status.in_(("running", "finished")),
+        )
+        .first()
+    )
+    if not run:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Game not found")
+    return run
+
+
+def _align_compare_time(ref: datetime, val: datetime) -> datetime:
+    if ref.tzinfo is not None and val.tzinfo is None:
+        return val.replace(tzinfo=ref.tzinfo)
+    if ref.tzinfo is None and val.tzinfo is not None:
+        return val.replace(tzinfo=None)
+    return val
+
+
+def _resolve_run_end_time(run: GameRun) -> datetime | None:
+    if not run.created_at:
+        return None
+    return run.created_at + timedelta(days=max(1, int(run.duration_days or 1)))
+
+
+def _mark_run_finished_if_reached(db: Session, run: GameRun, *, tick_time: datetime | None = None) -> bool:
+    status_value = (run.status or "").strip()
+    if status_value == "finished":
+        return True
+    if status_value != "running":
+        return False
+    run_end_time = _resolve_run_end_time(run)
+    if not run_end_time:
+        return False
+    compare_tick = tick_time or _resolve_game_hour_tick_by_run(run)
+    compare_tick = _align_compare_time(run_end_time, compare_tick)
+    if compare_tick < run_end_time:
+        return False
+    run.status = "finished"
+    db.commit()
+    db.refresh(run)
+    return True
+
+
+def _ensure_run_writable_or_400(db: Session, run: GameRun, *, tick_time: datetime | None = None) -> None:
+    if _mark_run_finished_if_reached(db, run, tick_time=tick_time):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=RUN_FINISHED_DETAIL)
 
 
 def _save_shopee_image(db: Session, image: UploadFile) -> str:
@@ -1658,6 +1812,97 @@ def _parse_wholesale_tiers_payload(wholesale_tiers_payload: str | None) -> list[
     return rows
 
 
+def _project_readonly_backorder_fulfillment(
+    db: Session,
+    *,
+    run_id: int,
+    user_id: int,
+    orders: list[ShopeeOrder],
+) -> dict[int, tuple[str, int, datetime | None]]:
+    """Readonly projection for finished runs: do not write DB, only adjust response view."""
+    if not orders:
+        return {}
+    listing_ids = {int(row.listing_id) for row in orders if int(row.listing_id or 0) > 0}
+    if not listing_ids:
+        return {}
+
+    listing_rows = (
+        db.query(ShopeeListing.id, ShopeeListing.product_id, ShopeeListing.stock_available)
+        .filter(
+            ShopeeListing.run_id == run_id,
+            ShopeeListing.user_id == user_id,
+            ShopeeListing.id.in_(listing_ids),
+        )
+        .all()
+    )
+    listing_product_map = {int(row[0]): int(row[1]) for row in listing_rows if row[1] is not None}
+    listing_available_map = {int(row[0]): max(0, int(row[2] or 0)) for row in listing_rows}
+    product_ids = sorted({pid for pid in listing_product_map.values() if pid > 0})
+
+    available_by_product: dict[int, int] = {}
+    if product_ids:
+        available_rows = (
+            db.query(InventoryLot.product_id, func.coalesce(func.sum(InventoryLot.quantity_available), 0))
+            .filter(
+                InventoryLot.run_id == run_id,
+                InventoryLot.product_id.in_(product_ids),
+            )
+            .group_by(InventoryLot.product_id)
+            .all()
+        )
+        available_by_product = {int(pid): int(qty or 0) for pid, qty in available_rows}
+
+    variant_rows = (
+        db.query(ShopeeListingVariant.id, ShopeeListingVariant.listing_id, ShopeeListingVariant.stock)
+        .filter(
+            ShopeeListingVariant.listing_id.in_(listing_ids),
+        )
+        .all()
+    )
+    variant_available_map = {int(row[0]): max(0, int(row[2] or 0)) for row in variant_rows}
+    variant_listing_map = {int(row[0]): int(row[1]) for row in variant_rows}
+
+    projected: dict[int, tuple[str, int, datetime | None]] = {}
+
+    for row in orders:
+        base_status = (row.stock_fulfillment_status or "").strip()
+        base_backorder = max(0, int(row.backorder_qty or 0))
+        if row.type_bucket != "toship" or base_status != "backorder" or base_backorder <= 0:
+            continue
+        listing_id = int(row.listing_id or 0)
+        product_id = listing_product_map.get(listing_id)
+        can_fill = 0
+
+        if product_id:
+            can_fill = min(base_backorder, max(0, int(available_by_product.get(product_id, 0))))
+            if can_fill > 0:
+                available_by_product[product_id] = max(0, int(available_by_product.get(product_id, 0)) - can_fill)
+        else:
+            variant_id = int(row.variant_id or 0)
+            if variant_id > 0 and variant_id in variant_available_map:
+                can_fill = min(base_backorder, max(0, int(variant_available_map.get(variant_id, 0))))
+                if can_fill > 0:
+                    variant_available_map[variant_id] = max(0, int(variant_available_map.get(variant_id, 0)) - can_fill)
+                    v_listing_id = variant_listing_map.get(variant_id)
+                    if v_listing_id is not None:
+                        listing_available_map[v_listing_id] = max(
+                            0, int(listing_available_map.get(v_listing_id, 0)) - can_fill
+                        )
+            if can_fill <= 0 and listing_id > 0:
+                can_fill = min(base_backorder, max(0, int(listing_available_map.get(listing_id, 0))))
+                if can_fill > 0:
+                    listing_available_map[listing_id] = max(0, int(listing_available_map.get(listing_id, 0)) - can_fill)
+
+        if can_fill <= 0:
+            continue
+        remaining = base_backorder - can_fill
+        if remaining <= 0:
+            projected[int(row.id)] = ("restocked", 0, None)
+        else:
+            projected[int(row.id)] = ("backorder", remaining, row.must_restock_before_at)
+    return projected
+
+
 @router.get("/runs/{run_id}/orders", response_model=ShopeeOrdersListResponse)
 def list_shopee_orders(
     run_id: int,
@@ -1676,12 +1921,36 @@ def list_shopee_orders(
     current_user: dict = Depends(get_current_user),
 ) -> ShopeeOrdersListResponse:
     user_id = int(current_user["id"])
-    run = _get_owned_running_run_or_404(db, run_id, user_id)
-    _auto_simulate_orders_by_game_hour(db, run=run, user_id=user_id, max_ticks_per_request=1)
+    _enforce_shopee_orders_list_rate_limit(user_id=user_id)
+    run = _get_owned_order_readable_run_or_404(db, run_id, user_id)
+    is_finished = _mark_run_finished_if_reached(db, run)
+    if not is_finished:
+        _auto_simulate_orders_by_game_hour(db, run=run, user_id=user_id, max_ticks_per_request=1)
     current_tick = _resolve_game_tick(db, run.id, user_id)
-    _auto_cancel_overdue_orders_by_tick(db, run_id=run.id, user_id=user_id, current_tick=current_tick)
-    _auto_progress_shipping_orders_by_tick(db, run_id=run.id, user_id=user_id, current_tick=current_tick)
-    _backfill_income_for_completed_orders(db, run_id=run.id, user_id=user_id, current_tick=current_tick)
+    if not _mark_run_finished_if_reached(db, run, tick_time=current_tick):
+        _auto_cancel_overdue_orders_by_tick(db, run_id=run.id, user_id=user_id, current_tick=current_tick)
+        _auto_progress_shipping_orders_by_tick(db, run_id=run.id, user_id=user_id, current_tick=current_tick)
+        _backfill_income_for_completed_orders(db, run_id=run.id, user_id=user_id, current_tick=current_tick)
+        service_rebalance_backorders_from_current_inventory(db, run_id=run.id, user_id=user_id)
+        db.commit()
+        _invalidate_shopee_orders_cache_for_user(run_id=run.id, user_id=user_id)
+    cached_payload = _get_shopee_orders_cache_payload(
+        run_id=run.id,
+        user_id=user_id,
+        type_value=type,
+        source=source,
+        sort_by=sort_by,
+        order=order,
+        order_type=order_type,
+        order_status=order_status,
+        priority=priority,
+        keyword=keyword,
+        channel=channel,
+        page=page,
+        page_size=page_size,
+    )
+    if cached_payload:
+        return ShopeeOrdersListResponse.model_validate(cached_payload)
 
     base_query = db.query(ShopeeOrder).filter(ShopeeOrder.run_id == run.id, ShopeeOrder.user_id == user_id)
     counts = ShopeeOrderTabCounts(
@@ -1717,6 +1986,14 @@ def list_shopee_orders(
 
     total = query.count()
     rows = query.offset((page - 1) * page_size).limit(page_size).all()
+    readonly_backorder_projection: dict[int, tuple[str, int, datetime | None]] = {}
+    if (run.status or "").strip() == "finished":
+        readonly_backorder_projection = _project_readonly_backorder_fulfillment(
+            db,
+            run_id=run.id,
+            user_id=user_id,
+            orders=rows,
+        )
     recent_window_start = datetime.utcnow() - timedelta(hours=1)
     simulated_recent_1h = (
         db.query(func.coalesce(func.sum(ShopeeOrderGenerationLog.generated_order_count), 0))
@@ -1739,7 +2016,7 @@ def list_shopee_orders(
         .scalar()
     )
 
-    return ShopeeOrdersListResponse(
+    response = ShopeeOrdersListResponse(
         counts=counts,
         page=page,
         page_size=page_size,
@@ -1791,12 +2068,38 @@ def list_shopee_orders(
                             for item in row.items
                         ],
                     },
+                    **(
+                        {
+                            "stock_fulfillment_status": readonly_backorder_projection[int(row.id)][0],
+                            "backorder_qty": int(readonly_backorder_projection[int(row.id)][1]),
+                            "must_restock_before_at": readonly_backorder_projection[int(row.id)][2],
+                        }
+                        if int(row.id) in readonly_backorder_projection
+                        else {}
+                    ),
                     **_calc_order_shipping_metrics(row, current_tick),
                 }
             )
             for row in rows
         ],
     )
+    _set_shopee_orders_cache_payload(
+        run_id=run.id,
+        user_id=user_id,
+        type_value=type,
+        source=source,
+        sort_by=sort_by,
+        order=order,
+        order_type=order_type,
+        order_status=order_status,
+        priority=priority,
+        keyword=keyword,
+        channel=channel,
+        page=page,
+        page_size=page_size,
+        payload=response.model_dump(mode="json"),
+    )
+    return response
 
 
 @router.get("/runs/{run_id}/orders/{order_id}", response_model=ShopeeOrderResponse)
@@ -1807,11 +2110,12 @@ def get_shopee_order_detail(
     current_user: dict = Depends(get_current_user),
 ) -> ShopeeOrderResponse:
     user_id = int(current_user["id"])
-    run = _get_owned_running_run_or_404(db, run_id, user_id)
+    run = _get_owned_order_readable_run_or_404(db, run_id, user_id)
     current_tick = _resolve_game_tick(db, run.id, user_id)
-    _auto_cancel_overdue_orders_by_tick(db, run_id=run.id, user_id=user_id, current_tick=current_tick)
-    _auto_progress_shipping_orders_by_tick(db, run_id=run.id, user_id=user_id, current_tick=current_tick)
-    _backfill_income_for_completed_orders(db, run_id=run.id, user_id=user_id, current_tick=current_tick)
+    if not _mark_run_finished_if_reached(db, run, tick_time=current_tick):
+        _auto_cancel_overdue_orders_by_tick(db, run_id=run.id, user_id=user_id, current_tick=current_tick)
+        _auto_progress_shipping_orders_by_tick(db, run_id=run.id, user_id=user_id, current_tick=current_tick)
+        _backfill_income_for_completed_orders(db, run_id=run.id, user_id=user_id, current_tick=current_tick)
     row = (
         db.query(ShopeeOrder)
         .options(selectinload(ShopeeOrder.items))
@@ -1824,6 +2128,14 @@ def get_shopee_order_detail(
     )
     if not row:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="订单不存在")
+    readonly_backorder_projection: dict[int, tuple[str, int, datetime | None]] = {}
+    if (run.status or "").strip() == "finished":
+        readonly_backorder_projection = _project_readonly_backorder_fulfillment(
+            db,
+            run_id=run.id,
+            user_id=user_id,
+            orders=[row],
+        )
     return ShopeeOrderResponse(
         **{
             **{
@@ -1868,6 +2180,15 @@ def get_shopee_order_detail(
                     for item in row.items
                 ],
             },
+            **(
+                {
+                    "stock_fulfillment_status": readonly_backorder_projection[int(row.id)][0],
+                    "backorder_qty": int(readonly_backorder_projection[int(row.id)][1]),
+                    "must_restock_before_at": readonly_backorder_projection[int(row.id)][2],
+                }
+                if int(row.id) in readonly_backorder_projection
+                else {}
+            ),
             **_calc_order_shipping_metrics(row, current_tick),
         }
     )
@@ -1882,8 +2203,9 @@ def ship_order(
     current_user: dict = Depends(get_current_user),
 ) -> ShopeeShipOrderResponse:
     user_id = int(current_user["id"])
-    run = _get_owned_running_run_or_404(db, run_id, user_id)
+    run = _get_owned_order_readable_run_or_404(db, run_id, user_id)
     current_tick = _resolve_game_tick(db, run.id, user_id)
+    _ensure_run_writable_or_400(db, run, tick_time=current_tick)
     _auto_cancel_overdue_orders_by_tick(db, run_id=run.id, user_id=user_id, current_tick=current_tick)
     order = _get_owned_order_or_404(db, run.id, user_id, order_id)
 
@@ -1985,6 +2307,7 @@ def ship_order(
     )
     db.commit()
     db.refresh(order)
+    _invalidate_shopee_orders_cache_for_user(run_id=run.id, user_id=user_id)
 
     return ShopeeShipOrderResponse(
         order_id=order.id,
@@ -2011,7 +2334,8 @@ def cancel_order(
     current_user: dict = Depends(get_current_user),
 ) -> ShopeeCancelOrderResponse:
     user_id = int(current_user["id"])
-    run = _get_owned_running_run_or_404(db, run_id, user_id)
+    run = _get_owned_order_readable_run_or_404(db, run_id, user_id)
+    _ensure_run_writable_or_400(db, run)
     order = _get_owned_order_or_404(db, run.id, user_id, order_id)
     if order.type_bucket != "toship":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="仅待出货订单可取消")
@@ -2028,6 +2352,7 @@ def cancel_order(
     )
     db.commit()
     db.refresh(order)
+    _invalidate_shopee_orders_cache_for_user(run_id=run.id, user_id=user_id)
     return ShopeeCancelOrderResponse(
         order_id=order.id,
         type_bucket=order.type_bucket,
@@ -2046,10 +2371,11 @@ def get_order_logistics(
     current_user: dict = Depends(get_current_user),
 ) -> ShopeeOrderLogisticsResponse:
     user_id = int(current_user["id"])
-    run = _get_owned_running_run_or_404(db, run_id, user_id)
+    run = _get_owned_order_readable_run_or_404(db, run_id, user_id)
     current_tick = _resolve_game_tick(db, run.id, user_id)
-    _auto_cancel_overdue_orders_by_tick(db, run_id=run.id, user_id=user_id, current_tick=current_tick)
-    _auto_progress_shipping_orders_by_tick(db, run_id=run.id, user_id=user_id, current_tick=current_tick)
+    if not _mark_run_finished_if_reached(db, run, tick_time=current_tick):
+        _auto_cancel_overdue_orders_by_tick(db, run_id=run.id, user_id=user_id, current_tick=current_tick)
+        _auto_progress_shipping_orders_by_tick(db, run_id=run.id, user_id=user_id, current_tick=current_tick)
     order = _get_owned_order_or_404(db, run.id, user_id, order_id)
     events = (
         db.query(ShopeeOrderLogisticsEvent)
@@ -2092,7 +2418,9 @@ def progress_order_logistics(
     current_user: dict = Depends(get_current_user),
 ) -> ShopeeProgressLogisticsResponse:
     user_id = int(current_user["id"])
-    run = _get_owned_running_run_or_404(db, run_id, user_id)
+    run = _get_owned_order_readable_run_or_404(db, run_id, user_id)
+    now = _resolve_game_tick(db, run.id, user_id)
+    _ensure_run_writable_or_400(db, run, tick_time=now)
     order = _get_owned_order_or_404(db, run.id, user_id, order_id)
     if order.type_bucket == "cancelled":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="订单已取消，无法推进物流")
@@ -2113,7 +2441,6 @@ def progress_order_logistics(
     if target_code != expected_next:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"仅允许推进到下一节点: {expected_next}")
 
-    now = _resolve_game_tick(db, run.id, user_id)
     _apply_logistics_transition(
         db,
         run_id=run.id,
@@ -2125,6 +2452,7 @@ def progress_order_logistics(
 
     db.commit()
     db.refresh(order)
+    _invalidate_shopee_orders_cache_for_user(run_id=run.id, user_id=user_id)
     return ShopeeProgressLogisticsResponse(
         order_id=order.id,
         order_no=order.order_no,
@@ -2143,7 +2471,7 @@ def get_order_settlement(
     current_user: dict = Depends(get_current_user),
 ) -> ShopeeOrderSettlementResponse:
     user_id = int(current_user["id"])
-    run = _get_owned_running_run_or_404(db, run_id, user_id)
+    run = _get_owned_order_readable_run_or_404(db, run_id, user_id)
     _ = _get_owned_order_or_404(db, run.id, user_id, order_id)
     settlement = (
         db.query(ShopeeOrderSettlement)
@@ -2176,9 +2504,10 @@ def get_shopee_finance_overview(
     current_user: dict = Depends(get_current_user),
 ) -> ShopeeFinanceOverviewResponse:
     user_id = int(current_user["id"])
-    run = _get_owned_running_run_or_404(db, run_id, user_id)
+    run = _get_owned_order_readable_run_or_404(db, run_id, user_id)
     current_tick = _resolve_game_tick(db, run.id, user_id)
-    _backfill_income_for_completed_orders(db, run_id=run.id, user_id=user_id, current_tick=current_tick)
+    if not _mark_run_finished_if_reached(db, run, tick_time=current_tick):
+        _backfill_income_for_completed_orders(db, run_id=run.id, user_id=user_id, current_tick=current_tick)
 
     wallet_balance = _calc_wallet_balance(db, run_id=run.id, user_id=user_id)
     total_income = (
@@ -2267,9 +2596,10 @@ def list_shopee_finance_transactions(
     current_user: dict = Depends(get_current_user),
 ) -> ShopeeFinanceTransactionsResponse:
     user_id = int(current_user["id"])
-    run = _get_owned_running_run_or_404(db, run_id, user_id)
+    run = _get_owned_order_readable_run_or_404(db, run_id, user_id)
     current_tick = _resolve_game_tick(db, run.id, user_id)
-    _backfill_income_for_completed_orders(db, run_id=run.id, user_id=user_id, current_tick=current_tick)
+    if not _mark_run_finished_if_reached(db, run, tick_time=current_tick):
+        _backfill_income_for_completed_orders(db, run_id=run.id, user_id=user_id, current_tick=current_tick)
 
     query = (
         db.query(ShopeeFinanceLedgerEntry)
@@ -2328,9 +2658,10 @@ def list_shopee_finance_income(
     current_user: dict = Depends(get_current_user),
 ) -> ShopeeFinanceIncomeListResponse:
     user_id = int(current_user["id"])
-    run = _get_owned_running_run_or_404(db, run_id, user_id)
+    run = _get_owned_order_readable_run_or_404(db, run_id, user_id)
     current_tick = _resolve_game_tick(db, run.id, user_id)
-    _backfill_income_for_completed_orders(db, run_id=run.id, user_id=user_id, current_tick=current_tick)
+    if not _mark_run_finished_if_reached(db, run, tick_time=current_tick):
+        _backfill_income_for_completed_orders(db, run_id=run.id, user_id=user_id, current_tick=current_tick)
 
     query = (
         db.query(ShopeeFinanceLedgerEntry)
@@ -2388,7 +2719,7 @@ def list_shopee_bank_accounts(
     current_user: dict = Depends(get_current_user),
 ) -> ShopeeBankAccountsListResponse:
     user_id = int(current_user["id"])
-    run = _get_owned_running_run_or_404(db, run_id, user_id)
+    run = _get_owned_order_readable_run_or_404(db, run_id, user_id)
     rows = (
         db.query(ShopeeBankAccount)
         .filter(
@@ -2606,7 +2937,8 @@ def simulate_shopee_orders(
     current_user: dict = Depends(get_current_user),
 ) -> ShopeeSimulateOrdersResponse:
     user_id = int(current_user["id"])
-    run = _get_owned_running_run_or_404(db, run_id, user_id)
+    _enforce_shopee_simulate_rate_limit(user_id=user_id)
+    run = _get_owned_order_readable_run_or_404(db, run_id, user_id)
     effective_tick_time = tick_time
     if effective_tick_time is None:
         latest_tick_time = (
@@ -2621,23 +2953,30 @@ def simulate_shopee_orders(
             effective_tick_time = latest_tick_time + timedelta(hours=1)
         else:
             effective_tick_time = datetime.utcnow()
+    guard_tick = effective_tick_time if tick_time is not None else _resolve_game_hour_tick_by_run(run)
+    _ensure_run_writable_or_400(db, run, tick_time=guard_tick)
+    lock_key, lock_token = _acquire_shopee_simulate_lock_or_409(run_id=run.id, user_id=user_id)
 
-    result = simulate_orders_for_run(db, run_id=run.id, user_id=user_id, tick_time=effective_tick_time)
-    return ShopeeSimulateOrdersResponse(
-        tick_time=result["tick_time"],
-        active_buyer_count=result["active_buyer_count"],
-        candidate_product_count=result["candidate_product_count"],
-        generated_order_count=result["generated_order_count"],
-        skip_reasons=result["skip_reasons"],
-        shop_context={
-            "run_id": run.id,
-            "user_id": user_id,
-            "username": current_user.get("username"),
-            "market": run.market,
-            "status": run.status,
-        },
-        buyer_journeys=result.get("buyer_journeys") or [],
-    )
+    try:
+        result = simulate_orders_for_run(db, run_id=run.id, user_id=user_id, tick_time=effective_tick_time)
+        _invalidate_shopee_orders_cache_for_user(run_id=run.id, user_id=user_id)
+        return ShopeeSimulateOrdersResponse(
+            tick_time=result["tick_time"],
+            active_buyer_count=result["active_buyer_count"],
+            candidate_product_count=result["candidate_product_count"],
+            generated_order_count=result["generated_order_count"],
+            skip_reasons=result["skip_reasons"],
+            shop_context={
+                "run_id": run.id,
+                "user_id": user_id,
+                "username": current_user.get("username"),
+                "market": run.market,
+                "status": run.status,
+            },
+            buyer_journeys=result.get("buyer_journeys") or [],
+        )
+    finally:
+        release_distributed_lock(lock_key, lock_token)
 
 
 @router.get("/runs/{run_id}/products", response_model=ShopeeListingsListResponse)
@@ -2651,7 +2990,7 @@ def list_shopee_products(
     current_user: dict = Depends(get_current_user),
 ) -> ShopeeListingsListResponse:
     user_id = int(current_user["id"])
-    run = _get_owned_running_run_or_404(db, run_id, user_id)
+    run = _get_owned_order_readable_run_or_404(db, run_id, user_id)
 
     base_query = db.query(ShopeeListing).filter(ShopeeListing.run_id == run.id, ShopeeListing.user_id == user_id)
     counts = ShopeeListingsCountsResponse(

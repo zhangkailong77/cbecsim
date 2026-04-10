@@ -1,5 +1,5 @@
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -45,14 +45,14 @@ def _register_or_login_player(phone: str, password: str = "player123") -> str:
     return login_resp.json()["access_token"]
 
 
-def _create_running_run(token: str, initial_cash: int = 200000) -> dict:
+def _create_running_run(token: str, initial_cash: int = 200000, duration_days: int = 365) -> dict:
     response = client.post(
         "/game/runs",
         headers={"Authorization": f"Bearer {token}"},
         json={
             "initial_cash": initial_cash,
             "market": "MY",
-            "duration_days": 365,
+            "duration_days": duration_days,
         },
     )
     assert response.status_code == 201
@@ -283,6 +283,489 @@ def test_game_create_run_allows_total_cash_only():
     assert response.status_code == 201
 
 
+def test_game_create_run_accepts_7_days_duration():
+    token = _register_or_login_player("13800138141")
+    response = client.post(
+        "/game/runs",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "initial_cash": 200000,
+            "market": "MY",
+            "duration_days": 7,
+        },
+    )
+    assert response.status_code == 201
+    assert response.json()["duration_days"] == 7
+
+
+def test_game_create_run_auto_finishes_expired_running_run():
+    from app.db import SessionLocal
+    from app.models import GameRun
+
+    token = _register_or_login_player("13800138142")
+    first = client.post(
+        "/game/runs",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "initial_cash": 200000,
+            "market": "MY",
+            "duration_days": 7,
+        },
+    )
+    assert first.status_code == 201
+    first_run_id = int(first.json()["id"])
+
+    with SessionLocal() as db:
+        run = db.query(GameRun).filter(GameRun.id == first_run_id).first()
+        assert run is not None
+        run.created_at = datetime.utcnow() - timedelta(hours=4)
+        db.commit()
+
+    second = client.post(
+        "/game/runs",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "initial_cash": 300000,
+            "market": "MY",
+            "duration_days": 7,
+        },
+    )
+    assert second.status_code == 201
+
+    with SessionLocal() as db:
+        first_run = db.query(GameRun).filter(GameRun.id == first_run_id).first()
+        assert first_run is not None
+        assert first_run.status == "finished"
+
+
+def test_game_current_run_returns_none_after_expiry():
+    from app.db import SessionLocal
+    from app.models import GameRun
+
+    token = _register_or_login_player("13800138143")
+    created = client.post(
+        "/game/runs",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "initial_cash": 200000,
+            "market": "MY",
+            "duration_days": 7,
+        },
+    )
+    assert created.status_code == 201
+    run_id = int(created.json()["id"])
+
+    with SessionLocal() as db:
+        row = db.query(GameRun).filter(GameRun.id == run_id).first()
+        assert row is not None
+        row.created_at = datetime.utcnow() - timedelta(days=8)
+        db.commit()
+
+    current = client.get("/game/runs/current", headers={"Authorization": f"Bearer {token}"})
+    assert current.status_code == 200
+    payload = current.json()
+    assert payload["run"] is None
+
+    with SessionLocal() as db:
+        row = db.query(GameRun).filter(GameRun.id == run_id).first()
+        assert row is not None
+        assert row.status == "finished"
+
+
+def test_game_current_run_prefers_running_when_finished_and_running_both_exist():
+    from app.db import SessionLocal
+    from app.models import GameRun
+
+    token = _register_or_login_player("13800138229")
+    first = _create_running_run(token, duration_days=7)
+
+    with SessionLocal() as db:
+        first_row = db.query(GameRun).filter(GameRun.id == first["id"]).first()
+        assert first_row is not None
+        first_row.created_at = datetime.utcnow() - timedelta(days=8)
+        db.commit()
+
+    second = _create_running_run(token, duration_days=365)
+
+    current = client.get("/game/runs/current", headers={"Authorization": f"Bearer {token}"})
+    assert current.status_code == 200
+    payload = current.json()
+    assert payload["run"] is not None
+    assert payload["run"]["id"] == second["id"]
+    assert payload["run"]["status"] == "running"
+
+
+def test_game_read_endpoint_allows_finished_run():
+    from app.db import SessionLocal
+    from app.models import GameRun
+
+    token = _register_or_login_player("13800138144")
+    run = _create_running_run(token, duration_days=7)
+
+    with SessionLocal() as db:
+        row = db.query(GameRun).filter(GameRun.id == run["id"]).first()
+        assert row is not None
+        row.created_at = datetime.utcnow() - timedelta(days=8)
+        db.commit()
+
+    resp = client.get(
+        f"/game/runs/{run['id']}/procurement/cart-summary",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+
+
+def test_game_write_endpoint_rejects_finished_run():
+    from app.db import SessionLocal
+    from app.models import GameRun
+
+    token = _register_or_login_player("13800138145")
+    run = _create_running_run(token, duration_days=7)
+    list_resp = client.get("/market/leaderboard", params={"market": "MY", "page": 1})
+    product = list_resp.json()["items"][0]
+
+    with SessionLocal() as db:
+        row = db.query(GameRun).filter(GameRun.id == run["id"]).first()
+        assert row is not None
+        row.created_at = datetime.utcnow() - timedelta(days=8)
+        db.commit()
+
+    resp = client.post(
+        f"/game/runs/{run['id']}/procurement/orders",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"items": [{"product_id": product["id"], "quantity": 1000}]},
+    )
+    assert resp.status_code == 400
+    assert "已结束" in str(resp.json().get("detail", ""))
+
+
+def test_game_logistics_shipments_allows_finished_run():
+    from app.db import SessionLocal
+    from app.models import GameRun
+
+    token = _register_or_login_player("13800138146")
+    run = _create_running_run(token, duration_days=7)
+
+    with SessionLocal() as db:
+        row = db.query(GameRun).filter(GameRun.id == run["id"]).first()
+        assert row is not None
+        row.created_at = datetime.utcnow() - timedelta(days=8)
+        db.commit()
+
+    resp = client.get(
+        f"/game/runs/{run['id']}/logistics/shipments",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    assert "shipments" in resp.json()
+
+
+def test_game_create_logistics_shipment_rejects_finished_run():
+    from app.db import SessionLocal
+    from app.models import GameRun
+
+    token = _register_or_login_player("13800138147")
+    run = _create_running_run(token, duration_days=7)
+
+    with SessionLocal() as db:
+        row = db.query(GameRun).filter(GameRun.id == run["id"]).first()
+        assert row is not None
+        row.created_at = datetime.utcnow() - timedelta(days=8)
+        db.commit()
+
+    resp = client.post(
+        f"/game/runs/{run['id']}/logistics/shipments",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "order_ids": [1],
+            "forwarder_key": "economy",
+            "customs_key": "normal",
+        },
+    )
+    assert resp.status_code == 400
+    assert "已结束" in str(resp.json().get("detail", ""))
+
+
+def test_game_warehouse_summary_allows_finished_run():
+    from app.db import SessionLocal
+    from app.models import GameRun, LogisticsShipment, WarehouseInboundOrder, WarehouseStrategy
+
+    token = _register_or_login_player("13800138148")
+    run = _create_running_run(token, duration_days=7)
+
+    with SessionLocal() as db:
+        row = db.query(GameRun).filter(GameRun.id == run["id"]).first()
+        assert row is not None
+        row.status = "finished"
+        row.created_at = datetime.utcnow() - timedelta(days=8)
+
+        strategy = WarehouseStrategy(
+            run_id=row.id,
+            user_id=row.user_id,
+            market=row.market,
+            warehouse_mode="official",
+            warehouse_location="near_kl",
+            one_time_cost=1200,
+            inbound_cost=800,
+            rent_cost=500,
+            total_cost=2500,
+            delivery_eta_score=88,
+            fulfillment_accuracy=0.96,
+            warehouse_cost_per_order=9,
+            status="archived",
+        )
+        db.add(strategy)
+        db.flush()
+
+        shipment = LogisticsShipment(
+            run_id=row.id,
+            user_id=row.user_id,
+            forwarder_key="standard",
+            forwarder_label="标准线（马来）",
+            customs_key="normal",
+            customs_label="标准清关",
+            cargo_value=95000,
+            logistics_fee=5000,
+            customs_fee=1200,
+            total_fee=6200,
+            transport_days=12,
+            customs_days=4,
+        )
+        db.add(shipment)
+        db.flush()
+
+        db.add(
+            WarehouseInboundOrder(
+                run_id=row.id,
+                strategy_id=strategy.id,
+                shipment_id=shipment.id,
+                total_quantity=4000,
+                total_value=95000,
+                status="completed",
+                completed_at=datetime.utcnow(),
+            )
+        )
+        db.commit()
+
+    resp = client.get(
+        f"/game/runs/{run['id']}/warehouse/summary",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["completed_inbound_count"] == 1
+    assert payload["completed_inbound_total_quantity"] == 4000
+    assert payload["completed_inbound_total_value"] == 95000
+    assert payload["strategy"] is not None
+    assert payload["strategy"]["warehouse_mode"] == "official"
+
+
+def test_game_create_warehouse_strategy_rejects_finished_run():
+    from app.db import SessionLocal
+    from app.models import GameRun
+
+    token = _register_or_login_player("13800138149")
+    run = _create_running_run(token, duration_days=7)
+
+    with SessionLocal() as db:
+        row = db.query(GameRun).filter(GameRun.id == run["id"]).first()
+        assert row is not None
+        row.created_at = datetime.utcnow() - timedelta(days=8)
+        db.commit()
+
+    resp = client.post(
+        f"/game/runs/{run['id']}/warehouse/strategy",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "warehouse_mode": "self_built",
+            "warehouse_location": "near_kl",
+        },
+    )
+    assert resp.status_code == 400
+    assert "已结束" in str(resp.json().get("detail", ""))
+
+
+def test_game_history_options_returns_finished_only():
+    from app.db import SessionLocal
+    from app.models import GameRun
+
+    token = _register_or_login_player("13800138190")
+    first_run = _create_running_run(token, duration_days=7)
+
+    with SessionLocal() as db:
+        row = db.query(GameRun).filter(GameRun.id == first_run["id"]).first()
+        assert row is not None
+        row.status = "finished"
+        row.created_at = datetime.utcnow() - timedelta(days=8)
+        db.commit()
+
+    second_run = _create_running_run(token, duration_days=7)
+
+    resp = client.get(
+        "/game/runs/history/options",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    payload = resp.json()
+    run_ids = [int(row["id"]) for row in payload.get("runs", [])]
+    assert first_run["id"] in run_ids
+    assert second_run["id"] not in run_ids
+
+
+def test_game_run_context_allows_finished_run():
+    from app.db import SessionLocal
+    from app.models import GameRun
+
+    token = _register_or_login_player("13800138191")
+    run = _create_running_run(token, duration_days=7)
+
+    with SessionLocal() as db:
+        row = db.query(GameRun).filter(GameRun.id == run["id"]).first()
+        assert row is not None
+        row.status = "finished"
+        row.created_at = datetime.utcnow() - timedelta(days=8)
+        db.commit()
+
+    resp = client.get(
+        f"/game/runs/{run['id']}/context",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["id"] == run["id"]
+    assert payload["status"] == "finished"
+
+
+def test_game_history_summary_requires_finished_and_returns_aggregate_fields():
+    from app.db import SessionLocal
+    from app.models import GameRun
+
+    token = _register_or_login_player("13800138192")
+    run = _create_running_run(token, duration_days=7)
+
+    running_resp = client.get(
+        f"/game/runs/{run['id']}/history/summary",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert running_resp.status_code == 400
+
+    with SessionLocal() as db:
+        row = db.query(GameRun).filter(GameRun.id == run["id"]).first()
+        assert row is not None
+        row.status = "finished"
+        row.created_at = datetime.utcnow() - timedelta(days=8)
+        db.commit()
+
+    finished_resp = client.get(
+        f"/game/runs/{run['id']}/history/summary",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert finished_resp.status_code == 200
+    payload = finished_resp.json()
+    assert payload["run"]["id"] == run["id"]
+    assert payload["run"]["status"] == "finished"
+    assert "procurement_order_count" in payload
+    assert "logistics_shipment_count" in payload
+    assert "warehouse_completed_inbound_count" in payload
+    assert "shopee_order_total_count" in payload
+    assert "shopee_order_sold_inventory_quantity" in payload
+
+
+def test_game_history_summary_uses_cache_payload_for_owner(monkeypatch):
+    from app.api.routes import game as game_route
+    from app.db import SessionLocal
+    from app.models import GameRun
+
+    token = _register_or_login_player("13800138226")
+    run = _create_running_run(token, duration_days=7)
+
+    with SessionLocal() as db:
+        row = db.query(GameRun).filter(GameRun.id == run["id"]).first()
+        assert row is not None
+        row.status = "finished"
+        db.commit()
+
+    cached_payload = {
+        "run": {
+            "id": run["id"],
+            "user_id": run["user_id"],
+            "initial_cash": run["initial_cash"],
+            "market": run["market"],
+            "duration_days": run["duration_days"],
+            "day_index": run["day_index"],
+            "status": "finished",
+            "created_at": run["created_at"],
+        },
+        "initial_cash": float(run["initial_cash"]),
+        "total_cash": float(run["initial_cash"]),
+        "income_withdrawal_total": 0.0,
+        "total_expense": 0.0,
+        "current_balance": float(run["initial_cash"]),
+        "procurement_order_count": 0,
+        "logistics_shipment_count": 0,
+        "warehouse_completed_inbound_count": 0,
+        "inventory_total_quantity": 0,
+        "inventory_total_sku": 0,
+        "shopee_order_total_count": 0,
+        "shopee_order_toship_count": 0,
+        "shopee_order_shipping_count": 0,
+        "shopee_order_completed_count": 0,
+        "shopee_order_cancelled_count": 0,
+        "shopee_order_sold_inventory_quantity": 0,
+        "shopee_order_generation_log_count": 0,
+    }
+    monkeypatch.setattr(game_route, "cache_get_json", lambda _key: cached_payload, raising=False)
+
+    resp = client.get(
+        f"/game/runs/{run['id']}/history/summary",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["run"]["id"] == run["id"]
+    assert payload["total_cash"] == float(run["initial_cash"])
+
+
+def test_game_history_summary_cache_does_not_bypass_run_ownership(monkeypatch):
+    from app.api.routes import game as game_route
+    from app.db import SessionLocal
+    from app.models import GameRun
+
+    owner_token = _register_or_login_player("13800138227")
+    stranger_token = _register_or_login_player("13800138228")
+    run = _create_running_run(owner_token, duration_days=7)
+
+    with SessionLocal() as db:
+        row = db.query(GameRun).filter(GameRun.id == run["id"]).first()
+        assert row is not None
+        row.status = "finished"
+        db.commit()
+
+    monkeypatch.setattr(
+        game_route,
+        "cache_get_json",
+        lambda _key: {
+            "run": {
+                "id": run["id"],
+                "user_id": run["user_id"],
+                "initial_cash": run["initial_cash"],
+                "market": run["market"],
+                "duration_days": run["duration_days"],
+                "day_index": run["day_index"],
+                "status": "finished",
+                "created_at": run["created_at"],
+            }
+        },
+        raising=False,
+    )
+
+    resp = client.get(
+        f"/game/runs/{run['id']}/history/summary",
+        headers={"Authorization": f"Bearer {stranger_token}"},
+    )
+    assert resp.status_code == 404
+
+
 def test_game_reset_current_run_success():
     token = _register_or_login_player("13800138015")
     create = client.post(
@@ -417,9 +900,9 @@ def test_procurement_summary_defaults_to_full_budget():
     )
     assert response.status_code == 200
     body = response.json()
-    assert body["total_cash"] == 200000
+    assert body["total_cash"] == run["initial_cash"]
     assert body["spent_total"] == 0
-    assert body["remaining_cash"] == 200000
+    assert body["remaining_cash"] == run["initial_cash"]
 
 
 def test_procurement_create_order_persists_and_reduces_remaining_cash():
@@ -446,7 +929,7 @@ def test_procurement_create_order_persists_and_reduces_remaining_cash():
     body = create_resp.json()
     assert body["order_id"] > 0
     assert body["total_amount"] > 0
-    assert body["remaining_cash"] == 200000 - body["total_amount"]
+    assert body["remaining_cash"] == run["initial_cash"] - body["total_amount"]
 
     summary_resp = client.get(
         f"/game/runs/{run['id']}/procurement/cart-summary",
@@ -455,7 +938,7 @@ def test_procurement_create_order_persists_and_reduces_remaining_cash():
     assert summary_resp.status_code == 200
     summary = summary_resp.json()
     assert summary["spent_total"] == body["total_amount"]
-    assert summary["remaining_cash"] == 200000 - body["total_amount"]
+    assert summary["remaining_cash"] == run["initial_cash"] - body["total_amount"]
 
     history_resp = client.get(
         f"/game/runs/{run['id']}/procurement/orders",
@@ -869,7 +1352,7 @@ def _create_live_listing_for_run(monkeypatch, token: str, run_id: int, *, stock:
 
 def test_admin_simulate_orders_generates_orders_and_visible_to_player(monkeypatch):
     player_token = _register_or_login_player("13800138211")
-    run = _create_running_run(player_token)
+    run = _create_running_run(player_token, duration_days=7)
     _create_live_listing_for_run(monkeypatch, player_token, run["id"], stock=30, price=99)
 
     admin_login = client.post("/auth/login", json={"username": "yzcube", "password": "yzcube123"})
@@ -898,7 +1381,7 @@ def test_admin_simulate_orders_generates_orders_and_visible_to_player(monkeypatc
 
 def test_admin_simulate_orders_skips_when_no_live_products():
     player_token = _register_or_login_player("13800138212")
-    run = _create_running_run(player_token)
+    run = _create_running_run(player_token, duration_days=7)
 
     admin_login = client.post("/auth/login", json={"username": "yzcube", "password": "yzcube123"})
     assert admin_login.status_code == 200
@@ -916,7 +1399,7 @@ def test_admin_simulate_orders_skips_when_no_live_products():
 
 def test_admin_simulate_orders_skips_when_no_stock(monkeypatch):
     player_token = _register_or_login_player("13800138213")
-    run = _create_running_run(player_token)
+    run = _create_running_run(player_token, duration_days=7)
     _create_live_listing_for_run(monkeypatch, player_token, run["id"], stock=0, price=99)
 
     admin_login = client.post("/auth/login", json={"username": "yzcube", "password": "yzcube123"})
@@ -931,3 +1414,1167 @@ def test_admin_simulate_orders_skips_when_no_stock(monkeypatch):
     payload = simulate_resp.json()
     assert payload["generated_order_count"] == 0
     assert "no_stock" in payload["skip_reasons"]
+
+
+def test_shopee_products_list_allows_finished_run_and_returns_existing_listings():
+    from app.db import SessionLocal
+    from app.models import GameRun, ShopeeListing, ShopeeListingVariant
+
+    player_token = _register_or_login_player("13800138224")
+    run = _create_running_run(player_token, duration_days=365)
+
+    with SessionLocal() as db:
+        run_row = db.query(GameRun).filter(GameRun.id == run["id"]).first()
+        assert run_row is not None
+        run_row.status = "finished"
+
+        listing = ShopeeListing(
+            run_id=run_row.id,
+            user_id=run_row.user_id,
+            title="历史对局商品可见性测试",
+            category_id=1,
+            category="测试类目",
+            status="live",
+            quality_status="qualified",
+            stock_available=10,
+            sales_count=3,
+            price=199,
+            original_price=299,
+            cover_url=None,
+        )
+        db.add(listing)
+        db.flush()
+        db.add(
+            ShopeeListingVariant(
+                listing_id=listing.id,
+                option_value="默认款",
+                option_note=None,
+                price=199,
+                stock=10,
+                sales_count=3,
+                oversell_limit=50,
+                oversell_used=0,
+                sku="SKU-HISTORY-READ",
+                image_url=None,
+                sort_order=1,
+            )
+        )
+        db.commit()
+        listing_id = listing.id
+
+    resp = client.get(
+        f"/shopee/runs/{run['id']}/products",
+        headers={"Authorization": f"Bearer {player_token}"},
+        params={"type": "all", "page": 1, "page_size": 20},
+    )
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert int(payload["total"]) >= 1
+    target = next((row for row in payload["listings"] if int(row["id"]) == listing_id), None)
+    assert target is not None
+    assert target["title"] == "历史对局商品可见性测试"
+    assert len(target.get("variants") or []) == 1
+    assert target["variants"][0]["sku"] == "SKU-HISTORY-READ"
+
+
+def test_cancel_order_rebalances_other_backorder_for_same_product():
+    from app.db import SessionLocal
+    from app.models import (
+        GameRun,
+        InventoryLot,
+        LogisticsShipment,
+        MarketProduct,
+        ShopeeListing,
+        ShopeeListingVariant,
+        ShopeeOrder,
+        ShopeeOrderItem,
+        WarehouseInboundOrder,
+        WarehouseStrategy,
+    )
+
+    player_token = _register_or_login_player("13800138220")
+    run = _create_running_run(player_token, duration_days=365)
+
+    with SessionLocal() as db:
+        run_row = db.query(GameRun).filter(GameRun.id == run["id"]).first()
+        assert run_row is not None
+        product = (
+            db.query(MarketProduct)
+            .filter(MarketProduct.market == "MY")
+            .order_by(MarketProduct.id.asc())
+            .first()
+        )
+        assert product is not None
+
+        strategy = WarehouseStrategy(
+            run_id=run_row.id,
+            user_id=run_row.user_id,
+            market="MY",
+            warehouse_mode="official",
+            warehouse_location="near_kl",
+            one_time_cost=0,
+            inbound_cost=0,
+            rent_cost=0,
+            total_cost=0,
+            delivery_eta_score=85,
+            fulfillment_accuracy=0.95,
+            warehouse_cost_per_order=8,
+            status="active",
+        )
+        db.add(strategy)
+        db.flush()
+
+        shipment = LogisticsShipment(
+            run_id=run_row.id,
+            user_id=run_row.user_id,
+            forwarder_key="standard",
+            forwarder_label="标准线（马来）",
+            customs_key="normal",
+            customs_label="标准清关",
+            cargo_value=2000,
+            logistics_fee=120,
+            customs_fee=40,
+            total_fee=160,
+            transport_days=12,
+            customs_days=4,
+        )
+        db.add(shipment)
+        db.flush()
+
+        inbound = WarehouseInboundOrder(
+            run_id=run_row.id,
+            strategy_id=strategy.id,
+            shipment_id=shipment.id,
+            total_quantity=2,
+            total_value=2000,
+            status="completed",
+            completed_at=datetime.utcnow(),
+        )
+        db.add(inbound)
+        db.flush()
+
+        lot = InventoryLot(
+            run_id=run_row.id,
+            product_id=product.id,
+            inbound_order_id=inbound.id,
+            quantity_available=0,
+            quantity_locked=0,
+            reserved_qty=2,
+            backorder_qty=0,
+            unit_cost=int(product.supplier_price or 100),
+        )
+        db.add(lot)
+        db.flush()
+
+        listing = ShopeeListing(
+            run_id=run_row.id,
+            user_id=run_row.user_id,
+            title=f"{product.product_name}-回补测试",
+            category_id=1,
+            category="测试类目",
+            status="live",
+            quality_status="qualified",
+            stock_available=0,
+            sales_count=4,
+            product_id=product.id,
+        )
+        db.add(listing)
+        db.flush()
+
+        variant = ShopeeListingVariant(
+            listing_id=listing.id,
+            option_value="默认款",
+            sku=f"SKU-{listing.id}",
+            price=199,
+            stock=0,
+            sales_count=4,
+            oversell_limit=100,
+            oversell_used=2,
+            sort_order=1,
+        )
+        db.add(variant)
+        db.flush()
+
+        backorder_order = ShopeeOrder(
+            run_id=run_row.id,
+            user_id=run_row.user_id,
+            order_no=f"SIM_BACKORDER_{run_row.id}",
+            buyer_name="Buyer-A",
+            buyer_payment=398,
+            order_type="order",
+            listing_id=listing.id,
+            variant_id=variant.id,
+            type_bucket="toship",
+            process_status="processing",
+            stock_fulfillment_status="backorder",
+            backorder_qty=2,
+            shipping_priority="today",
+            shipping_channel="标准快递",
+            destination="吉隆坡",
+            countdown_text="请在24小时内处理",
+            action_text="查看详情",
+            ship_by_date=datetime.utcnow() + timedelta(days=1),
+            ship_by_at=datetime.utcnow() + timedelta(days=1),
+            must_restock_before_at=datetime.utcnow() + timedelta(hours=48),
+        )
+        db.add(backorder_order)
+        db.flush()
+        db.add(
+            ShopeeOrderItem(
+                order_id=backorder_order.id,
+                product_name=listing.title,
+                variant_name=variant.option_value,
+                quantity=2,
+                unit_price=199,
+                image_url=None,
+            )
+        )
+
+        to_cancel_order = ShopeeOrder(
+            run_id=run_row.id,
+            user_id=run_row.user_id,
+            order_no=f"SIM_CANCEL_{run_row.id}",
+            buyer_name="Buyer-B",
+            buyer_payment=398,
+            order_type="order",
+            listing_id=listing.id,
+            variant_id=variant.id,
+            type_bucket="toship",
+            process_status="processing",
+            stock_fulfillment_status="in_stock",
+            backorder_qty=0,
+            shipping_priority="today",
+            shipping_channel="标准快递",
+            destination="吉隆坡",
+            countdown_text="请在24小时内处理",
+            action_text="查看详情",
+            ship_by_date=datetime.utcnow() + timedelta(days=1),
+            ship_by_at=datetime.utcnow() + timedelta(days=1),
+        )
+        db.add(to_cancel_order)
+        db.flush()
+        db.add(
+            ShopeeOrderItem(
+                order_id=to_cancel_order.id,
+                product_name=listing.title,
+                variant_name=variant.option_value,
+                quantity=2,
+                unit_price=199,
+                image_url=None,
+            )
+        )
+
+        db.commit()
+        backorder_order_id = backorder_order.id
+        to_cancel_order_id = to_cancel_order.id
+
+    cancel_resp = client.post(
+        f"/shopee/runs/{run['id']}/orders/{to_cancel_order_id}/cancel",
+        headers={"Authorization": f"Bearer {player_token}"},
+        json={"reason": "manual_test"},
+    )
+    assert cancel_resp.status_code == 200
+
+    with SessionLocal() as db:
+        refreshed = db.query(ShopeeOrder).filter(ShopeeOrder.id == backorder_order_id).first()
+        assert refreshed is not None
+        assert refreshed.stock_fulfillment_status == "restocked"
+        assert int(refreshed.backorder_qty or 0) == 0
+
+
+def test_shopee_cancel_order_service_is_idempotent_for_same_order():
+    from app.db import SessionLocal
+    from app.models import (
+        GameRun,
+        InventoryStockMovement,
+        ShopeeListing,
+        ShopeeListingVariant,
+        ShopeeOrder,
+        ShopeeOrderItem,
+        ShopeeOrderLogisticsEvent,
+    )
+    from app.services.shopee_order_cancellation import cancel_order as service_cancel_order
+
+    player_token = _register_or_login_player("13800138225")
+    run = _create_running_run(player_token, duration_days=365)
+
+    with SessionLocal() as db:
+        run_row = db.query(GameRun).filter(GameRun.id == run["id"]).first()
+        assert run_row is not None
+
+        listing = ShopeeListing(
+            run_id=run_row.id,
+            user_id=run_row.user_id,
+            title="取消幂等测试商品",
+            category_id=1,
+            category="测试类目",
+            status="live",
+            quality_status="qualified",
+            stock_available=5,
+            sales_count=2,
+            product_id=None,
+        )
+        db.add(listing)
+        db.flush()
+
+        variant = ShopeeListingVariant(
+            listing_id=listing.id,
+            option_value="默认款",
+            sku=f"SKU-IDEMP-{listing.id}",
+            price=199,
+            stock=5,
+            sales_count=2,
+            oversell_limit=100,
+            oversell_used=0,
+            sort_order=1,
+        )
+        db.add(variant)
+        db.flush()
+
+        order = ShopeeOrder(
+            run_id=run_row.id,
+            user_id=run_row.user_id,
+            order_no=f"SIM_CANCEL_IDEMP_{run_row.id}",
+            buyer_name="Buyer-Idempotent",
+            buyer_payment=398,
+            order_type="order",
+            listing_id=listing.id,
+            variant_id=variant.id,
+            type_bucket="toship",
+            process_status="processing",
+            stock_fulfillment_status="in_stock",
+            backorder_qty=0,
+            shipping_priority="today",
+            shipping_channel="标准快递",
+            destination="吉隆坡",
+            countdown_text="请在24小时内处理",
+            action_text="查看详情",
+            ship_by_date=datetime.utcnow() + timedelta(days=1),
+            ship_by_at=datetime.utcnow() + timedelta(days=1),
+        )
+        db.add(order)
+        db.flush()
+        db.add(
+            ShopeeOrderItem(
+                order_id=order.id,
+                product_name=listing.title,
+                variant_name=variant.option_value,
+                quantity=2,
+                unit_price=199,
+                image_url=None,
+            )
+        )
+        db.flush()
+
+        cancel_time = datetime.utcnow()
+        service_cancel_order(
+            db,
+            run_id=run_row.id,
+            user_id=run_row.user_id,
+            order=order,
+            cancel_time=cancel_time,
+            reason="idempotent_test",
+            source="manual_debug",
+        )
+        service_cancel_order(
+            db,
+            run_id=run_row.id,
+            user_id=run_row.user_id,
+            order=order,
+            cancel_time=cancel_time + timedelta(seconds=1),
+            reason="idempotent_test_again",
+            source="manual_debug",
+        )
+        db.commit()
+
+    with SessionLocal() as db:
+        refreshed_order = db.query(ShopeeOrder).filter(ShopeeOrder.order_no == f"SIM_CANCEL_IDEMP_{run['id']}").first()
+        assert refreshed_order is not None
+        assert refreshed_order.type_bucket == "cancelled"
+
+        movement_count = (
+            db.query(InventoryStockMovement)
+            .filter(
+                InventoryStockMovement.run_id == run["id"],
+                InventoryStockMovement.biz_order_id == refreshed_order.id,
+                InventoryStockMovement.movement_type == "cancel_release",
+            )
+            .count()
+        )
+        assert movement_count == 1
+
+        cancel_event_count = (
+            db.query(ShopeeOrderLogisticsEvent)
+            .filter(
+                ShopeeOrderLogisticsEvent.run_id == run["id"],
+                ShopeeOrderLogisticsEvent.order_id == refreshed_order.id,
+                ShopeeOrderLogisticsEvent.event_code == "cancelled_by_buyer",
+            )
+            .count()
+        )
+        assert cancel_event_count == 1
+
+
+def test_shopee_orders_list_self_heals_legacy_backorder_when_inventory_available():
+    from app.db import SessionLocal
+    from app.models import (
+        GameRun,
+        InventoryLot,
+        LogisticsShipment,
+        MarketProduct,
+        ShopeeListing,
+        ShopeeListingVariant,
+        ShopeeOrder,
+        ShopeeOrderItem,
+        WarehouseInboundOrder,
+        WarehouseStrategy,
+    )
+
+    player_token = _register_or_login_player("13800138221")
+    run = _create_running_run(player_token, duration_days=365)
+
+    with SessionLocal() as db:
+        run_row = db.query(GameRun).filter(GameRun.id == run["id"]).first()
+        assert run_row is not None
+        product = (
+            db.query(MarketProduct)
+            .filter(MarketProduct.market == "MY")
+            .order_by(MarketProduct.id.asc())
+            .first()
+        )
+        assert product is not None
+        strategy = WarehouseStrategy(
+            run_id=run_row.id,
+            user_id=run_row.user_id,
+            market="MY",
+            warehouse_mode="official",
+            warehouse_location="near_kl",
+            one_time_cost=0,
+            inbound_cost=0,
+            rent_cost=0,
+            total_cost=0,
+            delivery_eta_score=85,
+            fulfillment_accuracy=0.95,
+            warehouse_cost_per_order=8,
+            status="active",
+        )
+        db.add(strategy)
+        db.flush()
+
+        shipment = LogisticsShipment(
+            run_id=run_row.id,
+            user_id=run_row.user_id,
+            forwarder_key="standard",
+            forwarder_label="标准线（马来）",
+            customs_key="normal",
+            customs_label="标准清关",
+            cargo_value=2000,
+            logistics_fee=120,
+            customs_fee=40,
+            total_fee=160,
+            transport_days=12,
+            customs_days=4,
+        )
+        db.add(shipment)
+        db.flush()
+
+        inbound = WarehouseInboundOrder(
+            run_id=run_row.id,
+            strategy_id=strategy.id,
+            shipment_id=shipment.id,
+            total_quantity=2,
+            total_value=2000,
+            status="completed",
+            completed_at=datetime.utcnow(),
+        )
+        db.add(inbound)
+        db.flush()
+
+        listing = ShopeeListing(
+            run_id=run_row.id,
+            user_id=run_row.user_id,
+            title=f"{product.product_name}-列表自愈测试",
+            category_id=1,
+            category="测试类目",
+            status="live",
+            quality_status="qualified",
+            stock_available=0,
+            sales_count=0,
+            product_id=product.id,
+        )
+        db.add(listing)
+        db.flush()
+
+        variant = ShopeeListingVariant(
+            listing_id=listing.id,
+            option_value="默认款",
+            sku=f"SKU-LIST-{listing.id}",
+            price=199,
+            stock=0,
+            sales_count=0,
+            oversell_limit=100,
+            oversell_used=2,
+            sort_order=1,
+        )
+        db.add(variant)
+        db.flush()
+
+        db.add(
+                InventoryLot(
+                    run_id=run_row.id,
+                    product_id=product.id,
+                    inbound_order_id=inbound.id,
+                    quantity_available=2,
+                quantity_locked=0,
+                reserved_qty=0,
+                backorder_qty=0,
+                unit_cost=int(product.supplier_price or 100),
+            )
+        )
+
+        backorder_order = ShopeeOrder(
+            run_id=run_row.id,
+            user_id=run_row.user_id,
+            order_no=f"SIM_LEGACY_BACKORDER_{run_row.id}",
+            buyer_name="Buyer-Legacy",
+            buyer_payment=398,
+            order_type="order",
+            listing_id=listing.id,
+            variant_id=variant.id,
+            type_bucket="toship",
+            process_status="processing",
+            stock_fulfillment_status="backorder",
+            backorder_qty=2,
+            shipping_priority="today",
+            shipping_channel="标准快递",
+            destination="吉隆坡",
+            countdown_text="请在24小时内处理",
+            action_text="查看详情",
+            ship_by_date=datetime.utcnow() + timedelta(days=1),
+            ship_by_at=datetime.utcnow() + timedelta(days=1),
+            must_restock_before_at=datetime.utcnow() + timedelta(hours=48),
+        )
+        db.add(backorder_order)
+        db.flush()
+        db.add(
+            ShopeeOrderItem(
+                order_id=backorder_order.id,
+                product_name=listing.title,
+                variant_name=variant.option_value,
+                quantity=2,
+                unit_price=199,
+                image_url=None,
+            )
+        )
+
+        db.commit()
+        backorder_order_id = backorder_order.id
+
+    list_resp = client.get(
+        f"/shopee/runs/{run['id']}/orders",
+        headers={"Authorization": f"Bearer {player_token}"},
+        params={"type": "toship"},
+    )
+    assert list_resp.status_code == 200
+
+    with SessionLocal() as db:
+        refreshed = db.query(ShopeeOrder).filter(ShopeeOrder.id == backorder_order_id).first()
+        assert refreshed is not None
+        assert refreshed.stock_fulfillment_status == "restocked"
+        assert int(refreshed.backorder_qty or 0) == 0
+
+
+def test_finished_orders_readonly_projection_hides_backorder_without_db_write():
+    from app.db import SessionLocal
+    from app.models import (
+        GameRun,
+        InventoryLot,
+        LogisticsShipment,
+        MarketProduct,
+        ShopeeListing,
+        ShopeeListingVariant,
+        ShopeeOrder,
+        ShopeeOrderItem,
+        WarehouseInboundOrder,
+        WarehouseStrategy,
+    )
+
+    player_token = _register_or_login_player("13800138222")
+    run = _create_running_run(player_token, duration_days=365)
+
+    with SessionLocal() as db:
+        run_row = db.query(GameRun).filter(GameRun.id == run["id"]).first()
+        assert run_row is not None
+        run_row.status = "finished"
+        product = (
+            db.query(MarketProduct)
+            .filter(MarketProduct.market == "MY")
+            .order_by(MarketProduct.id.asc())
+            .first()
+        )
+        assert product is not None
+
+        strategy = WarehouseStrategy(
+            run_id=run_row.id,
+            user_id=run_row.user_id,
+            market="MY",
+            warehouse_mode="official",
+            warehouse_location="near_kl",
+            one_time_cost=0,
+            inbound_cost=0,
+            rent_cost=0,
+            total_cost=0,
+            delivery_eta_score=85,
+            fulfillment_accuracy=0.95,
+            warehouse_cost_per_order=8,
+            status="active",
+        )
+        db.add(strategy)
+        db.flush()
+
+        shipment = LogisticsShipment(
+            run_id=run_row.id,
+            user_id=run_row.user_id,
+            forwarder_key="standard",
+            forwarder_label="标准线（马来）",
+            customs_key="normal",
+            customs_label="标准清关",
+            cargo_value=2000,
+            logistics_fee=120,
+            customs_fee=40,
+            total_fee=160,
+            transport_days=12,
+            customs_days=4,
+        )
+        db.add(shipment)
+        db.flush()
+
+        inbound = WarehouseInboundOrder(
+            run_id=run_row.id,
+            strategy_id=strategy.id,
+            shipment_id=shipment.id,
+            total_quantity=2,
+            total_value=2000,
+            status="completed",
+            completed_at=datetime.utcnow(),
+        )
+        db.add(inbound)
+        db.flush()
+
+        db.add(
+            InventoryLot(
+                run_id=run_row.id,
+                product_id=product.id,
+                inbound_order_id=inbound.id,
+                quantity_available=2,
+                quantity_locked=0,
+                reserved_qty=0,
+                backorder_qty=0,
+                unit_cost=int(product.supplier_price or 100),
+            )
+        )
+
+        listing = ShopeeListing(
+            run_id=run_row.id,
+            user_id=run_row.user_id,
+            title=f"{product.product_name}-历史回溯投影测试",
+            category_id=1,
+            category="测试类目",
+            status="live",
+            quality_status="qualified",
+            stock_available=0,
+            sales_count=0,
+            product_id=product.id,
+        )
+        db.add(listing)
+        db.flush()
+
+        variant = ShopeeListingVariant(
+            listing_id=listing.id,
+            option_value="默认款",
+            sku=f"SKU-HISTORY-{listing.id}",
+            price=199,
+            stock=0,
+            sales_count=0,
+            oversell_limit=100,
+            oversell_used=2,
+            sort_order=1,
+        )
+        db.add(variant)
+        db.flush()
+
+        backorder_order = ShopeeOrder(
+            run_id=run_row.id,
+            user_id=run_row.user_id,
+            order_no=f"SIM_FINISHED_BACKORDER_{run_row.id}",
+            buyer_name="Buyer-Finished",
+            buyer_payment=398,
+            order_type="order",
+            listing_id=listing.id,
+            variant_id=variant.id,
+            type_bucket="toship",
+            process_status="processing",
+            stock_fulfillment_status="backorder",
+            backorder_qty=2,
+            shipping_priority="today",
+            shipping_channel="标准快递",
+            destination="吉隆坡",
+            countdown_text="请在24小时内处理",
+            action_text="查看详情",
+            ship_by_date=datetime.utcnow() + timedelta(days=1),
+            ship_by_at=datetime.utcnow() + timedelta(days=1),
+            must_restock_before_at=datetime.utcnow() + timedelta(hours=48),
+        )
+        db.add(backorder_order)
+        db.flush()
+        db.add(
+            ShopeeOrderItem(
+                order_id=backorder_order.id,
+                product_name=listing.title,
+                variant_name=variant.option_value,
+                quantity=2,
+                unit_price=199,
+                image_url=None,
+            )
+        )
+        db.commit()
+        backorder_order_id = backorder_order.id
+
+    list_resp = client.get(
+        f"/shopee/runs/{run['id']}/orders",
+        headers={"Authorization": f"Bearer {player_token}"},
+        params={"type": "toship"},
+    )
+    assert list_resp.status_code == 200
+    payload = list_resp.json()
+    target = next((row for row in payload["orders"] if row["id"] == backorder_order_id), None)
+    assert target is not None
+    assert target["stock_fulfillment_status"] == "restocked"
+    assert int(target["backorder_qty"] or 0) == 0
+
+    detail_resp = client.get(
+        f"/shopee/runs/{run['id']}/orders/{backorder_order_id}",
+        headers={"Authorization": f"Bearer {player_token}"},
+    )
+    assert detail_resp.status_code == 200
+    detail = detail_resp.json()
+    assert detail["stock_fulfillment_status"] == "restocked"
+    assert int(detail["backorder_qty"] or 0) == 0
+
+    with SessionLocal() as db:
+        unchanged = db.query(ShopeeOrder).filter(ShopeeOrder.id == backorder_order_id).first()
+        assert unchanged is not None
+        assert unchanged.stock_fulfillment_status == "backorder"
+        assert int(unchanged.backorder_qty or 0) == 2
+
+
+def test_finished_orders_readonly_projection_uses_listing_stock_without_product_mapping():
+    from app.db import SessionLocal
+    from app.models import GameRun, ShopeeListing, ShopeeListingVariant, ShopeeOrder, ShopeeOrderItem
+
+    player_token = _register_or_login_player("13800138223")
+    run = _create_running_run(player_token, duration_days=365)
+
+    with SessionLocal() as db:
+        run_row = db.query(GameRun).filter(GameRun.id == run["id"]).first()
+        assert run_row is not None
+        run_row.status = "finished"
+
+        listing = ShopeeListing(
+            run_id=run_row.id,
+            user_id=run_row.user_id,
+            title="无映射历史Listing回溯测试",
+            category_id=1,
+            category="测试类目",
+            status="live",
+            quality_status="qualified",
+            stock_available=10,
+            sales_count=0,
+            product_id=None,
+        )
+        db.add(listing)
+        db.flush()
+
+        variant = ShopeeListingVariant(
+            listing_id=listing.id,
+            option_value="默认款",
+            sku=f"SKU-NOMAP-{listing.id}",
+            price=199,
+            stock=8,
+            sales_count=0,
+            oversell_limit=100,
+            oversell_used=6,
+            sort_order=1,
+        )
+        db.add(variant)
+        db.flush()
+
+        backorder_order = ShopeeOrder(
+            run_id=run_row.id,
+            user_id=run_row.user_id,
+            order_no=f"SIM_FINISHED_NOMAP_{run_row.id}",
+            buyer_name="Buyer-NoMap",
+            buyer_payment=398,
+            order_type="order",
+            listing_id=listing.id,
+            variant_id=variant.id,
+            type_bucket="toship",
+            process_status="processing",
+            stock_fulfillment_status="backorder",
+            backorder_qty=2,
+            shipping_priority="today",
+            shipping_channel="标准快递",
+            destination="吉隆坡",
+            countdown_text="请在24小时内处理",
+            action_text="查看详情",
+            ship_by_date=datetime.utcnow() + timedelta(days=1),
+            ship_by_at=datetime.utcnow() + timedelta(days=1),
+            must_restock_before_at=datetime.utcnow() + timedelta(hours=48),
+        )
+        db.add(backorder_order)
+        db.flush()
+        db.add(
+            ShopeeOrderItem(
+                order_id=backorder_order.id,
+                product_name=listing.title,
+                variant_name=variant.option_value,
+                quantity=2,
+                unit_price=199,
+                image_url=None,
+            )
+        )
+        db.commit()
+        backorder_order_id = backorder_order.id
+
+    list_resp = client.get(
+        f"/shopee/runs/{run['id']}/orders",
+        headers={"Authorization": f"Bearer {player_token}"},
+        params={"type": "toship"},
+    )
+    assert list_resp.status_code == 200
+    payload = list_resp.json()
+    target = next((row for row in payload["orders"] if row["id"] == backorder_order_id), None)
+    assert target is not None
+    assert target["stock_fulfillment_status"] == "restocked"
+    assert int(target["backorder_qty"] or 0) == 0
+
+    with SessionLocal() as db:
+        unchanged = db.query(ShopeeOrder).filter(ShopeeOrder.id == backorder_order_id).first()
+        assert unchanged is not None
+        assert unchanged.stock_fulfillment_status == "backorder"
+        assert int(unchanged.backorder_qty or 0) == 2
+
+
+def test_shopee_orders_list_allows_finished_run_and_skips_auto_writes(monkeypatch):
+    from app.api.routes import shopee as shopee_route
+    from app.db import SessionLocal
+    from app.models import GameRun
+
+    player_token = _register_or_login_player("13800138131")
+    run = _create_running_run(player_token, duration_days=7)
+
+    with SessionLocal() as db:
+        row = db.query(GameRun).filter(GameRun.id == run["id"]).first()
+        assert row is not None
+        row.created_at = datetime.utcnow() - timedelta(days=8)
+        db.commit()
+
+    called: list[str] = []
+    monkeypatch.setattr(
+        shopee_route,
+        "_auto_simulate_orders_by_game_hour",
+        lambda *_args, **_kwargs: called.append("simulate"),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        shopee_route,
+        "_auto_cancel_overdue_orders_by_tick",
+        lambda *_args, **_kwargs: called.append("cancel"),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        shopee_route,
+        "_auto_progress_shipping_orders_by_tick",
+        lambda *_args, **_kwargs: called.append("progress"),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        shopee_route,
+        "_backfill_income_for_completed_orders",
+        lambda *_args, **_kwargs: called.append("backfill"),
+        raising=False,
+    )
+
+    resp = client.get(
+        f"/shopee/runs/{run['id']}/orders",
+        headers={"Authorization": f"Bearer {player_token}"},
+        params={"type": "all"},
+    )
+    assert resp.status_code == 200
+    assert called == []
+
+
+def test_simulate_shopee_orders_rejects_finished_run():
+    from app.db import SessionLocal
+    from app.models import GameRun
+
+    player_token = _register_or_login_player("13800138132")
+    run = _create_running_run(player_token, duration_days=7)
+
+    with SessionLocal() as db:
+        row = db.query(GameRun).filter(GameRun.id == run["id"]).first()
+        assert row is not None
+        row.created_at = datetime.utcnow() - timedelta(days=8)
+        db.commit()
+
+    resp = client.post(
+        f"/shopee/runs/{run['id']}/orders/simulate",
+        headers={"Authorization": f"Bearer {player_token}"},
+    )
+    assert resp.status_code == 400
+    assert "已结束" in str(resp.json().get("detail", ""))
+
+
+def test_admin_simulate_rejects_finished_run():
+    from app.db import SessionLocal
+    from app.models import GameRun
+
+    player_token = _register_or_login_player("13800138133")
+    run = _create_running_run(player_token, duration_days=7)
+    admin_login = client.post("/auth/login", json={"username": "yzcube", "password": "yzcube123"})
+    assert admin_login.status_code == 200
+    admin_token = admin_login.json()["access_token"]
+
+    with SessionLocal() as db:
+        row = db.query(GameRun).filter(GameRun.id == run["id"]).first()
+        assert row is not None
+        row.created_at = datetime.utcnow() - timedelta(days=8)
+        db.commit()
+
+    resp = client.post(
+        f"/game/admin/runs/{run['id']}/orders/simulate",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert resp.status_code == 400
+    assert "已结束" in str(resp.json().get("detail", ""))
+
+
+def test_shopee_finance_overview_allows_finished_run_and_skips_backfill(monkeypatch):
+    from app.api.routes import shopee as shopee_route
+    from app.db import SessionLocal
+    from app.models import GameRun
+
+    player_token = _register_or_login_player("13800138134")
+    run = _create_running_run(player_token, duration_days=7)
+
+    with SessionLocal() as db:
+        row = db.query(GameRun).filter(GameRun.id == run["id"]).first()
+        assert row is not None
+        row.created_at = datetime.utcnow() - timedelta(days=8)
+        db.commit()
+
+    called: list[str] = []
+    monkeypatch.setattr(
+        shopee_route,
+        "_backfill_income_for_completed_orders",
+        lambda *_args, **_kwargs: called.append("backfill"),
+        raising=False,
+    )
+
+    resp = client.get(
+        f"/shopee/runs/{run['id']}/finance/overview",
+        headers={"Authorization": f"Bearer {player_token}"},
+    )
+    assert resp.status_code == 200
+    assert called == []
+
+
+def test_shopee_bank_accounts_list_allows_finished_run():
+    from app.db import SessionLocal
+    from app.models import GameRun
+
+    player_token = _register_or_login_player("13800138151")
+    run = _create_running_run(player_token, duration_days=7)
+
+    create_resp = client.post(
+        f"/shopee/runs/{run['id']}/finance/bank-accounts",
+        headers={"Authorization": f"Bearer {player_token}"},
+        json={
+            "bank_name": "马来亚银行",
+            "account_holder": "历史对局玩家",
+            "account_no": "6222000011112222",
+            "is_default": True,
+        },
+    )
+    assert create_resp.status_code == 200
+    created_id = create_resp.json()["id"]
+
+    with SessionLocal() as db:
+        row = db.query(GameRun).filter(GameRun.id == run["id"]).first()
+        assert row is not None
+        row.status = "finished"
+        db.commit()
+
+    list_resp = client.get(
+        f"/shopee/runs/{run['id']}/finance/bank-accounts",
+        headers={"Authorization": f"Bearer {player_token}"},
+    )
+    assert list_resp.status_code == 200
+    payload = list_resp.json()
+    assert payload["total"] >= 1
+    assert any(item["id"] == created_id for item in payload["rows"])
+
+
+def test_shopee_orders_list_uses_cached_response_when_available(monkeypatch):
+    from app.api.routes import shopee as shopee_route
+
+    player_token = _register_or_login_player("13800138214")
+    run = _create_running_run(player_token)
+
+    # Keep endpoint side-effect free for cache-hit verification.
+    monkeypatch.setattr(shopee_route, "_auto_simulate_orders_by_game_hour", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(shopee_route, "_auto_cancel_overdue_orders_by_tick", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(shopee_route, "_auto_progress_shipping_orders_by_tick", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(shopee_route, "_backfill_income_for_completed_orders", lambda *_args, **_kwargs: 0)
+
+    cached_payload = {
+        "counts": {
+            "all": 9,
+            "unpaid": 0,
+            "toship": 0,
+            "shipping": 0,
+            "completed": 0,
+            "return_refund_cancel": 0,
+        },
+        "page": 1,
+        "page_size": 20,
+        "total": 9,
+        "simulated_recent_1h": 0,
+        "last_simulated_at": None,
+        "orders": [],
+    }
+    monkeypatch.setattr(shopee_route, "_get_shopee_orders_cache_payload", lambda **_kwargs: cached_payload, raising=False)
+
+    orders_resp = client.get(
+        f"/shopee/runs/{run['id']}/orders",
+        headers={"Authorization": f"Bearer {player_token}"},
+        params={"type": "all"},
+    )
+    assert orders_resp.status_code == 200
+    assert orders_resp.json()["total"] == 9
+
+
+def test_simulate_shopee_orders_invalidates_orders_cache(monkeypatch):
+    from app.api.routes import shopee as shopee_route
+
+    player_token = _register_or_login_player("13800138215")
+    run = _create_running_run(player_token)
+
+    called: list[tuple[int, int]] = []
+    monkeypatch.setattr(
+        shopee_route,
+        "_invalidate_shopee_orders_cache_for_user",
+        lambda *, run_id, user_id: called.append((run_id, user_id)),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        shopee_route,
+        "simulate_orders_for_run",
+        lambda _db, run_id, user_id, tick_time: {
+            "tick_time": tick_time or datetime.utcnow(),
+            "active_buyer_count": 0,
+            "candidate_product_count": 0,
+            "generated_order_count": 0,
+            "skip_reasons": {},
+            "buyer_journeys": [],
+        },
+    )
+
+    simulate_resp = client.post(
+        f"/shopee/runs/{run['id']}/orders/simulate",
+        headers={"Authorization": f"Bearer {player_token}"},
+    )
+    assert simulate_resp.status_code == 200
+    assert called, "orders cache should be invalidated after simulate succeeds"
+
+
+def test_shopee_orders_list_returns_429_when_rate_limited(monkeypatch):
+    from app.api.routes import shopee as shopee_route
+
+    player_token = _register_or_login_player("13800138216")
+    run = _create_running_run(player_token)
+    monkeypatch.setattr(shopee_route, "check_rate_limit", lambda **_kwargs: (True, 0, 0), raising=False)
+
+    resp = client.get(
+        f"/shopee/runs/{run['id']}/orders",
+        headers={"Authorization": f"Bearer {player_token}"},
+        params={"type": "all"},
+    )
+    assert resp.status_code == 429
+
+
+def test_shopee_simulate_returns_409_when_distributed_lock_is_busy(monkeypatch):
+    from app.api.routes import shopee as shopee_route
+
+    player_token = _register_or_login_player("13800138217")
+    run = _create_running_run(player_token)
+    monkeypatch.setattr(shopee_route, "acquire_distributed_lock", lambda *_args, **_kwargs: None, raising=False)
+
+    resp = client.post(
+        f"/shopee/runs/{run['id']}/orders/simulate",
+        headers={"Authorization": f"Bearer {player_token}"},
+    )
+    assert resp.status_code == 409
+
+
+def test_admin_simulate_returns_429_when_rate_limited(monkeypatch):
+    from app.api.routes import game as game_route
+
+    player_token = _register_or_login_player("13800138218")
+    run = _create_running_run(player_token)
+    admin_login = client.post("/auth/login", json={"username": "yzcube", "password": "yzcube123"})
+    assert admin_login.status_code == 200
+    admin_token = admin_login.json()["access_token"]
+
+    monkeypatch.setattr(game_route, "check_rate_limit", lambda **_kwargs: (True, 0, 0), raising=False)
+    resp = client.post(
+        f"/game/admin/runs/{run['id']}/orders/simulate",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert resp.status_code == 429
+
+
+def test_auto_order_tick_worker_skips_and_finishes_expired_run(monkeypatch):
+    from app.db import SessionLocal
+    from app.models import GameRun
+    from app.services import auto_order_tick_worker as worker
+
+    player_token = _register_or_login_player("13800138219")
+    run = _create_running_run(player_token)
+
+    with SessionLocal() as db:
+        row = db.query(GameRun).filter(GameRun.id == run["id"]).first()
+        assert row is not None
+        row.created_at = datetime.utcnow() - timedelta(days=8)
+        db.commit()
+
+    called: list[int] = []
+    monkeypatch.setattr(worker, "acquire_distributed_lock", lambda *_args, **_kwargs: "token", raising=False)
+    monkeypatch.setattr(worker, "release_distributed_lock", lambda *_args, **_kwargs: None, raising=False)
+    monkeypatch.setattr(
+        worker,
+        "simulate_orders_for_run",
+        lambda *_args, **_kwargs: called.append(1),
+        raising=False,
+    )
+
+    with SessionLocal() as db:
+        run_cnt, tick_cnt = worker._run_one_cycle(db, datetime.utcnow())
+        assert run_cnt == 0
+        assert tick_cnt == 0
+
+    with SessionLocal() as db:
+        row = db.query(GameRun).filter(GameRun.id == run["id"]).first()
+        assert row is not None
+        assert row.status == "finished"
+    assert called == []

@@ -73,6 +73,30 @@ interface GameSetupPageProps {
   onLogout: () => void;
   setupSubView?: SetupSubView;
   onSetupSubViewChange?: (subView: SetupSubView) => void;
+  onSelectHistoryRun?: (run: {
+    id: number;
+    user_id: number;
+    initial_cash: number;
+    market: string;
+    duration_days: number;
+    day_index: number;
+    status: string;
+    created_at: string;
+  }) => void;
+  onOpenHistoryStage?: (
+    stage: 'intel' | 'logistics' | 'warehouse' | 'shopee',
+    run: {
+      id: number;
+      user_id: number;
+      initial_cash: number;
+      market: string;
+      duration_days: number;
+      day_index: number;
+      status: string;
+      created_at: string;
+    }
+  ) => void;
+  activeHistoryRunId?: number | null;
 }
 
 interface ProcurementSummary {
@@ -139,7 +163,43 @@ interface LocalShipment {
   createdAt: string;
 }
 
-const CASH_PRESETS = [100000, 200000, 300000];
+interface RunHistoryOption {
+  id: number;
+  user_id: number;
+  initial_cash: number;
+  market: string;
+  duration_days: number;
+  day_index: number;
+  status: string;
+  created_at: string;
+}
+
+interface RunHistoryOptionsResponse {
+  runs: RunHistoryOption[];
+}
+
+interface RunHistorySummaryResponse {
+  run: RunHistoryOption;
+  initial_cash: number;
+  total_cash: number;
+  income_withdrawal_total: number;
+  total_expense: number;
+  current_balance: number;
+  procurement_order_count: number;
+  logistics_shipment_count: number;
+  warehouse_completed_inbound_count: number;
+  inventory_total_quantity: number;
+  inventory_total_sku: number;
+  shopee_order_total_count: number;
+  shopee_order_toship_count: number;
+  shopee_order_shipping_count: number;
+  shopee_order_completed_count: number;
+  shopee_order_cancelled_count: number;
+  shopee_order_sold_inventory_quantity: number;
+  shopee_order_generation_log_count: number;
+}
+
+const UNIFIED_INITIAL_CASH = 300000;
 const MARKET_OPTIONS = [
   { code: 'MY', name: '马来西亚', enabled: true, note: '首发市场' },
   { code: 'SG', name: '新加坡', enabled: false, note: 'DLC 即将开放' },
@@ -263,9 +323,12 @@ export default function GameSetupPage({
   onLogout,
   setupSubView = 'default',
   onSetupSubViewChange,
+  onSelectHistoryRun,
+  onOpenHistoryStage,
+  activeHistoryRunId = null,
 }: GameSetupPageProps) {
   const [scale, setScale] = useState(1);
-  const [initialCash, setInitialCash] = useState(200000);
+  const [initialCash] = useState(UNIFIED_INITIAL_CASH);
   const [market, setMarket] = useState('MY');
   const [durationDays, setDurationDays] = useState(365);
   const [nowMs, setNowMs] = useState(Date.now());
@@ -288,6 +351,12 @@ export default function GameSetupPage({
     createdAt: string | null;
     gameClock: string | null;
   } | null>(null);
+  const [historyRuns, setHistoryRuns] = useState<RunHistoryOption[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState('');
+  const [historySummary, setHistorySummary] = useState<RunHistorySummaryResponse | null>(null);
+  const [historySummaryLoading, setHistorySummaryLoading] = useState(false);
+  const [historySummaryError, setHistorySummaryError] = useState('');
   const playerPanelRef = useRef<HTMLDivElement | null>(null);
 
   const hasRunningRun = Boolean(currentRun);
@@ -303,6 +372,9 @@ export default function GameSetupPage({
   const displayTotalExpense = procurementSummary?.total_expense ?? (procurementSummary
     ? (procurementSummary.spent_total + procurementSummary.logistics_spent_total + (procurementSummary.warehouse_spent_total ?? 0))
     : 0);
+  const selectedHistoryRunId = activeHistoryRunId ?? historySummary?.run.id ?? historyRuns[0]?.id ?? null;
+  const selectedHistoryRun =
+    historyRuns.find((row) => row.id === selectedHistoryRunId) ?? historySummary?.run ?? null;
 
   useEffect(() => {
     if (setupSubView === 'admin-buyer-pool' && canEnterAdminBuyerPool) {
@@ -447,10 +519,76 @@ export default function GameSetupPage({
     void loadFinanceDetails();
   }, [currentRun?.id, financeTab]);
 
+  useEffect(() => {
+    const loadHistoryOptions = async () => {
+      if (activeMenu !== 'history') return;
+      const token = localStorage.getItem(ACCESS_TOKEN_KEY);
+      if (!token) return;
+      setHistoryLoading(true);
+      setHistoryError('');
+      try {
+        const resp = await fetch(`${API_BASE_URL}/game/runs/history/options`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!resp.ok) {
+          const payload = await resp.json().catch(() => ({}));
+          setHistoryError(payload.detail || '历史对局加载失败');
+          setHistoryRuns([]);
+          return;
+        }
+        const data = (await resp.json()) as RunHistoryOptionsResponse;
+        setHistoryRuns(data.runs ?? []);
+      } finally {
+        setHistoryLoading(false);
+      }
+    };
+    void loadHistoryOptions();
+  }, [activeMenu]);
+
+  useEffect(() => {
+    const loadHistorySummary = async () => {
+      if (activeMenu !== 'history') return;
+      const token = localStorage.getItem(ACCESS_TOKEN_KEY);
+      if (!token) return;
+      const selectedRunId =
+        activeHistoryRunId ??
+        historyRuns[0]?.id ??
+        null;
+      if (!selectedRunId) {
+        setHistorySummary(null);
+        setHistorySummaryError('');
+        return;
+      }
+      setHistorySummaryLoading(true);
+      setHistorySummaryError('');
+      try {
+        const resp = await fetch(`${API_BASE_URL}/game/runs/${selectedRunId}/history/summary`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!resp.ok) {
+          const payload = await resp.json().catch(() => ({}));
+          setHistorySummary(null);
+          setHistorySummaryError(payload.detail || '历史总结加载失败');
+          return;
+        }
+        const data = (await resp.json()) as RunHistorySummaryResponse;
+        setHistorySummary(data);
+        if (!activeHistoryRunId && onSelectHistoryRun) {
+          onSelectHistoryRun(data.run);
+        }
+      } finally {
+        setHistorySummaryLoading(false);
+      }
+    };
+    void loadHistorySummary();
+  }, [activeMenu, historyRuns, activeHistoryRunId, onSelectHistoryRun]);
+
   const sidebarUsingAdminRun = activeMenu === 'buyer-pool' && !!adminSelectedRunContext?.runId;
   const timelineCreatedAt = sidebarUsingAdminRun
     ? adminSelectedRunContext?.createdAt ?? null
-    : currentRun?.created_at ?? null;
+    : activeMenu === 'history'
+      ? selectedHistoryRun?.created_at ?? currentRun?.created_at ?? null
+      : currentRun?.created_at ?? null;
   const elapsedSeconds = useMemo(() => {
     if (!timelineCreatedAt) return 0;
     const diffMs = nowMs - new Date(timelineCreatedAt).getTime();
@@ -468,6 +606,8 @@ export default function GameSetupPage({
         TOTAL_GAME_DAYS,
         Math.max(1, adminSelectedRunContext?.dayIndex ?? derivedDayByTimeline),
       )
+    : activeMenu === 'history' && selectedHistoryRun
+      ? Math.min(TOTAL_GAME_DAYS, Math.max(1, selectedHistoryRun.day_index))
     : hasTimelineRun
       ? derivedDayByTimeline
       : 1;
@@ -671,7 +811,7 @@ export default function GameSetupPage({
             </aside>
 
             <div className="flex-1 overflow-auto p-4">
-              <div className="grid grid-cols-[1fr_420px] gap-4">
+              <div className={`grid ${activeMenu === 'history' ? 'grid-cols-1' : 'grid-cols-[1fr_420px]'} gap-4`}>
                 <section className="space-y-4">
                   {activeMenu === 'overview' ? (
                     <>
@@ -711,18 +851,9 @@ export default function GameSetupPage({
                             <div>
                               <label className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-700"><Coins size={15} className="text-amber-500" />初始资金</label>
                               <div className="flex gap-3">
-                                {CASH_PRESETS.map((amount) => (
-                                  <button
-                                    key={amount}
-                                    type="button"
-                                    onClick={() => setInitialCash(amount)}
-                                    className={`rounded-2xl px-4 py-2 text-sm font-bold transition-all ${
-                                      initialCash === amount ? 'bg-blue-600 text-white shadow-[0_10px_24px_rgba(37,99,235,0.3)]' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                                    }`}
-                                  >
-                                    {amount.toLocaleString()} RMB
-                                  </button>
-                                ))}
+                                <div className="rounded-2xl bg-blue-600 px-4 py-2 text-sm font-bold text-white shadow-[0_10px_24px_rgba(37,99,235,0.3)]">
+                                  {UNIFIED_INITIAL_CASH.toLocaleString()} RMB（统一）
+                                </div>
                               </div>
                             </div>
 
@@ -773,7 +904,7 @@ export default function GameSetupPage({
                                 return;
                               }
                               void onSubmit({
-                                initial_cash: initialCash,
+                                initial_cash: UNIFIED_INITIAL_CASH,
                                 market,
                                 duration_days: durationDays,
                               });
@@ -795,6 +926,132 @@ export default function GameSetupPage({
                               {isResetting ? '重置中...' : '重置当前局（测试）'}
                             </button>
                           )}
+                        </div>
+                      </div>
+                    </>
+                  ) : activeMenu === 'history' ? (
+                    <>
+                      <div className="rounded-2xl border border-[#dbeafe] bg-gradient-to-r from-[#eff6ff] to-[#f8fbff] px-5 py-4 text-[14px] text-[#1e3a8a]">
+                        历史经营记录仅支持回溯查看。你可以选择已结束（finished）对局，查看经营总结，并携带 `run_id` 跳转各阶段只读回看。
+                      </div>
+                      <div className="grid grid-cols-[340px_1fr] gap-4">
+                        <div className="rounded-2xl border border-[#e5ecfb] bg-white p-4">
+                          <div className="mb-3 text-[17px] font-black text-slate-800">历史对局（仅 finished）</div>
+                          {historyLoading && <div className="rounded-lg bg-slate-50 px-3 py-2 text-[13px] text-slate-500">加载中...</div>}
+                          {!historyLoading && historyError && (
+                            <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[12px] text-rose-600">{historyError}</div>
+                          )}
+                          {!historyLoading && !historyError && historyRuns.length === 0 && (
+                            <div className="rounded-lg bg-slate-50 px-3 py-2 text-[13px] text-slate-500">暂无已结束对局</div>
+                          )}
+                          <div className="max-h-[520px] space-y-2 overflow-auto pr-1">
+                            {historyRuns.map((row) => {
+                              const active = row.id === selectedHistoryRunId;
+                              return (
+                                <button
+                                  key={row.id}
+                                  type="button"
+                                  onClick={() => onSelectHistoryRun?.(row)}
+                                  className={`w-full rounded-xl border px-3 py-2 text-left ${
+                                    active ? 'border-blue-300 bg-blue-50' : 'border-slate-200 bg-white hover:border-blue-200 hover:bg-blue-50/60'
+                                  }`}
+                                >
+                                  <div className="flex items-center justify-between text-[13px]">
+                                    <span className="font-black text-slate-800">局 #{row.id}</span>
+                                    <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">{row.status}</span>
+                                  </div>
+                                  <div className="mt-1 text-[12px] text-slate-600">市场 {row.market} · 周期 {row.duration_days} 天 · Day {row.day_index}</div>
+                                  <div className="mt-1 text-[11px] text-slate-500">创建时间 {new Date(row.created_at).toLocaleString()}</div>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                        <div className="space-y-4">
+                          <div className="rounded-2xl border border-[#e5ecfb] bg-white p-4">
+                            <div className="mb-3 flex items-center justify-between">
+                              <div className="text-[17px] font-black text-slate-800">对局总结</div>
+                              <div className="text-[12px] text-slate-500">对局 #{selectedHistoryRunId ?? '--'}</div>
+                            </div>
+                            {historySummaryLoading && <div className="rounded-lg bg-slate-50 px-3 py-2 text-[13px] text-slate-500">正在加载历史总结...</div>}
+                            {!historySummaryLoading && historySummaryError && (
+                              <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[12px] text-rose-600">{historySummaryError}</div>
+                            )}
+                            {!historySummaryLoading && !historySummaryError && !historySummary && (
+                              <div className="rounded-lg bg-slate-50 px-3 py-2 text-[13px] text-slate-500">请选择左侧历史对局</div>
+                            )}
+                            {!historySummaryLoading && historySummary && (
+                              <>
+                                <div className="grid grid-cols-4 gap-3 text-[13px]">
+                                  <InfoCard label="目标市场" value={historySummary.run.market} icon={<Flag size={14} />} />
+                                  <InfoCard label="经营周期" value={`${historySummary.run.duration_days} 天`} icon={<CalendarClock size={14} />} />
+                                  <InfoCard label="结束状态" value={historySummary.run.status} icon={<Activity size={14} />} />
+                                  <InfoCard label="游戏日" value={`Day ${historySummary.run.day_index}`} icon={<Clock3 size={14} />} />
+                                </div>
+                                <div className="mt-4 grid grid-cols-3 gap-3 text-[13px]">
+                                  <OverviewRow label="期初资金" value={fmtMoney(historySummary.initial_cash)} />
+                                  <OverviewRow label="累计收入（提现）" value={fmtMoney(historySummary.income_withdrawal_total)} />
+                                  <OverviewRow label="累计支出" value={fmtMoney(historySummary.total_expense)} />
+                                  <OverviewRow label="当前可用余额" value={fmtMoney(historySummary.current_balance)} />
+                                  <OverviewRow label="采购单数" value={`${historySummary.procurement_order_count}`} />
+                                  <OverviewRow label="物流单数" value={`${historySummary.logistics_shipment_count}`} />
+                                  <OverviewRow label="已入仓批次" value={`${historySummary.warehouse_completed_inbound_count}`} />
+                                  <OverviewRow label="库存 SKU" value={`${historySummary.inventory_total_sku}`} />
+                                  <OverviewRow label="库存件数" value={`${historySummary.inventory_total_quantity}`} />
+                                </div>
+                                <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3">
+                                  <div className="mb-2 text-[13px] font-bold text-slate-700">Shopee 订单概况</div>
+                                  <div className="grid grid-cols-4 gap-2 text-[12px] text-slate-600">
+                                    <div>总单量（单）：{historySummary.shopee_order_total_count}</div>
+                                    <div>待出货（单）：{historySummary.shopee_order_toship_count}</div>
+                                    <div>运输中（单）：{historySummary.shopee_order_shipping_count}</div>
+                                    <div>已完成（单）：{historySummary.shopee_order_completed_count}</div>
+                                    <div>已取消（单）：{historySummary.shopee_order_cancelled_count}</div>
+                                    <div>已出售库存件数（件）：{historySummary.shopee_order_sold_inventory_quantity}</div>
+                                    <div>模拟日志：{historySummary.shopee_order_generation_log_count}</div>
+                                  </div>
+                                </div>
+                              </>
+                            )}
+                          </div>
+                          <div className="rounded-2xl border border-[#e5ecfb] bg-white p-4">
+                            <div className="mb-2 text-[16px] font-black text-slate-800">回溯入口（URL 带 run_id）</div>
+                            <div className="mb-3 text-[12px] text-slate-500">以下按钮会带当前历史 run_id 跳转，对应阶段仅支持只读回看。</div>
+                            <div className="grid grid-cols-4 gap-2">
+                              <button
+                                type="button"
+                                onClick={() => historySummary && onOpenHistoryStage?.('intel', historySummary.run)}
+                                disabled={!historySummary}
+                                className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-[13px] font-semibold text-slate-700 hover:border-blue-200 hover:bg-blue-50 disabled:opacity-50"
+                              >
+                                Step 02 选品采购
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => historySummary && onOpenHistoryStage?.('logistics', historySummary.run)}
+                                disabled={!historySummary}
+                                className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-[13px] font-semibold text-slate-700 hover:border-blue-200 hover:bg-blue-50 disabled:opacity-50"
+                              >
+                                Step 03 物流清关
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => historySummary && onOpenHistoryStage?.('warehouse', historySummary.run)}
+                                disabled={!historySummary}
+                                className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-[13px] font-semibold text-slate-700 hover:border-blue-200 hover:bg-blue-50 disabled:opacity-50"
+                              >
+                                Step 04 海外仓
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => historySummary && onOpenHistoryStage?.('shopee', historySummary.run)}
+                                disabled={!historySummary}
+                                className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-[13px] font-semibold text-slate-700 hover:border-blue-200 hover:bg-blue-50 disabled:opacity-50"
+                              >
+                                Step 05 Shopee
+                              </button>
+                            </div>
+                          </div>
                         </div>
                       </div>
                     </>
@@ -840,6 +1097,7 @@ export default function GameSetupPage({
                   )}
                 </section>
 
+                {activeMenu !== 'history' && (
                 <aside className="space-y-4">
                   <div className="rounded-2xl border border-[#dbeafe] bg-white p-4">
                     <div className="mb-3 flex items-center gap-2 text-[17px] font-black text-slate-800">
@@ -936,6 +1194,7 @@ export default function GameSetupPage({
                   </div>
 
                 </aside>
+                )}
               </div>
             </div>
           </div>

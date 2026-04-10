@@ -74,6 +74,7 @@ interface WarehouseInboundPageProps {
   } | null;
   onBackToSetup: () => void;
   onEnterShopee: () => void;
+  readOnly?: boolean;
 }
 
 interface ProcurementSummary {
@@ -179,6 +180,8 @@ interface WarehouseSummaryResp {
   } | null;
   pending_inbound_count: number;
   completed_inbound_count: number;
+  completed_inbound_total_quantity: number;
+  completed_inbound_total_value: number;
   inventory_total_quantity: number;
   inventory_total_sku: number;
 }
@@ -238,9 +241,18 @@ interface WarehouseStockOverviewResp {
   locked_stock_qty: number;
 }
 
+interface RunHistorySummarySnapshot {
+  warehouse_completed_inbound_count: number;
+  inventory_total_quantity: number;
+  inventory_total_sku: number;
+  shopee_order_total_count: number;
+}
+
 const fmtMoney = (n: number) => `${Math.max(0, Math.round(n)).toLocaleString()} RMB`;
 
-export default function WarehouseInboundPage({ run, currentUser, onBackToSetup, onEnterShopee }: WarehouseInboundPageProps) {
+const HISTORY_READONLY_DETAIL = '历史对局仅支持回溯查看，不能继续经营操作。';
+
+export default function WarehouseInboundPage({ run, currentUser, onBackToSetup, onEnterShopee, readOnly = false }: WarehouseInboundPageProps) {
   const [scale, setScale] = useState(1);
   const [options, setOptions] = useState<WarehouseOptionsResp | null>(null);
   const [candidates, setCandidates] = useState<CandidateItem[]>([]);
@@ -264,6 +276,7 @@ export default function WarehouseInboundPage({ run, currentUser, onBackToSetup, 
   const [movementKeywordInput, setMovementKeywordInput] = useState('');
   const [backorderRisk, setBackorderRisk] = useState<BackorderRiskResp | null>(null);
   const [stockOverview, setStockOverview] = useState<WarehouseStockOverviewResp | null>(null);
+  const [historySummarySnapshot, setHistorySummarySnapshot] = useState<RunHistorySummarySnapshot | null>(null);
 
   const playerDisplayName = currentUser?.full_name?.trim() || currentUser?.username || '玩家';
 
@@ -314,74 +327,96 @@ export default function WarehouseInboundPage({ run, currentUser, onBackToSetup, 
     const token = localStorage.getItem(ACCESS_TOKEN_KEY);
     if (!token) return;
 
-    const [optResp, candResp, summaryResp, cashResp, landmarksResp, stockOverviewResp, riskResp] = await Promise.all([
-      fetch(`${API_BASE_URL}/game/runs/${run.id}/warehouse/options`, {
-        headers: { Authorization: `Bearer ${token}` },
-      }),
-      fetch(`${API_BASE_URL}/game/runs/${run.id}/warehouse/inbound-candidates`, {
-        headers: { Authorization: `Bearer ${token}` },
-      }),
-      fetch(`${API_BASE_URL}/game/runs/${run.id}/warehouse/summary`, {
-        headers: { Authorization: `Bearer ${token}` },
-      }),
-      fetch(`${API_BASE_URL}/game/runs/${run.id}/procurement/cart-summary`, {
-        headers: { Authorization: `Bearer ${token}` },
-      }),
-      fetch(`${API_BASE_URL}/game/runs/${run.id}/warehouse/landmarks`, {
-        headers: { Authorization: `Bearer ${token}` },
-      }),
-      fetch(`${API_BASE_URL}/game/runs/${run.id}/warehouse/stock-overview`, {
-        headers: { Authorization: `Bearer ${token}` },
-      }),
-      fetch(`${API_BASE_URL}/game/runs/${run.id}/warehouse/backorder-risk?top_n=5`, {
-        headers: { Authorization: `Bearer ${token}` },
-      }),
+    const fetchJson = async <T,>(url: string): Promise<T | null> => {
+      try {
+        const resp = await fetch(url, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!resp.ok) return null;
+        return (await resp.json()) as T;
+      } catch {
+        return null;
+      }
+    };
+
+    const [
+      optionsData,
+      candidatesData,
+      summaryData,
+      procurementData,
+      landmarksData,
+      stockOverviewData,
+      riskData,
+      historySummaryData,
+    ] = await Promise.all([
+      fetchJson<WarehouseOptionsResp>(`${API_BASE_URL}/game/runs/${run.id}/warehouse/options`),
+      fetchJson<CandidatesResp>(`${API_BASE_URL}/game/runs/${run.id}/warehouse/inbound-candidates`),
+      fetchJson<WarehouseSummaryResp>(`${API_BASE_URL}/game/runs/${run.id}/warehouse/summary`),
+      fetchJson<ProcurementSummary>(`${API_BASE_URL}/game/runs/${run.id}/procurement/cart-summary`),
+      fetchJson<WarehouseLandmarksResp>(`${API_BASE_URL}/game/runs/${run.id}/warehouse/landmarks`),
+      fetchJson<WarehouseStockOverviewResp>(`${API_BASE_URL}/game/runs/${run.id}/warehouse/stock-overview`),
+      fetchJson<BackorderRiskResp>(`${API_BASE_URL}/game/runs/${run.id}/warehouse/backorder-risk?top_n=5`),
+      readOnly ? fetchJson<RunHistorySummarySnapshot>(`${API_BASE_URL}/game/runs/${run.id}/history/summary`) : Promise.resolve(null),
       fetchStockMovements({ page: 1, page_size: 5 }, true),
     ]);
 
-    if (optResp.ok) {
-      const data = (await optResp.json()) as WarehouseOptionsResp;
+    if (optionsData) {
+      const data = optionsData;
       setOptions(data);
+    } else {
+      setOptions(null);
     }
-    if (candResp.ok) {
-      const data = (await candResp.json()) as CandidatesResp;
+    if (candidatesData) {
+      const data = candidatesData;
       setCandidates(data.candidates);
+    } else {
+      setCandidates([]);
     }
-    if (summaryResp.ok) {
-      const data = (await summaryResp.json()) as WarehouseSummaryResp;
+    if (summaryData) {
+      const data = summaryData;
       setSummary(data);
       if (data.strategy) {
         setSelectedMode(data.strategy.warehouse_mode);
         setSelectedLocation(data.strategy.warehouse_location);
       }
+    } else {
+      setSummary(null);
     }
-    if (cashResp.ok) {
-      const data = (await cashResp.json()) as ProcurementSummary;
+    if (procurementData) {
+      const data = procurementData;
       setProcurementSummary(data);
+    } else {
+      setProcurementSummary(null);
     }
-    if (landmarksResp.ok) {
-      const data = (await landmarksResp.json()) as WarehouseLandmarksResp;
+    if (landmarksData) {
+      const data = landmarksData;
       setWarehouseModePoints(buildWarehouseModePoints(data.points));
     } else {
       setWarehouseModePoints(EMPTY_WAREHOUSE_MODE_POINTS);
     }
-    if (stockOverviewResp.ok) {
-      const data = (await stockOverviewResp.json()) as WarehouseStockOverviewResp;
+    if (stockOverviewData) {
+      const data = stockOverviewData;
       setStockOverview(data);
     } else {
       setStockOverview(null);
     }
-    if (riskResp.ok) {
-      const data = (await riskResp.json()) as BackorderRiskResp;
+    if (riskData) {
+      const data = riskData;
       setBackorderRisk(data);
     } else {
       setBackorderRisk(null);
+    }
+    if (historySummaryData) {
+      const data = historySummaryData;
+      setHistorySummarySnapshot(data);
+    } else {
+      setHistorySummarySnapshot(null);
     }
   };
 
   useEffect(() => {
     void loadData();
-  }, [run?.id]);
+  }, [run?.id, readOnly]);
 
   useEffect(() => {
     if (activeTab !== 'movements') return;
@@ -443,6 +478,37 @@ export default function WarehouseInboundPage({ run, currentUser, onBackToSetup, 
   }, [summary?.strategy, modeOption, locationOption, totalCost]);
   const zoneForecast = useMemo(() => calcZoneForecast(selectedMode, selectedLocation), [selectedMode, selectedLocation]);
   const movementTotalPage = Math.max(1, Math.ceil(movementTotal / movementPageSize));
+  const completedInboundCount = Math.max(
+    summary?.completed_inbound_count ?? 0,
+    historySummarySnapshot?.warehouse_completed_inbound_count ?? 0,
+  );
+  const inventoryTotalSku = Math.max(
+    summary?.inventory_total_sku ?? 0,
+    historySummarySnapshot?.inventory_total_sku ?? 0,
+  );
+  const inventoryTotalQuantity = Math.max(
+    summary?.inventory_total_quantity ?? 0,
+    historySummarySnapshot?.inventory_total_quantity ?? 0,
+  );
+  const canEnterShopee = completedInboundCount > 0 || (readOnly && (historySummarySnapshot?.shopee_order_total_count ?? 0) > 0);
+  const strategySnapshot = summary?.strategy ?? null;
+  const hasModeSelection = Boolean(modeOption) || Boolean(readOnly && strategySnapshot?.warehouse_mode);
+  const hasLocationSelection = Boolean(locationOption) || Boolean(readOnly && strategySnapshot?.warehouse_location);
+  const displayInboundCount = readOnly ? completedInboundCount : candidates.length;
+  const displayInboundQty = readOnly
+    ? Math.max(summary?.completed_inbound_total_quantity ?? 0, inventoryTotalQuantity)
+    : qtyTotal;
+  const displayInboundCargoValue = readOnly ? (summary?.completed_inbound_total_value ?? 0) : cargoTotal;
+  const displayOneTimeCost = readOnly ? (strategySnapshot?.one_time_cost ?? oneTimeCost) : oneTimeCost;
+  const displayInboundCost = readOnly ? (strategySnapshot?.inbound_cost ?? inboundCost) : inboundCost;
+  const displayRentCost = readOnly ? (strategySnapshot?.rent_cost ?? rentCost) : rentCost;
+  const displayTotalCost = readOnly ? (strategySnapshot?.total_cost ?? totalCost) : totalCost;
+  const displayEtaScore = readOnly
+    ? (strategySnapshot?.delivery_eta_score ?? Math.max(1, Math.min(100, (modeOption?.delivery_eta_score ?? 0) + (locationOption?.eta_delta ?? 0))))
+    : Math.max(1, Math.min(100, (modeOption?.delivery_eta_score ?? 0) + (locationOption?.eta_delta ?? 0)));
+  const displayAccuracy = readOnly
+    ? (strategySnapshot?.fulfillment_accuracy ?? (modeOption?.fulfillment_accuracy ?? 0))
+    : (modeOption?.fulfillment_accuracy ?? 0);
 
   const formatMovementTime = (value: string) => {
     const date = new Date(value);
@@ -474,6 +540,10 @@ export default function WarehouseInboundPage({ run, currentUser, onBackToSetup, 
   };
 
   const handleConfirmInbound = async () => {
+    if (readOnly) {
+      setError(HISTORY_READONLY_DETAIL);
+      return;
+    }
     if (!run?.id || !modeOption || !locationOption) return;
     const token = localStorage.getItem(ACCESS_TOKEN_KEY);
     if (!token) {
@@ -569,9 +639,9 @@ export default function WarehouseInboundPage({ run, currentUser, onBackToSetup, 
               </button>
               <button
                 onClick={onEnterShopee}
-                disabled={(summary?.completed_inbound_count ?? 0) <= 0}
+                disabled={!canEnterShopee}
                 className="rounded-full bg-[#2563eb] px-5 py-1.5 text-white disabled:cursor-not-allowed disabled:opacity-40"
-                title={(summary?.completed_inbound_count ?? 0) > 0 ? '' : '至少完成 1 票入仓后可进入运营'}
+                title={canEnterShopee ? '' : '至少完成 1 票入仓后可进入运营'}
               >
                 进入运营
               </button>
@@ -583,6 +653,11 @@ export default function WarehouseInboundPage({ run, currentUser, onBackToSetup, 
           <div className="mb-4 rounded-2xl border border-[#dbeafe] bg-gradient-to-r from-[#eff6ff] to-[#f8fbff] px-5 py-4 text-[14px] text-[#1e3a8a]">
             Step 04 需要先选择仓型与仓位，再一次性将“已清关完成”的物流单全部入仓，生成后续运营库存能力参数。
           </div>
+          {readOnly && (
+            <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-[13px] text-amber-700">
+              当前为历史对局回溯模式：按钮保留，但经营动作将提示只读并拒绝写入。
+            </div>
+          )}
           <div className="mb-3 inline-flex rounded-xl border border-slate-200 bg-white p-1">
             <button
               type="button"
@@ -614,8 +689,12 @@ export default function WarehouseInboundPage({ run, currentUser, onBackToSetup, 
                     <button
                       key={mode.key}
                       type="button"
-                      onClick={() => setSelectedMode(mode.key)}
-                      className={`w-full rounded-xl border p-3 text-left ${active ? 'border-blue-300 bg-blue-50' : 'border-slate-200 bg-white'}`}
+                      onClick={() => {
+                        if (readOnly) return;
+                        setSelectedMode(mode.key);
+                      }}
+                      disabled={readOnly}
+                      className={`w-full rounded-xl border p-3 text-left disabled:cursor-not-allowed disabled:opacity-60 ${active ? 'border-blue-300 bg-blue-50' : 'border-slate-200 bg-white'}`}
                     >
                       <div className="text-[14px] font-black text-slate-800">{mode.label}</div>
                       <div className="mt-1 text-[12px] text-slate-500">
@@ -642,11 +721,14 @@ export default function WarehouseInboundPage({ run, currentUser, onBackToSetup, 
                 warehouseModePoints={warehouseModePoints}
                 modeOptions={options?.warehouse_modes ?? []}
                 locationOptions={options?.warehouse_locations ?? []}
+                readOnly={readOnly}
                 onSelectPoint={(mode, location) => {
+                  if (readOnly) return;
                   setSelectedMode(mode);
                   setSelectedLocation(location);
                 }}
                 onTogglePoint={(pointId) => {
+                  if (readOnly) return;
                   setSelectedPointId((prev) => (prev === pointId ? null : pointId));
                 }}
               />
@@ -667,8 +749,12 @@ export default function WarehouseInboundPage({ run, currentUser, onBackToSetup, 
                     <button
                       key={point.id}
                       type="button"
-                      onClick={() => setSelectedPointId((prev) => (prev === point.id ? null : point.id))}
-                      className={`rounded-lg border px-2.5 py-2 text-left text-[12px] transition ${
+                      onClick={() => {
+                        if (readOnly) return;
+                        setSelectedPointId((prev) => (prev === point.id ? null : point.id));
+                      }}
+                      disabled={readOnly}
+                      className={`rounded-lg border px-2.5 py-2 text-left text-[12px] transition disabled:cursor-not-allowed disabled:opacity-60 ${
                         selectedPointId === point.id
                           ? 'border-blue-300 bg-blue-50 shadow-[0_0_0_4px_rgba(37,99,235,0.12)]'
                           : 'border-slate-200 bg-slate-50 hover:border-blue-200 hover:bg-blue-50/60'
@@ -691,23 +777,23 @@ export default function WarehouseInboundPage({ run, currentUser, onBackToSetup, 
                   <div className="mt-1 h-2 overflow-hidden rounded-full bg-blue-100">
                     <div
                       className="h-full rounded-full bg-blue-500 transition-all"
-                      style={{ width: `${((modeOption ? 1 : 0) + (locationOption ? 1 : 0)) * 50}%` }}
+                      style={{ width: `${((hasModeSelection ? 1 : 0) + (hasLocationSelection ? 1 : 0)) * 50}%` }}
                     />
                   </div>
                   <div className="mt-1 text-[11px] text-slate-500">
-                    第1步仓型：{modeOption ? '已完成' : '未完成'}；第2步仓位：{locationOption ? '已完成' : '未完成'}
+                    第1步仓型：{hasModeSelection ? '已完成' : '未完成'}；第2步仓位：{hasLocationSelection ? '已完成' : '未完成'}
                   </div>
                 </div>
                 <div className="space-y-2 text-[13px]">
-                  <KV label="待入仓物流单" value={`${candidates.length} 单`} icon={<PackageCheck size={14} />} />
-                  <KV label="待入仓件数" value={`${qtyTotal.toLocaleString()} 件`} />
-                  <KV label="待入仓货值" value={fmtMoney(cargoTotal)} />
-                  <KV label="一次性费用" value={fmtMoney(oneTimeCost)} />
-                  <KV label="入仓处理费" value={fmtMoney(inboundCost)} />
-                  <KV label="仓租周期费用" value={fmtMoney(rentCost)} />
-                  <KV label="本次总仓储费用" value={fmtMoney(totalCost)} strong />
-                  <KV label="预计配送时效分" value={`${Math.max(1, Math.min(100, (modeOption?.delivery_eta_score ?? 0) + (locationOption?.eta_delta ?? 0)))}`} icon={<CalendarClock size={14} />} />
-                  <KV label="履约准确率" value={`${(((modeOption?.fulfillment_accuracy ?? 0) * 100)).toFixed(1)}%`} icon={<CheckCircle2 size={14} />} />
+                  <KV label={readOnly ? '已入仓批次' : '待入仓物流单'} value={`${displayInboundCount} 单`} icon={<PackageCheck size={14} />} />
+                  <KV label={readOnly ? '已入仓件数' : '待入仓件数'} value={`${displayInboundQty.toLocaleString()} 件`} />
+                  <KV label={readOnly ? '已入仓货值' : '待入仓货值'} value={fmtMoney(displayInboundCargoValue)} />
+                  <KV label="一次性费用" value={fmtMoney(displayOneTimeCost)} />
+                  <KV label="入仓处理费" value={fmtMoney(displayInboundCost)} />
+                  <KV label="仓租周期费用" value={fmtMoney(displayRentCost)} />
+                  <KV label={readOnly ? '历史总仓储费用' : '本次总仓储费用'} value={fmtMoney(displayTotalCost)} strong />
+                  <KV label="预计配送时效分" value={`${displayEtaScore}`} icon={<CalendarClock size={14} />} />
+                  <KV label="履约准确率" value={`${(displayAccuracy * 100).toFixed(1)}%`} icon={<CheckCircle2 size={14} />} />
                   <KV label="预计平均配送时长" value={`${zoneForecast.avgDeliveryDays.toFixed(2)} 天`} />
                   <KV label="超时率（热区加权）" value={`${(zoneForecast.overdueRate * 100).toFixed(1)}%`} danger={zoneForecast.overdueRate > 0.25} />
                   <KV label="退款风险（热区加权）" value={`${(zoneForecast.refundRisk * 100).toFixed(1)}%`} danger={zoneForecast.refundRisk > 0.08} />
@@ -736,7 +822,7 @@ export default function WarehouseInboundPage({ run, currentUser, onBackToSetup, 
                 <button
                   type="button"
                   onClick={handleConfirmInbound}
-                  disabled={!canConfirm}
+                  disabled={readOnly || !canConfirm}
                   className="mt-3 h-10 w-full rounded-xl bg-[#2563eb] text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   确认入仓并生效（全部入仓）
@@ -747,9 +833,9 @@ export default function WarehouseInboundPage({ run, currentUser, onBackToSetup, 
               <section className="rounded-2xl border border-[#e5ecfb] bg-white p-4">
                 <div className="mb-2 text-[15px] font-black text-slate-800">D. 入仓进度与汇总</div>
                 <div className="space-y-2 text-[13px]">
-                  <KV label="已入仓批次" value={`${summary?.completed_inbound_count ?? 0} 单`} icon={<Warehouse size={14} />} />
-                  <KV label="库存 SKU" value={`${summary?.inventory_total_sku ?? 0}`} />
-                  <KV label="库存总件数" value={`${(summary?.inventory_total_quantity ?? 0).toLocaleString()} 件`} />
+                  <KV label="已入仓批次" value={`${completedInboundCount} 单`} icon={<Warehouse size={14} />} />
+                  <KV label="库存 SKU" value={`${inventoryTotalSku}`} />
+                  <KV label="库存总件数" value={`${inventoryTotalQuantity.toLocaleString()} 件`} />
                 </div>
                 <div className="mt-3 max-h-[220px] overflow-auto rounded-xl border border-slate-100">
                   <table className="w-full text-left text-[12px]">
@@ -1025,6 +1111,7 @@ function RealMalaysiaMap({
   warehouseModePoints,
   modeOptions,
   locationOptions,
+  readOnly,
   onSelectPoint,
   onTogglePoint,
 }: {
@@ -1034,6 +1121,7 @@ function RealMalaysiaMap({
   warehouseModePoints: WarehouseModePointsMap;
   modeOptions: WarehouseModeOption[];
   locationOptions: WarehouseLocationOption[];
+  readOnly: boolean;
   onSelectPoint: (mode: WarehouseModeKey, loc: WarehouseLocationKey) => void;
   onTogglePoint: (pointId: string) => void;
 }) {
@@ -1100,6 +1188,7 @@ function RealMalaysiaMap({
           markerEl.style.transform = 'translateZ(0)';
           const markerLngLat: [number, number] = point.lngLat;
           markerEl.addEventListener('click', () => {
+            if (readOnly) return;
             onSelectPoint(mode, location);
             onTogglePoint(point.id);
           });
@@ -1186,7 +1275,7 @@ function RealMalaysiaMap({
       map.remove();
       mapRef.current = null;
     };
-  }, [locationOptions, modeOptions, onSelectPoint, onTogglePoint, warehouseModePoints]);
+  }, [locationOptions, modeOptions, onSelectPoint, onTogglePoint, readOnly, warehouseModePoints]);
 
   const recomputeLines = useCallback(() => {
     const map = mapRef.current;

@@ -44,3 +44,9 @@
 - 一键启动：`./start-dev.sh`
 - 前端：`cd frontend && npm run dev`
 - 后端：`conda activate cbec-py312 && cd backend/apps/api-gateway && uvicorn app.main:app --host 0.0.0.0 --reload`
+
+## Redis Regression Check
+- Redis 订单缓存回归检查命令（本地开发）：
+  - `cd backend/apps/api-gateway/scripts && python verify_redis_orders_cache.py --username <username> --password <password> --no-flush`
+- 默认要求：
+  - 若涉及 `GET /shopee/runs/{run_id}/orders` 缓存逻辑、缓存失效逻辑、simulate 相关缓存行为变更，提交前必须至少执行一次上述回归脚本并确认通过。

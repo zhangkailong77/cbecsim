@@ -88,6 +88,7 @@ interface SettlementResponse {
 interface MyOrdersViewProps {
   runId: number | null;
   onOpenOrderDetail: (orderId: number, tabType: TabType) => void;
+  readOnly?: boolean;
 }
 
 function queryFromLocation() {
@@ -198,7 +199,9 @@ function parseApiErrorDetail(raw: string): string {
   return text;
 }
 
-export default function MyOrdersView({ runId, onOpenOrderDetail }: MyOrdersViewProps) {
+const HISTORY_READONLY_DETAIL = '历史对局仅支持回溯查看，不能继续经营操作。';
+
+export default function MyOrdersView({ runId, onOpenOrderDetail, readOnly = false }: MyOrdersViewProps) {
   const [query, setQuery] = useState(queryFromLocation());
   const [data, setData] = useState<OrdersResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -276,6 +279,10 @@ export default function MyOrdersView({ runId, onOpenOrderDetail }: MyOrdersViewP
   };
 
   const handleShipOrder = async (order: OrderRow) => {
+    if (readOnly) {
+      alert(HISTORY_READONLY_DETAIL);
+      return;
+    }
     if (!runId) return;
     try {
       setActionLoadingOrderId(order.id);
@@ -292,6 +299,10 @@ export default function MyOrdersView({ runId, onOpenOrderDetail }: MyOrdersViewP
   };
 
   const handleBatchShipOrders = async () => {
+    if (readOnly) {
+      alert(HISTORY_READONLY_DETAIL);
+      return;
+    }
     if (!runId) return;
     const orderMap = new Map((data?.orders ?? []).map((row) => [row.id, row]));
     const targets = selectedOrderIds

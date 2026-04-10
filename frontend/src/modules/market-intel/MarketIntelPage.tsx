@@ -19,6 +19,7 @@ interface MarketIntelPageProps {
   } | null;
   onBackToSetup: () => void;
   onEnterShopee: () => void;
+  readOnly?: boolean;
 }
 
 interface LeaderboardItem {
@@ -80,7 +81,9 @@ const boardValueMap: Record<(typeof subMenus)[number], 'sales' | 'new' | 'hot'> 
   热推榜: 'hot',
 };
 
-export default function MarketIntelPage({ run, currentUser, onBackToSetup, onEnterShopee }: MarketIntelPageProps) {
+const HISTORY_READONLY_DETAIL = '历史对局仅支持回溯查看，不能继续经营操作。';
+
+export default function MarketIntelPage({ run, currentUser, onBackToSetup, onEnterShopee, readOnly = false }: MarketIntelPageProps) {
   const [scale, setScale] = useState(1);
   const [keyword, setKeyword] = useState('');
   const [categories, setCategories] = useState<string[]>(['全部']);
@@ -266,6 +269,10 @@ export default function MarketIntelPage({ run, currentUser, onBackToSetup, onEnt
   };
 
   const handleSubmitOrder = async () => {
+    if (readOnly) {
+      setSubmitError(HISTORY_READONLY_DETAIL);
+      return;
+    }
     if (!run?.id || cartItems.length === 0) return;
     if (budgetRemainingAfterOrder < 0) {
       setSubmitError('采购金额超出可用资金。');
@@ -386,6 +393,11 @@ export default function MarketIntelPage({ run, currentUser, onBackToSetup, onEnt
 
           <main className="flex-1 overflow-auto p-5">
             <h1 className="mb-3 text-[34px] font-black text-[#111827]">{activeBoard}</h1>
+            {readOnly && (
+              <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-[13px] text-amber-700">
+                当前为历史对局回溯模式：按钮保留，但经营动作将提示只读并拒绝写入。
+              </div>
+            )}
 
             <section className="mb-4 rounded-2xl border border-[#eceef3] bg-white p-5">
               <div className="mb-3 flex items-center text-[14px]">

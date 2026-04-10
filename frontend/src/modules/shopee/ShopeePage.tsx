@@ -16,6 +16,7 @@ interface ShopeePageProps {
   run: {
     id: number;
     day_index: number;
+    status?: string;
   } | null;
   currentUser: {
     public_id: string;
@@ -23,6 +24,7 @@ interface ShopeePageProps {
     full_name: string | null;
   } | null;
   onBackToSetup: () => void;
+  readOnly?: boolean;
 }
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000';
@@ -44,7 +46,9 @@ interface NotificationOrdersResponse {
   orders: NotificationApiOrderRow[];
 }
 
-export default function ShopeePage({ run, currentUser, onBackToSetup }: ShopeePageProps) {
+const HISTORY_READONLY_DETAIL = '历史对局仅支持回溯查看，不能继续经营操作。';
+
+export default function ShopeePage({ run, currentUser, onBackToSetup, readOnly = false }: ShopeePageProps) {
   const [scale, setScale] = useState(1);
   const [activeView, setActiveView] = useState<'dashboard' | 'my-orders' | 'my-products' | 'new-product' | 'my-income' | 'my-balance' | 'bank-accounts'>(() => {
     const path = window.location.pathname;
@@ -90,6 +94,15 @@ export default function ShopeePage({ run, currentUser, onBackToSetup }: ShopeePa
     return 'dashboard';
   };
 
+  const withHistoryRunId = (path: string) => {
+    if (!readOnly || !run?.id) return path;
+    const [pathname, query = ''] = path.split('?');
+    const params = new URLSearchParams(query);
+    params.set('run_id', String(run.id));
+    const nextQuery = params.toString();
+    return nextQuery ? `${pathname}?${nextQuery}` : pathname;
+  };
+
   const buildShopeePath = (view: 'dashboard' | 'my-orders' | 'my-products' | 'new-product' | 'my-income' | 'my-balance' | 'bank-accounts') => {
     const base = `/u/${encodeURIComponent(currentUser?.public_id ?? '')}/shopee`;
     if (view === 'new-product') return `${base}/product/add_news`;
@@ -122,6 +135,18 @@ export default function ShopeePage({ run, currentUser, onBackToSetup }: ShopeePa
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
   }, []);
+
+  useEffect(() => {
+    if (!readOnly) return;
+    const allowed = new Set(['dashboard', 'my-orders', 'my-products', 'new-product', 'my-income', 'my-balance', 'bank-accounts']);
+    if (!allowed.has(activeView)) {
+      setActiveView('my-orders');
+      const nextPath = withHistoryRunId(buildShopeePath('my-orders'));
+      if (`${window.location.pathname}${window.location.search}` !== nextPath) {
+        window.history.replaceState(null, '', nextPath);
+      }
+    }
+  }, [activeView, readOnly]);
 
   useEffect(() => {
     if (!run?.id) {
@@ -185,6 +210,13 @@ export default function ShopeePage({ run, currentUser, onBackToSetup }: ShopeePa
   }, [run?.id, activeView]);
 
   const handleSelectView = (view: 'dashboard' | 'my-orders' | 'my-products' | 'new-product' | 'my-income' | 'my-balance' | 'bank-accounts', listingId?: number | null) => {
+    if (readOnly) {
+      const allowed = new Set(['dashboard', 'my-orders', 'my-products', 'new-product', 'my-income', 'my-balance', 'bank-accounts']);
+      if (!allowed.has(view)) {
+        alert(HISTORY_READONLY_DETAIL);
+        return;
+      }
+    }
     if (!currentUser?.public_id) {
       setActiveView(view);
       return;
@@ -200,9 +232,10 @@ export default function ShopeePage({ run, currentUser, onBackToSetup }: ShopeePa
         ? `${nextPathBase}?listing_id=${listingId}`
         : nextPathBase;
     }
+    const nextPathWithRunId = withHistoryRunId(nextPath);
     const currentFullPath = `${window.location.pathname}${window.location.search}`;
-    if (currentFullPath !== nextPath) {
-      window.history.pushState(null, '', nextPath);
+    if (currentFullPath !== nextPathWithRunId) {
+      window.history.pushState(null, '', nextPathWithRunId);
     }
     setEditingListingId(view === 'new-product' ? (listingId && listingId > 0 ? listingId : null) : null);
     setActiveOrderId(null);
@@ -211,7 +244,9 @@ export default function ShopeePage({ run, currentUser, onBackToSetup }: ShopeePa
 
   const handleOpenOrderDetail = (orderId: number, tabType: string) => {
     if (!currentUser?.public_id) return;
-    const path = `/u/${encodeURIComponent(currentUser.public_id)}/shopee/order/${orderId}?type=${encodeURIComponent(tabType || 'all')}`;
+    const path = withHistoryRunId(
+      `/u/${encodeURIComponent(currentUser.public_id)}/shopee/order/${orderId}?type=${encodeURIComponent(tabType || 'all')}`
+    );
     if (`${window.location.pathname}${window.location.search}` !== path) {
       window.history.pushState(null, '', path);
     }
@@ -224,7 +259,7 @@ export default function ShopeePage({ run, currentUser, onBackToSetup }: ShopeePa
     if (!currentUser?.public_id) return;
     const base = `/u/${encodeURIComponent(currentUser.public_id)}/shopee/order`;
     const query = orderReturnType && orderReturnType !== 'all' ? `?type=${encodeURIComponent(orderReturnType)}` : '';
-    const path = `${base}${query}`;
+    const path = withHistoryRunId(`${base}${query}`);
     if (`${window.location.pathname}${window.location.search}` !== path) {
       window.history.pushState(null, '', path);
     }
@@ -278,6 +313,11 @@ export default function ShopeePage({ run, currentUser, onBackToSetup }: ShopeePa
           isProductDetail={activeView === 'new-product' && Boolean(editingListingId)}
         />
         <div className="flex flex-1 overflow-hidden">
+          {readOnly && (
+            <div className="absolute left-[220px] top-[68px] z-20 rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-[12px] text-amber-700">
+              历史对局回溯模式：按钮保留，写操作将提示只读。
+            </div>
+          )}
           <div className="flex min-w-0 flex-1 overflow-hidden">
             {activeView !== 'new-product' && !activeOrderId && <Sidebar activeView={activeView} onSelectView={handleSelectView} />}
             {activeView === 'my-orders' ? (
@@ -286,24 +326,30 @@ export default function ShopeePage({ run, currentUser, onBackToSetup }: ShopeePa
                   runId={run?.id ?? null}
                   orderId={activeOrderId}
                   onBack={handleBackToOrderList}
+                  readOnly={readOnly}
                 />
               ) : (
-                <MyOrdersView runId={run?.id ?? null} onOpenOrderDetail={handleOpenOrderDetail} />
+                <MyOrdersView runId={run?.id ?? null} onOpenOrderDetail={handleOpenOrderDetail} readOnly={readOnly} />
               )
             ) : activeView === 'my-products' ? (
-              <MyProductsView runId={run?.id ?? null} onGotoNewProduct={(listingId) => handleSelectView('new-product', listingId)} />
+              <MyProductsView
+                runId={run?.id ?? null}
+                readOnly={readOnly}
+                onGotoNewProduct={(listingId) => handleSelectView('new-product', listingId)}
+              />
             ) : activeView === 'new-product' ? (
               <NewProductView
                 runId={run?.id ?? null}
                 editingListingId={editingListingId}
                 onBackToProducts={() => handleSelectView('my-products')}
+                readOnly={readOnly}
               />
             ) : activeView === 'my-balance' ? (
-              <MyBalanceView runId={run?.id ?? null} onOpenBankAccounts={() => handleSelectView('bank-accounts')} />
+              <MyBalanceView runId={run?.id ?? null} onOpenBankAccounts={() => handleSelectView('bank-accounts')} readOnly={readOnly} />
             ) : activeView === 'my-income' ? (
               <MyIncomeView runId={run?.id ?? null} />
             ) : activeView === 'bank-accounts' ? (
-              <MyBankAccountsView runId={run?.id ?? null} />
+              <MyBankAccountsView runId={run?.id ?? null} readOnly={readOnly} />
             ) : (
               <Dashboard />
             )}

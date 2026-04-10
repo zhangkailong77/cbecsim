@@ -65,6 +65,7 @@ interface MyOrderDetailViewProps {
   runId: number | null;
   orderId: number;
   onBack: () => void;
+  readOnly?: boolean;
 }
 
 function formatMoney(amount: number) {
@@ -90,7 +91,9 @@ function formatTransitSummary(
   return `预计 ${expected} 天 · 已运输 ${Math.max(0, elapsed ?? 0)} 天 · 剩余 ${Math.max(0, remaining ?? 0)} 天`;
 }
 
-export default function MyOrderDetailView({ runId, orderId, onBack }: MyOrderDetailViewProps) {
+const HISTORY_READONLY_DETAIL = '历史对局仅支持回溯查看，不能继续经营操作。';
+
+export default function MyOrderDetailView({ runId, orderId, onBack, readOnly = false }: MyOrderDetailViewProps) {
   const [order, setOrder] = useState<OrderDetailResponse | null>(null);
   const [logistics, setLogistics] = useState<LogisticsResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -133,6 +136,10 @@ export default function MyOrderDetailView({ runId, orderId, onBack }: MyOrderDet
   };
 
   const handleProgress = async () => {
+    if (readOnly) {
+      alert(HISTORY_READONLY_DETAIL);
+      return;
+    }
     if (!runId) return;
     if (logistics?.events?.[0]?.event_code === 'delivered') return;
     setProgressing(true);

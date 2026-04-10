@@ -7,7 +7,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.models import InventoryStockMovement, ShopeeListing, ShopeeListingVariant, ShopeeOrder, ShopeeOrderLogisticsEvent
-from app.services.inventory_lot_sync import release_reserved_inventory_lots
+from app.services.inventory_lot_sync import release_reserved_inventory_lots, reserve_inventory_lots
 
 
 CANCEL_THRESHOLD_HOURS = 48
@@ -26,10 +26,11 @@ def _rollback_order_stock_and_sales(
     run_id: int,
     user_id: int,
     order: ShopeeOrder,
-) -> None:
+) -> set[int]:
     items = list(order.items or [])
+    released_product_ids: set[int] = set()
     if not items:
-        return
+        return released_product_ids
 
     for item in items:
         qty = max(0, int(item.quantity or 0))
@@ -99,6 +100,7 @@ def _rollback_order_stock_and_sales(
                         product_id=product_id,
                         qty=stock_release,
                     )
+                    released_product_ids.add(product_id)
                 matched_variant.stock = max(0, int(matched_variant.stock or 0) + stock_release)
                 matched_variant.sales_count = max(0, int(matched_variant.sales_count or 0) - qty)
                 matched_variant.oversell_used = max(0, int(matched_variant.oversell_used or 0) - oversell_release)
@@ -130,6 +132,7 @@ def _rollback_order_stock_and_sales(
                     product_id=product_id,
                     qty=stock_release,
                 )
+                released_product_ids.add(product_id)
             listing.stock_available = max(0, int(listing.stock_available or 0) + stock_release)
             db.add(
                 InventoryStockMovement(
@@ -147,6 +150,107 @@ def _rollback_order_stock_and_sales(
                     remark="订单取消释放库存/回退缺货占用",
                 )
             )
+    return released_product_ids
+
+
+def _rebalance_backorders_from_released_inventory(
+    db: Session,
+    *,
+    run_id: int,
+    user_id: int,
+    product_ids: set[int],
+) -> None:
+    if not product_ids:
+        return
+
+    for product_id in sorted({int(pid) for pid in product_ids if int(pid) > 0}):
+        backlog_orders = (
+            db.query(ShopeeOrder)
+            .join(ShopeeListing, ShopeeListing.id == ShopeeOrder.listing_id)
+            .filter(
+                ShopeeOrder.run_id == run_id,
+                ShopeeOrder.user_id == user_id,
+                ShopeeOrder.type_bucket == "toship",
+                ShopeeOrder.stock_fulfillment_status == "backorder",
+                ShopeeOrder.backorder_qty > 0,
+                ShopeeListing.product_id == product_id,
+            )
+            .order_by(ShopeeOrder.created_at.asc(), ShopeeOrder.id.asc())
+            .all()
+        )
+        for backlog_order in backlog_orders:
+            needed = max(0, int(backlog_order.backorder_qty or 0))
+            if needed <= 0:
+                continue
+            reserved_fill_qty = reserve_inventory_lots(
+                db,
+                run_id=run_id,
+                product_id=product_id,
+                qty=needed,
+            )
+            if reserved_fill_qty <= 0:
+                break
+            backlog_order.backorder_qty = needed - reserved_fill_qty
+            if backlog_order.backorder_qty <= 0:
+                backlog_order.backorder_qty = 0
+                backlog_order.stock_fulfillment_status = "restocked"
+                backlog_order.must_restock_before_at = None
+            if int(backlog_order.variant_id or 0) > 0:
+                matched_variant = (
+                    db.query(ShopeeListingVariant)
+                    .filter(ShopeeListingVariant.id == int(backlog_order.variant_id))
+                    .first()
+                )
+                if matched_variant:
+                    matched_variant.oversell_used = max(0, int(matched_variant.oversell_used or 0) - reserved_fill_qty)
+            db.add(
+                InventoryStockMovement(
+                    run_id=run_id,
+                    user_id=user_id,
+                    product_id=product_id,
+                    listing_id=int(backlog_order.listing_id or 0) or None,
+                    variant_id=int(backlog_order.variant_id or 0) or None,
+                    biz_order_id=int(backlog_order.id),
+                    movement_type="restock_fill",
+                    qty_delta_on_hand=0,
+                    qty_delta_reserved=int(reserved_fill_qty),
+                    qty_delta_backorder=-int(reserved_fill_qty),
+                    biz_ref=backlog_order.order_no,
+                    remark="订单取消释放库存后自动冲减缺货",
+                )
+            )
+
+
+def rebalance_backorders_from_current_inventory(
+    db: Session,
+    *,
+    run_id: int,
+    user_id: int,
+) -> None:
+    """Best-effort self-heal for legacy backorders when available inventory already exists."""
+    product_ids = {
+        int(row[0])
+        for row in (
+            db.query(ShopeeListing.product_id)
+            .join(ShopeeOrder, ShopeeOrder.listing_id == ShopeeListing.id)
+            .filter(
+                ShopeeOrder.run_id == run_id,
+                ShopeeOrder.user_id == user_id,
+                ShopeeOrder.type_bucket == "toship",
+                ShopeeOrder.stock_fulfillment_status == "backorder",
+                ShopeeOrder.backorder_qty > 0,
+                ShopeeListing.product_id.isnot(None),
+            )
+            .all()
+        )
+        if row and row[0] is not None and int(row[0]) > 0
+    }
+    _rebalance_backorders_from_released_inventory(
+        db,
+        run_id=run_id,
+        user_id=user_id,
+        product_ids=product_ids,
+    )
 
 
 def calc_cancel_prob(overdue_hours: int) -> float:
@@ -179,23 +283,47 @@ def cancel_order(
     reason: str,
     source: str,
 ) -> None:
-    _rollback_order_stock_and_sales(
+    locked_order = (
+        db.query(ShopeeOrder)
+        .filter(
+            ShopeeOrder.id == int(order.id),
+            ShopeeOrder.run_id == run_id,
+            ShopeeOrder.user_id == user_id,
+        )
+        .with_for_update()
+        .first()
+    )
+    if not locked_order:
+        return
+    if (locked_order.type_bucket or "").strip() != "toship":
+        return
+
+    released_product_ids = _rollback_order_stock_and_sales(
         db,
         run_id=run_id,
         user_id=user_id,
-        order=order,
+        order=locked_order,
     )
-    order.type_bucket = "cancelled"
-    order.process_status = "processed"
-    order.cancelled_at = cancel_time
-    order.cancel_reason = reason
-    order.cancel_source = source
-    order.countdown_text = "订单已取消"
+    # SessionLocal 使用 autoflush=False，先把取消释放的库存落盘，
+    # 避免后续 backorder 回补查询看不到最新 quantity_available。
+    db.flush()
+    locked_order.type_bucket = "cancelled"
+    locked_order.process_status = "processed"
+    locked_order.cancelled_at = cancel_time
+    locked_order.cancel_reason = reason
+    locked_order.cancel_source = source
+    locked_order.countdown_text = "订单已取消"
+    _rebalance_backorders_from_released_inventory(
+        db,
+        run_id=run_id,
+        user_id=user_id,
+        product_ids=released_product_ids,
+    )
     db.add(
         ShopeeOrderLogisticsEvent(
             run_id=run_id,
             user_id=user_id,
-            order_id=order.id,
+            order_id=locked_order.id,
             event_code=_CANCEL_EVENT_CODE,
             event_title=_CANCEL_EVENT_TITLE,
             event_desc=_CANCEL_EVENT_DESC,

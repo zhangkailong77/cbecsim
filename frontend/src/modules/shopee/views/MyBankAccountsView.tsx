@@ -6,6 +6,7 @@ const ACCESS_TOKEN_KEY = 'cbec_access_token';
 
 interface MyBankAccountsViewProps {
   runId: number | null;
+  readOnly?: boolean;
 }
 
 interface BankAccountRow {
@@ -34,7 +35,9 @@ const BANK_OPTIONS = [
   '暹罗商业银行（SCB）',
 ];
 
-export default function MyBankAccountsView({ runId }: MyBankAccountsViewProps) {
+const HISTORY_READONLY_DETAIL = '历史对局仅支持回溯查看，不能继续经营操作。';
+
+export default function MyBankAccountsView({ runId, readOnly = false }: MyBankAccountsViewProps) {
   const [rows, setRows] = useState<BankAccountRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [showModal, setShowModal] = useState(false);
@@ -97,11 +100,19 @@ export default function MyBankAccountsView({ runId }: MyBankAccountsViewProps) {
   };
 
   const openModal = () => {
+    if (readOnly) {
+      window.alert(HISTORY_READONLY_DETAIL);
+      return;
+    }
     resetForm();
     setShowModal(true);
   };
 
   const saveBankAccount = async () => {
+    if (readOnly) {
+      window.alert(HISTORY_READONLY_DETAIL);
+      return;
+    }
     if (!runId || !token) return;
     setSaving(true);
     try {
@@ -125,6 +136,10 @@ export default function MyBankAccountsView({ runId }: MyBankAccountsViewProps) {
   };
 
   const setDefaultBank = async (accountId: number) => {
+    if (readOnly) {
+      window.alert(HISTORY_READONLY_DETAIL);
+      return;
+    }
     if (!runId || !token) return;
     try {
       await authedFetch<BankAccountRow>(`${API_BASE_URL}/shopee/runs/${runId}/finance/bank-accounts/${accountId}/set-default`, {

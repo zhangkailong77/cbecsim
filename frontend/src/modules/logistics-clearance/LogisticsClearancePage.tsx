@@ -23,6 +23,7 @@ interface LogisticsClearancePageProps {
   } | null;
   onBackToSetup: () => void;
   onEnterShopee: () => void;
+  readOnly?: boolean;
 }
 
 interface ProcurementSummary {
@@ -136,7 +137,9 @@ function calcShipmentRuntime(shipment: Shipment, nowMs: number) {
   };
 }
 
-export default function LogisticsClearancePage({ run, currentUser, onBackToSetup, onEnterShopee }: LogisticsClearancePageProps) {
+const HISTORY_READONLY_DETAIL = '历史对局仅支持回溯查看，不能继续经营操作。';
+
+export default function LogisticsClearancePage({ run, currentUser, onBackToSetup, onEnterShopee, readOnly = false }: LogisticsClearancePageProps) {
   const [scale, setScale] = useState(1);
   const [orders, setOrders] = useState<ProcurementOrder[]>([]);
   const [summary, setSummary] = useState<ProcurementSummary | null>(null);
@@ -270,11 +273,16 @@ export default function LogisticsClearancePage({ run, currentUser, onBackToSetup
   const canEnterShopee = shipmentRuntimes.some((item) => item.runtime.status === 'customs_cleared');
 
   const toggleOrder = (id: number) => {
+    if (readOnly) return;
     if (shippedOrderIds.has(id)) return;
     setSelectedOrderIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   };
 
   const handleConfirmShipment = async () => {
+    if (readOnly) {
+      setError(HISTORY_READONLY_DETAIL);
+      return;
+    }
     if (!canConfirmShipment) {
       setError('请先选择待发运订单，并确保资金足够覆盖物流与清关费用。');
       return;
@@ -315,6 +323,10 @@ export default function LogisticsClearancePage({ run, currentUser, onBackToSetup
   };
 
   const handleDebugAccelerateClearance = async () => {
+    if (readOnly) {
+      setError(HISTORY_READONLY_DETAIL);
+      return;
+    }
     if (!run?.id || !latestPendingShipment) {
       setError('当前没有可加速的物流单。');
       return;
@@ -398,6 +410,11 @@ export default function LogisticsClearancePage({ run, currentUser, onBackToSetup
           <div className="mb-4 rounded-2xl border border-[#dbeafe] bg-gradient-to-r from-[#eff6ff] to-[#f8fbff] px-5 py-4 text-[14px] text-[#1e3a8a]">
             你已完成选品采购。请根据目标市场选择货代线路并完成清关，清关后货物才能进入海外仓并开启正式运营。
           </div>
+          {readOnly && (
+            <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-[13px] text-amber-700">
+              当前为历史对局回溯模式：按钮保留，但经营动作将提示只读并拒绝写入。
+            </div>
+          )}
 
           <div className="grid grid-cols-[1fr_420px] gap-4">
             <div className="space-y-4">
@@ -438,7 +455,7 @@ export default function LogisticsClearancePage({ run, currentUser, onBackToSetup
                               <input
                                 type="checkbox"
                                 checked={shipped || selectedOrderIds.includes(order.id)}
-                                disabled={shipped}
+                                disabled={readOnly || shipped}
                                 onChange={() => toggleOrder(order.id)}
                               />
                             </td>
@@ -465,8 +482,12 @@ export default function LogisticsClearancePage({ run, currentUser, onBackToSetup
                     <button
                       key={item.key}
                       type="button"
-                      onClick={() => setSelectedForwarder(item)}
-                      className={`rounded-xl border p-3 text-left ${selectedForwarder.key === item.key ? 'border-blue-300 bg-blue-50' : 'border-slate-200 bg-white'}`}
+                      onClick={() => {
+                        if (readOnly) return;
+                        setSelectedForwarder(item);
+                      }}
+                      disabled={readOnly}
+                      className={`rounded-xl border p-3 text-left disabled:cursor-not-allowed disabled:opacity-60 ${selectedForwarder.key === item.key ? 'border-blue-300 bg-blue-50' : 'border-slate-200 bg-white'}`}
                     >
                       <div className="text-[13px] font-bold text-slate-800">{item.label}</div>
                       <div className="mt-1 text-[12px] text-slate-500">时效约 {item.etaDays} 天</div>
@@ -482,8 +503,12 @@ export default function LogisticsClearancePage({ run, currentUser, onBackToSetup
                     <button
                       key={item.key}
                       type="button"
-                      onClick={() => setSelectedCustoms(item)}
-                      className={`rounded-xl border p-3 text-left ${selectedCustoms.key === item.key ? 'border-blue-300 bg-blue-50' : 'border-slate-200 bg-white'}`}
+                      onClick={() => {
+                        if (readOnly) return;
+                        setSelectedCustoms(item);
+                      }}
+                      disabled={readOnly}
+                      className={`rounded-xl border p-3 text-left disabled:cursor-not-allowed disabled:opacity-60 ${selectedCustoms.key === item.key ? 'border-blue-300 bg-blue-50' : 'border-slate-200 bg-white'}`}
                     >
                       <div className="text-[13px] font-bold text-slate-800">{item.label}</div>
                       <div className="mt-1 text-[12px] text-slate-500">清关约 {item.days} 天</div>
@@ -509,7 +534,7 @@ export default function LogisticsClearancePage({ run, currentUser, onBackToSetup
                 <button
                   type="button"
                   onClick={handleConfirmShipment}
-                  disabled={!canConfirmShipment}
+                  disabled={readOnly || !canConfirmShipment}
                   className="mt-3 h-10 w-full rounded-xl bg-[#2563eb] text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   确认发运并扣款
@@ -549,7 +574,7 @@ export default function LogisticsClearancePage({ run, currentUser, onBackToSetup
                   <button
                     type="button"
                     onClick={handleDebugAccelerateClearance}
-                    disabled={!latestPendingShipment || acceleratingShipmentId !== null}
+                    disabled={readOnly || !latestPendingShipment || acceleratingShipmentId !== null}
                     className="h-9 w-full rounded-lg bg-amber-500 text-[13px] font-bold text-white disabled:cursor-not-allowed disabled:opacity-50"
                     title={latestPendingShipment ? `加速物流单 #${latestPendingShipment.shipment.id.toString().slice(-6)} 到清关完成` : '当前无可加速物流单'}
                   >

@@ -37,6 +37,7 @@ interface TransactionsResponse {
 interface MyBalanceViewProps {
   runId: number | null;
   onOpenBankAccounts?: () => void;
+  readOnly?: boolean;
 }
 
 interface BankAccountRow {
@@ -97,7 +98,9 @@ function monthlyRangeText() {
   return `${first.toLocaleDateString()} - ${now.toLocaleDateString()}`;
 }
 
-export default function MyBalanceView({ runId, onOpenBankAccounts }: MyBalanceViewProps) {
+const HISTORY_READONLY_DETAIL = '历史对局仅支持回溯查看，不能继续经营操作。';
+
+export default function MyBalanceView({ runId, onOpenBankAccounts, readOnly = false }: MyBalanceViewProps) {
   const [overview, setOverview] = useState<FinanceOverview | null>(null);
   const [defaultBank, setDefaultBank] = useState<BankAccountRow | null>(null);
   const [rows, setRows] = useState<TransactionRow[]>([]);
@@ -171,6 +174,10 @@ export default function MyBalanceView({ runId, onOpenBankAccounts }: MyBalanceVi
   }, [withdrawAmount]);
 
   const handleSubmitWithdraw = async () => {
+    if (readOnly) {
+      window.alert(HISTORY_READONLY_DETAIL);
+      return;
+    }
     if (!runId) return;
     const amount = Number(withdrawAmount);
     if (!Number.isFinite(amount) || amount <= 0) {
@@ -229,6 +236,10 @@ export default function MyBalanceView({ runId, onOpenBankAccounts }: MyBalanceVi
                 <button
                   type="button"
                   onClick={() => {
+                    if (readOnly) {
+                      window.alert(HISTORY_READONLY_DETAIL);
+                      return;
+                    }
                     setShowWithdrawModal(true);
                     setWithdrawAmount('');
                     setWithdrawError('');

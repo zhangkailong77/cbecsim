@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta
 import json
+import os
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -7,6 +8,9 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, selectinload
 
+from app.core.cache import cache_delete_prefix, cache_get_json, cache_set_json
+from app.core.distributed_lock import acquire_distributed_lock, release_distributed_lock
+from app.core.rate_limit import check_rate_limit
 from app.core.security import get_current_user
 from app.db import get_db
 from app.models import (
@@ -23,6 +27,7 @@ from app.models import (
     ShopeeListing,
     ShopeeListingVariant,
     ShopeeOrder,
+    ShopeeOrderItem,
     ShopeeOrderGenerationLog,
     User,
     WarehouseInboundOrder,
@@ -36,14 +41,55 @@ from app.services.inventory_lot_sync import reserve_inventory_lots
 
 router = APIRouter(prefix="/game", tags=["game"])
 REAL_SECONDS_PER_GAME_DAY = 30 * 60
+REAL_SECONDS_PER_GAME_HOUR = REAL_SECONDS_PER_GAME_DAY / 24
 BOOKED_SECONDS = 10
+RUN_FINISHED_DETAIL = "当前对局已结束，无法继续订单演化操作"
 STOCK_MOVEMENT_LABELS = {
     "purchase_in": "采购入库",
     "order_reserve": "订单占用",
     "order_ship": "订单发货",
     "cancel_release": "取消释放",
     "restock_fill": "补货冲减",
+    "drift_reconcile": "漂移修复",
 }
+REDIS_PREFIX = os.getenv("REDIS_PREFIX", "cbec")
+REDIS_LOCK_TTL_SEC = max(10, int(os.getenv("REDIS_LOCK_TTL_SEC", "45")))
+REDIS_RATE_LIMIT_ADMIN_SIMULATE_PER_MIN = max(1, int(os.getenv("REDIS_RATE_LIMIT_ADMIN_SIMULATE_PER_MIN", "10")))
+REDIS_CACHE_TTL_OVERVIEW_SEC = max(5, int(os.getenv("REDIS_CACHE_TTL_OVERVIEW_SEC", "15")))
+REDIS_CACHE_TTL_HISTORY_SUMMARY_SEC = max(5, int(os.getenv("REDIS_CACHE_TTL_HISTORY_SUMMARY_SEC", "30")))
+
+
+def _invalidate_shopee_orders_cache_for_user(*, run_id: int, user_id: int) -> None:
+    cache_delete_prefix(f"{REDIS_PREFIX}:cache:shopee:orders:list:{run_id}:{user_id}:")
+
+
+def _game_overview_cache_key(*, name: str, run_id: int | None = None, top_n: int | None = None) -> str:
+    rid = "latest" if run_id is None else str(run_id)
+    suffix = ""
+    if top_n is not None:
+        suffix = f":top_n:{int(top_n)}"
+    return f"{REDIS_PREFIX}:cache:game:{name}:run:{rid}{suffix}"
+
+
+def _enforce_admin_simulate_rate_limit(*, admin_user_id: int) -> None:
+    limited, _remaining, reset_at = check_rate_limit(
+        key=f"{REDIS_PREFIX}:ratelimit:game:admin:simulate:user:{admin_user_id}",
+        limit=REDIS_RATE_LIMIT_ADMIN_SIMULATE_PER_MIN,
+        window_sec=60,
+    )
+    if limited:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"模拟请求过于频繁，请在 {reset_at} 后重试",
+        )
+
+
+def _acquire_admin_simulate_lock_or_409(*, run_id: int, user_id: int) -> tuple[str, str]:
+    lock_key = f"{REDIS_PREFIX}:lock:shopee:simulate:{run_id}:{user_id}"
+    token = acquire_distributed_lock(lock_key, REDIS_LOCK_TTL_SEC)
+    if token is None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="订单模拟正在进行中，请稍后重试")
+    return lock_key, token
 
 
 def _append_inventory_stock_movement(
@@ -242,7 +288,7 @@ def _apply_inbound_to_shopee_inventory_and_backorders(
 class CreateRunRequest(BaseModel):
     initial_cash: int = Field(ge=1000, le=100000000)
     market: str = Field(min_length=2, max_length=16)
-    duration_days: int = Field(ge=30, le=3650)
+    duration_days: int = Field(ge=7, le=3650)
 
 
 class RunResponse(BaseModel):
@@ -258,6 +304,31 @@ class RunResponse(BaseModel):
 
 class CurrentRunResponse(BaseModel):
     run: RunResponse | None
+
+
+class RunHistoryOptionsResponse(BaseModel):
+    runs: list[RunResponse]
+
+
+class RunHistorySummaryResponse(BaseModel):
+    run: RunResponse
+    initial_cash: float
+    total_cash: float
+    income_withdrawal_total: float
+    total_expense: float
+    current_balance: float
+    procurement_order_count: int
+    logistics_shipment_count: int
+    warehouse_completed_inbound_count: int
+    inventory_total_quantity: int
+    inventory_total_sku: int
+    shopee_order_total_count: int
+    shopee_order_toship_count: int
+    shopee_order_shipping_count: int
+    shopee_order_completed_count: int
+    shopee_order_cancelled_count: int
+    shopee_order_sold_inventory_quantity: int
+    shopee_order_generation_log_count: int
 
 
 class ProcurementSummaryResponse(BaseModel):
@@ -441,6 +512,8 @@ class WarehouseSummaryResponse(BaseModel):
     strategy: WarehouseStrategyResponse | None
     pending_inbound_count: int
     completed_inbound_count: int
+    completed_inbound_total_quantity: int
+    completed_inbound_total_value: int
     inventory_total_quantity: int
     inventory_total_sku: int
 
@@ -608,6 +681,9 @@ def get_admin_buyer_pool_overview(
     current_user: dict = Depends(get_current_user),
 ) -> AdminBuyerPoolOverviewResponse:
     _require_super_admin_or_403(current_user)
+    cached_payload = cache_get_json(_game_overview_cache_key(name="buyer_pool_overview", run_id=run_id))
+    if isinstance(cached_payload, dict):
+        return AdminBuyerPoolOverviewResponse.model_validate(cached_payload)
 
     selected_run: GameRun | None = None
     selected_run_username: str | None = None
@@ -683,7 +759,7 @@ def get_admin_buyer_pool_overview(
             )
         )
 
-    return AdminBuyerPoolOverviewResponse(
+    response = AdminBuyerPoolOverviewResponse(
         selected_run_id=selected_run.id if selected_run else None,
         selected_run_status=selected_run.status if selected_run else None,
         selected_run_market=selected_run.market if selected_run else None,
@@ -699,6 +775,12 @@ def get_admin_buyer_pool_overview(
         expected_orders_per_hour=round(expected_orders_per_hour, 3),
         profiles=profiles,
     )
+    cache_set_json(
+        _game_overview_cache_key(name="buyer_pool_overview", run_id=run_id),
+        response.model_dump(mode="json"),
+        REDIS_CACHE_TTL_OVERVIEW_SEC,
+    )
+    return response
 
 
 @router.get("/admin/runs/options", response_model=AdminRunOptionsResponse)
@@ -738,11 +820,17 @@ def admin_simulate_orders(
     current_user: dict = Depends(get_current_user),
 ) -> AdminSimulateOrdersResponse:
     _require_super_admin_or_403(current_user)
+    _enforce_admin_simulate_rate_limit(admin_user_id=int(current_user["id"]))
     run = db.query(GameRun).filter(GameRun.id == run_id).first()
     if not run:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
+    if _mark_run_finished_if_reached(db, run):
+        db.commit()
+        db.refresh(run)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=RUN_FINISHED_DETAIL)
     if (run.status or "").strip() != "running":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Run is not running")
+    lock_key, lock_token = _acquire_admin_simulate_lock_or_409(run_id=run.id, user_id=run.user_id)
 
     effective_tick_time = tick_time
     if effective_tick_time is None:
@@ -759,31 +847,35 @@ def admin_simulate_orders(
         else:
             effective_tick_time = datetime.utcnow()
 
-    result = simulate_orders_for_run(db, run_id=run.id, user_id=run.user_id, tick_time=effective_tick_time)
-    cancellation_logs = auto_cancel_overdue_orders_by_tick(
-        db,
-        run_id=run.id,
-        user_id=run.user_id,
-        current_tick=result["tick_time"],
-        commit=True,
-    )
-    owner_username = db.query(User.username).filter(User.id == run.user_id).scalar()
-    return AdminSimulateOrdersResponse(
-        tick_time=result["tick_time"],
-        active_buyer_count=result["active_buyer_count"],
-        candidate_product_count=result["candidate_product_count"],
-        generated_order_count=result["generated_order_count"],
-        skip_reasons=result["skip_reasons"],
-        shop_context={
-            "run_id": run.id,
-            "user_id": run.user_id,
-            "username": owner_username,
-            "market": run.market,
-            "status": run.status,
-        },
-        buyer_journeys=result.get("buyer_journeys") or [],
-        cancellation_logs=cancellation_logs,
-    )
+    try:
+        result = simulate_orders_for_run(db, run_id=run.id, user_id=run.user_id, tick_time=effective_tick_time)
+        cancellation_logs = auto_cancel_overdue_orders_by_tick(
+            db,
+            run_id=run.id,
+            user_id=run.user_id,
+            current_tick=result["tick_time"],
+            commit=True,
+        )
+        _invalidate_shopee_orders_cache_for_user(run_id=run.id, user_id=run.user_id)
+        owner_username = db.query(User.username).filter(User.id == run.user_id).scalar()
+        return AdminSimulateOrdersResponse(
+            tick_time=result["tick_time"],
+            active_buyer_count=result["active_buyer_count"],
+            candidate_product_count=result["candidate_product_count"],
+            generated_order_count=result["generated_order_count"],
+            skip_reasons=result["skip_reasons"],
+            shop_context={
+                "run_id": run.id,
+                "user_id": run.user_id,
+                "username": owner_username,
+                "market": run.market,
+                "status": run.status,
+            },
+            buyer_journeys=result.get("buyer_journeys") or [],
+            cancellation_logs=cancellation_logs,
+        )
+    finally:
+        release_distributed_lock(lock_key, lock_token)
 
 
 def _to_warehouse_strategy_response(row: WarehouseStrategy) -> WarehouseStrategyResponse:
@@ -827,6 +919,41 @@ def _get_owned_running_run_or_404(db: Session, run_id: int, user_id: int) -> Gam
     )
     if not run:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Running game not found")
+    return run
+
+
+def _get_owned_readable_run_or_404(db: Session, run_id: int, user_id: int) -> GameRun:
+    run = (
+        db.query(GameRun)
+        .filter(
+            GameRun.id == run_id,
+            GameRun.user_id == user_id,
+            GameRun.status.in_(("running", "finished")),
+        )
+        .first()
+    )
+    if not run:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Game not found")
+    return run
+
+
+def _get_owned_writable_run_or_400(db: Session, run_id: int, user_id: int) -> GameRun:
+    run = (
+        db.query(GameRun)
+        .filter(
+            GameRun.id == run_id,
+            GameRun.user_id == user_id,
+        )
+        .first()
+    )
+    if not run:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Game not found")
+    if _mark_run_finished_if_reached(db, run):
+        db.commit()
+        db.refresh(run)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=RUN_FINISHED_DETAIL)
+    if (run.status or "").strip() != "running":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Run is not running")
     return run
 
 
@@ -1061,11 +1188,73 @@ def _calc_shipment_status(shipment: LogisticsShipment, now: datetime) -> str:
     return "booked"
 
 
+def _align_compare_time(ref: datetime, val: datetime) -> datetime:
+    if ref.tzinfo is not None and val.tzinfo is None:
+        return val.replace(tzinfo=ref.tzinfo)
+    if ref.tzinfo is None and val.tzinfo is not None:
+        return val.replace(tzinfo=None)
+    return val
+
+
+def _resolve_run_end_time(run: GameRun) -> datetime | None:
+    if not run.created_at:
+        return None
+    return run.created_at + timedelta(days=max(1, int(run.duration_days or 1)))
+
+
+def _resolve_game_hour_tick_by_run(run: GameRun, now: datetime | None = None) -> datetime:
+    now = now or datetime.utcnow()
+    if not run.created_at:
+        return now
+    compare_now = _align_compare_time(run.created_at, now)
+    elapsed_seconds = max(0, int((compare_now - run.created_at).total_seconds()))
+    elapsed_game_hours = int(elapsed_seconds // REAL_SECONDS_PER_GAME_HOUR)
+    return run.created_at + timedelta(hours=elapsed_game_hours)
+
+
+def _mark_run_finished_if_reached(db: Session, run: GameRun, *, tick_time: datetime | None = None) -> bool:
+    status_value = (run.status or "").strip()
+    if status_value == "finished":
+        return True
+    if status_value != "running":
+        return False
+    run_end_time = _resolve_run_end_time(run)
+    if not run_end_time:
+        return False
+    compare_tick = tick_time or _resolve_game_hour_tick_by_run(run)
+    compare_tick = _align_compare_time(run_end_time, compare_tick)
+    if compare_tick < run_end_time:
+        return False
+    run.status = "finished"
+    return True
+
+
+def _auto_finish_expired_running_runs_for_user(db: Session, *, user_id: int, now: datetime | None = None) -> int:
+    now = now or datetime.utcnow()
+    runs = (
+        db.query(GameRun)
+        .filter(
+            GameRun.user_id == user_id,
+            GameRun.status == "running",
+        )
+        .all()
+    )
+    updated = 0
+    for run in runs:
+        tick_time = _resolve_game_hour_tick_by_run(run, now=now)
+        if _mark_run_finished_if_reached(db, run, tick_time=tick_time):
+            updated += 1
+    if updated > 0:
+        db.commit()
+    return updated
+
+
 @router.get("/runs/current", response_model=CurrentRunResponse)
 def get_current_run(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> CurrentRunResponse:
+    _auto_finish_expired_running_runs_for_user(db, user_id=int(current_user["id"]))
     run = (
         db.query(GameRun)
         .filter(
@@ -1080,6 +1269,143 @@ def get_current_run(
     return CurrentRunResponse(run=_to_run_response(run))
 
 
+@router.get("/runs/history/options", response_model=RunHistoryOptionsResponse)
+def get_history_run_options(
+    limit: int = Query(default=200, ge=1, le=500),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> RunHistoryOptionsResponse:
+    rows = (
+        db.query(GameRun)
+        .filter(
+            GameRun.user_id == current_user["id"],
+            GameRun.status == "finished",
+        )
+        .order_by(GameRun.id.desc())
+        .limit(limit)
+        .all()
+    )
+    return RunHistoryOptionsResponse(runs=[_to_run_response(row) for row in rows])
+
+
+@router.get("/runs/{run_id}/context", response_model=RunResponse)
+def get_run_context(
+    run_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> RunResponse:
+    run = _get_owned_readable_run_or_404(db, run_id=run_id, user_id=current_user["id"])
+    return _to_run_response(run)
+
+
+@router.get("/runs/{run_id}/history/summary", response_model=RunHistorySummaryResponse)
+def get_run_history_summary(
+    run_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> RunHistorySummaryResponse:
+    user_id = int(current_user["id"])
+    run = _get_owned_readable_run_or_404(db, run_id=run_id, user_id=user_id)
+    if (run.status or "").strip() != "finished":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="仅已结束对局支持历史总结查看")
+    cache_key = f"{_game_overview_cache_key(name='history_summary', run_id=run.id)}:user:{user_id}"
+    cached_payload = cache_get_json(cache_key)
+    if isinstance(cached_payload, dict):
+        return RunHistorySummaryResponse.model_validate(cached_payload)
+
+    procurement_spent_total = _calc_run_procurement_spent(db, run.id)
+    logistics_spent_total = _calc_run_logistics_spent(db, run.id)
+    warehouse_spent_total = _calc_run_warehouse_spent(db, run.id)
+    total_expense = round(float(procurement_spent_total + logistics_spent_total + warehouse_spent_total), 2)
+    total_cash = _calc_run_total_cash(db, run)
+    current_balance = _calc_run_remaining_cash(
+        db,
+        run,
+        procurement_spent_total=procurement_spent_total,
+        logistics_spent_total=logistics_spent_total,
+        warehouse_spent_total=warehouse_spent_total,
+    )
+    income_withdrawal_total = _calc_run_withdrawal_income_total(db, run.id)
+
+    procurement_order_count = db.query(ProcurementOrder).filter(ProcurementOrder.run_id == run.id).count()
+    logistics_shipment_count = db.query(LogisticsShipment).filter(LogisticsShipment.run_id == run.id).count()
+    warehouse_completed_inbound_count = (
+        db.query(WarehouseInboundOrder)
+        .filter(
+            WarehouseInboundOrder.run_id == run.id,
+            WarehouseInboundOrder.status == "completed",
+        )
+        .count()
+    )
+    inventory_total_quantity = (
+        db.query(
+            func.coalesce(
+                func.sum(
+                    func.coalesce(InventoryLot.quantity_available, 0)
+                    + func.coalesce(InventoryLot.reserved_qty, 0)
+                ),
+                0,
+            )
+        )
+        .filter(InventoryLot.run_id == run.id)
+        .scalar()
+        or 0
+    )
+    inventory_total_sku = db.query(InventoryLot.product_id).filter(InventoryLot.run_id == run.id).distinct().count()
+
+    shopee_base = db.query(ShopeeOrder).filter(
+        ShopeeOrder.run_id == run.id,
+        ShopeeOrder.user_id == run.user_id,
+    )
+    shopee_order_total_count = shopee_base.count()
+    shopee_order_toship_count = shopee_base.filter(ShopeeOrder.type_bucket == "toship").count()
+    shopee_order_shipping_count = shopee_base.filter(ShopeeOrder.type_bucket == "shipping").count()
+    shopee_order_completed_count = shopee_base.filter(ShopeeOrder.type_bucket == "completed").count()
+    shopee_order_cancelled_count = shopee_base.filter(ShopeeOrder.type_bucket == "cancelled").count()
+    shopee_order_sold_inventory_quantity = (
+        db.query(func.coalesce(func.sum(ShopeeOrderItem.quantity), 0))
+        .join(ShopeeOrder, ShopeeOrder.id == ShopeeOrderItem.order_id)
+        .filter(
+            ShopeeOrder.run_id == run.id,
+            ShopeeOrder.user_id == run.user_id,
+            ShopeeOrder.type_bucket.in_(("shipping", "completed")),
+        )
+        .scalar()
+        or 0
+    )
+    shopee_order_generation_log_count = (
+        db.query(ShopeeOrderGenerationLog)
+        .filter(
+            ShopeeOrderGenerationLog.run_id == run.id,
+            ShopeeOrderGenerationLog.user_id == run.user_id,
+        )
+        .count()
+    )
+
+    response = RunHistorySummaryResponse(
+        run=_to_run_response(run),
+        initial_cash=round(float(run.initial_cash), 2),
+        total_cash=total_cash,
+        income_withdrawal_total=income_withdrawal_total,
+        total_expense=total_expense,
+        current_balance=current_balance,
+        procurement_order_count=procurement_order_count,
+        logistics_shipment_count=logistics_shipment_count,
+        warehouse_completed_inbound_count=warehouse_completed_inbound_count,
+        inventory_total_quantity=int(inventory_total_quantity or 0),
+        inventory_total_sku=int(inventory_total_sku or 0),
+        shopee_order_total_count=shopee_order_total_count,
+        shopee_order_toship_count=shopee_order_toship_count,
+        shopee_order_shipping_count=shopee_order_shipping_count,
+        shopee_order_completed_count=shopee_order_completed_count,
+        shopee_order_cancelled_count=shopee_order_cancelled_count,
+        shopee_order_sold_inventory_quantity=int(shopee_order_sold_inventory_quantity or 0),
+        shopee_order_generation_log_count=shopee_order_generation_log_count,
+    )
+    cache_set_json(cache_key, response.model_dump(mode="json"), REDIS_CACHE_TTL_HISTORY_SUMMARY_SEC)
+    return response
+
+
 @router.post("/runs", response_model=RunResponse, status_code=status.HTTP_201_CREATED)
 def create_run(
     payload: CreateRunRequest,
@@ -1091,6 +1417,7 @@ def create_run(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid user")
     if user.role != "player":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only player can create runs")
+    _auto_finish_expired_running_runs_for_user(db, user_id=user.id)
 
     existing_running = (
         db.query(GameRun)
@@ -1155,7 +1482,7 @@ def get_procurement_cart_summary(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> ProcurementSummaryResponse:
-    run = _get_owned_running_run_or_404(db, run_id=run_id, user_id=current_user["id"])
+    run = _get_owned_readable_run_or_404(db, run_id=run_id, user_id=current_user["id"])
     spent_total = _calc_run_procurement_spent(db, run.id)
     logistics_spent_total = _calc_run_logistics_spent(db, run.id)
     warehouse_spent_total = _calc_run_warehouse_spent(db, run.id)
@@ -1192,7 +1519,7 @@ def list_run_finance_details(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> GameFinanceDetailsResponse:
-    run = _get_owned_running_run_or_404(db, run_id=run_id, user_id=current_user["id"])
+    run = _get_owned_readable_run_or_404(db, run_id=run_id, user_id=current_user["id"])
     normalized_tab = (tab or "income").strip().lower()
     if normalized_tab not in {"income", "expense"}:
         normalized_tab = "income"
@@ -1221,7 +1548,7 @@ def list_procurement_orders(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> ProcurementOrdersResponse:
-    run = _get_owned_running_run_or_404(db, run_id=run_id, user_id=current_user["id"])
+    run = _get_owned_readable_run_or_404(db, run_id=run_id, user_id=current_user["id"])
     rows = (
         db.query(ProcurementOrder)
         .options(selectinload(ProcurementOrder.items))
@@ -1258,7 +1585,7 @@ def create_procurement_order(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> ProcurementCreateOrderResponse:
-    run = _get_owned_running_run_or_404(db, run_id=run_id, user_id=current_user["id"])
+    run = _get_owned_writable_run_or_400(db, run_id=run_id, user_id=current_user["id"])
 
     quantity_map: dict[int, int] = {}
     for item in payload.items:
@@ -1345,7 +1672,7 @@ def list_logistics_shipments(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> LogisticsShipmentsResponse:
-    run = _get_owned_running_run_or_404(db, run_id=run_id, user_id=current_user["id"])
+    run = _get_owned_readable_run_or_404(db, run_id=run_id, user_id=current_user["id"])
     rows = (
         db.query(LogisticsShipment)
         .options(selectinload(LogisticsShipment.orders))
@@ -1382,7 +1709,7 @@ def create_logistics_shipment(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> LogisticsCreateShipmentResponse:
-    run = _get_owned_running_run_or_404(db, run_id=run_id, user_id=current_user["id"])
+    run = _get_owned_writable_run_or_400(db, run_id=run_id, user_id=current_user["id"])
 
     order_ids = list(dict.fromkeys(payload.order_ids))
     orders = (
@@ -1501,7 +1828,7 @@ def debug_accelerate_logistics_clearance(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> LogisticsDebugAccelerateResponse:
-    run = _get_owned_running_run_or_404(db, run_id=run_id, user_id=current_user["id"])
+    run = _get_owned_writable_run_or_400(db, run_id=run_id, user_id=current_user["id"])
     shipment = (
         db.query(LogisticsShipment)
         .filter(
@@ -1536,7 +1863,7 @@ def get_warehouse_options(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> WarehouseOptionsResponse:
-    _get_owned_running_run_or_404(db, run_id=run_id, user_id=current_user["id"])
+    _get_owned_readable_run_or_404(db, run_id=run_id, user_id=current_user["id"])
     mode_items = []
     for key, val in _warehouse_mode_options().items():
         mode_items.append(
@@ -1570,7 +1897,7 @@ def get_warehouse_landmarks(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> WarehouseLandmarksResponse:
-    run = _get_owned_running_run_or_404(db, run_id=run_id, user_id=current_user["id"])
+    run = _get_owned_readable_run_or_404(db, run_id=run_id, user_id=current_user["id"])
     points = (
         db.query(WarehouseLandmark)
         .filter(
@@ -1608,7 +1935,7 @@ def get_warehouse_inbound_candidates(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> WarehouseInboundCandidatesResponse:
-    run = _get_owned_running_run_or_404(db, run_id=run_id, user_id=current_user["id"])
+    run = _get_owned_readable_run_or_404(db, run_id=run_id, user_id=current_user["id"])
     inbounded_shipment_ids = {
         row[0]
         for row in db.query(WarehouseInboundOrder.shipment_id).filter(WarehouseInboundOrder.run_id == run.id).all()
@@ -1651,7 +1978,7 @@ def create_warehouse_strategy(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> WarehouseCreateStrategyResponse:
-    run = _get_owned_running_run_or_404(db, run_id=run_id, user_id=current_user["id"])
+    run = _get_owned_writable_run_or_400(db, run_id=run_id, user_id=current_user["id"])
     mode_options = _warehouse_mode_options()
     location_options = _warehouse_location_options()
     if payload.warehouse_mode not in mode_options:
@@ -1733,7 +2060,7 @@ def warehouse_inbound(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> WarehouseInboundResponse:
-    run = _get_owned_running_run_or_404(db, run_id=run_id, user_id=current_user["id"])
+    run = _get_owned_writable_run_or_400(db, run_id=run_id, user_id=current_user["id"])
     strategy = (
         db.query(WarehouseStrategy)
         .filter(WarehouseStrategy.run_id == run.id, WarehouseStrategy.status == "active")
@@ -1857,19 +2184,38 @@ def get_warehouse_summary(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> WarehouseSummaryResponse:
-    run = _get_owned_running_run_or_404(db, run_id=run_id, user_id=current_user["id"])
+    run = _get_owned_readable_run_or_404(db, run_id=run_id, user_id=current_user["id"])
+    cache_key = _game_overview_cache_key(name="warehouse_summary", run_id=run.id)
+    cached_payload = cache_get_json(cache_key)
+    if isinstance(cached_payload, dict):
+        return WarehouseSummaryResponse.model_validate(cached_payload)
     strategy = (
         db.query(WarehouseStrategy)
         .filter(WarehouseStrategy.run_id == run.id, WarehouseStrategy.status == "active")
         .order_by(WarehouseStrategy.id.desc())
         .first()
     )
+    if strategy is None and (run.status or "").strip() == "finished":
+        strategy = (
+            db.query(WarehouseStrategy)
+            .filter(WarehouseStrategy.run_id == run.id)
+            .order_by(WarehouseStrategy.id.desc())
+            .first()
+        )
 
     completed_count = (
         db.query(func.count(WarehouseInboundOrder.id))
         .filter(WarehouseInboundOrder.run_id == run.id, WarehouseInboundOrder.status == "completed")
         .scalar()
         or 0
+    )
+    completed_totals = (
+        db.query(
+            func.coalesce(func.sum(WarehouseInboundOrder.total_quantity), 0),
+            func.coalesce(func.sum(WarehouseInboundOrder.total_value), 0),
+        )
+        .filter(WarehouseInboundOrder.run_id == run.id, WarehouseInboundOrder.status == "completed")
+        .first()
     )
     pending_count = (
         db.query(func.count(WarehouseInboundOrder.id))
@@ -1890,13 +2236,17 @@ def get_warehouse_summary(
         or 0
     )
 
-    return WarehouseSummaryResponse(
+    response = WarehouseSummaryResponse(
         strategy=_to_warehouse_strategy_response(strategy) if strategy else None,
         pending_inbound_count=int(pending_count),
         completed_inbound_count=int(completed_count),
+        completed_inbound_total_quantity=int(completed_totals[0] or 0),
+        completed_inbound_total_value=int(completed_totals[1] or 0),
         inventory_total_quantity=int(inventory_total_quantity),
         inventory_total_sku=int(inventory_total_sku),
     )
+    cache_set_json(cache_key, response.model_dump(mode="json"), REDIS_CACHE_TTL_OVERVIEW_SEC)
+    return response
 
 
 @router.get("/runs/{run_id}/warehouse/stock-overview", response_model=WarehouseStockOverviewResponse)
@@ -1905,7 +2255,11 @@ def get_warehouse_stock_overview(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> WarehouseStockOverviewResponse:
-    run = _get_owned_running_run_or_404(db, run_id=run_id, user_id=current_user["id"])
+    run = _get_owned_readable_run_or_404(db, run_id=run_id, user_id=current_user["id"])
+    cache_key = _game_overview_cache_key(name="warehouse_stock_overview", run_id=run.id)
+    cached_payload = cache_get_json(cache_key)
+    if isinstance(cached_payload, dict):
+        return WarehouseStockOverviewResponse.model_validate(cached_payload)
 
     totals = (
         db.query(
@@ -1925,7 +2279,7 @@ def get_warehouse_stock_overview(
     inventory_sku_count = int(totals[4] or 0)
     total_stock_qty = max(0, available_stock_qty + reserved_stock_qty + locked_stock_qty)
 
-    return WarehouseStockOverviewResponse(
+    response = WarehouseStockOverviewResponse(
         inventory_sku_count=inventory_sku_count,
         total_stock_qty=total_stock_qty,
         available_stock_qty=available_stock_qty,
@@ -1933,6 +2287,8 @@ def get_warehouse_stock_overview(
         backorder_qty=backorder_qty,
         locked_stock_qty=locked_stock_qty,
     )
+    cache_set_json(cache_key, response.model_dump(mode="json"), REDIS_CACHE_TTL_OVERVIEW_SEC)
+    return response
 
 
 @router.get("/runs/{run_id}/warehouse/stock-movements", response_model=WarehouseStockMovementsResponse)
@@ -1945,7 +2301,7 @@ def get_warehouse_stock_movements(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> WarehouseStockMovementsResponse:
-    run = _get_owned_running_run_or_404(db, run_id=run_id, user_id=current_user["id"])
+    run = _get_owned_readable_run_or_404(db, run_id=run_id, user_id=current_user["id"])
 
     q = db.query(InventoryStockMovement).filter(
         InventoryStockMovement.run_id == run.id,
@@ -2005,7 +2361,11 @@ def get_warehouse_backorder_risk_overview(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> WarehouseBackorderRiskOverviewResponse:
-    run = _get_owned_running_run_or_404(db, run_id=run_id, user_id=current_user["id"])
+    run = _get_owned_readable_run_or_404(db, run_id=run_id, user_id=current_user["id"])
+    cache_key = _game_overview_cache_key(name="warehouse_backorder_risk", run_id=run.id, top_n=top_n)
+    cached_payload = cache_get_json(cache_key)
+    if isinstance(cached_payload, dict):
+        return WarehouseBackorderRiskOverviewResponse.model_validate(cached_payload)
 
     current_tick = (
         db.query(func.max(ShopeeOrderGenerationLog.tick_time))
@@ -2028,7 +2388,7 @@ def get_warehouse_backorder_risk_overview(
         .all()
     )
     if not orders:
-        return WarehouseBackorderRiskOverviewResponse(
+        response = WarehouseBackorderRiskOverviewResponse(
             current_tick=current_tick,
             affected_order_count=0,
             backorder_qty_total=0,
@@ -2037,6 +2397,8 @@ def get_warehouse_backorder_risk_overview(
             estimated_cancel_amount_total=0.0,
             top_items=[],
         )
+        cache_set_json(cache_key, response.model_dump(mode="json"), REDIS_CACHE_TTL_OVERVIEW_SEC)
+        return response
 
     listing_ids = {int(o.listing_id) for o in orders if o.listing_id is not None}
     variant_ids = {int(o.variant_id) for o in orders if o.variant_id is not None}
@@ -2119,7 +2481,7 @@ def get_warehouse_backorder_risk_overview(
         reverse=True,
     )[:top_n]
 
-    return WarehouseBackorderRiskOverviewResponse(
+    response = WarehouseBackorderRiskOverviewResponse(
         current_tick=current_tick,
         affected_order_count=affected_order_count,
         backorder_qty_total=backorder_qty_total,
@@ -2142,3 +2504,5 @@ def get_warehouse_backorder_risk_overview(
             for row in top_rows
         ],
     )
+    cache_set_json(cache_key, response.model_dump(mode="json"), REDIS_CACHE_TTL_OVERVIEW_SEC)
+    return response

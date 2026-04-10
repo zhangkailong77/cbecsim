@@ -10,6 +10,7 @@ interface NewProductViewProps {
   runId: number | null;
   editingListingId: number | null;
   onBackToProducts: () => void;
+  readOnly?: boolean;
 }
 
 interface DraftImage {
@@ -180,6 +181,8 @@ interface WholesaleTierRow {
   maxQty: string;
   unitPrice: string;
 }
+
+const HISTORY_READONLY_DETAIL = '历史对局仅支持回溯查看，不能继续经营操作。';
 
 function resolveImageUrl(raw: string): string {
   if (raw.startsWith('http://') || raw.startsWith('https://')) return raw;
@@ -775,7 +778,7 @@ function DateTimePicker({ value, onChange }: DateTimePickerProps) {
   );
 }
 
-export default function NewProductView({ runId, editingListingId, onBackToProducts }: NewProductViewProps) {
+export default function NewProductView({ runId, editingListingId, onBackToProducts, readOnly = false }: NewProductViewProps) {
   const [step, setStep] = useState<'initial' | 'detail'>('initial');
   const [title, setTitle] = useState('');
   const [categoryId, setCategoryId] = useState<number | null>(null);
@@ -1258,6 +1261,11 @@ export default function NewProductView({ runId, editingListingId, onBackToProduc
   const imageCounterText34 = useMemo(() => `(${imageFiles34.length}/${MAX_IMAGES})`, [imageFiles34.length]);
 
   const createDraft = async () => {
+    if (readOnly) {
+      setError(HISTORY_READONLY_DETAIL);
+      window.alert(HISTORY_READONLY_DETAIL);
+      return;
+    }
     if (!runId) {
       setError('当前对局不存在，无法创建商品草稿');
       return;
@@ -1315,6 +1323,9 @@ export default function NewProductView({ runId, editingListingId, onBackToProduc
   };
 
   const saveDraftFields = async () => {
+    if (readOnly) {
+      throw new Error(HISTORY_READONLY_DETAIL);
+    }
     if (!runId || !draft) return;
     const token = localStorage.getItem(ACCESS_TOKEN_KEY);
     if (!token) throw new Error('登录态已失效，请重新登录');
@@ -1344,6 +1355,11 @@ export default function NewProductView({ runId, editingListingId, onBackToProduc
   };
 
   const publishDraft = async (statusValue: 'live' | 'unpublished' | 'keep') => {
+    if (readOnly) {
+      setError(HISTORY_READONLY_DETAIL);
+      window.alert(HISTORY_READONLY_DETAIL);
+      return;
+    }
     if (!runId || !draft) {
       setError('草稿不存在，请重新创建');
       return;
@@ -1513,6 +1529,11 @@ export default function NewProductView({ runId, editingListingId, onBackToProduc
   };
 
   const appendDraftAssets = async (payload: { images11?: File[]; images34?: File[]; video?: File | null }) => {
+    if (readOnly) {
+      setError(HISTORY_READONLY_DETAIL);
+      window.alert(HISTORY_READONLY_DETAIL);
+      return;
+    }
     if (!runId || !draft) return;
     const token = localStorage.getItem(ACCESS_TOKEN_KEY);
     if (!token) {
@@ -1647,6 +1668,11 @@ export default function NewProductView({ runId, editingListingId, onBackToProduc
   }, [step]);
 
   const removeDraftImage = async (imageId: number) => {
+    if (readOnly) {
+      setError(HISTORY_READONLY_DETAIL);
+      window.alert(HISTORY_READONLY_DETAIL);
+      return;
+    }
     if (!runId || !draft) return;
     const token = localStorage.getItem(ACCESS_TOKEN_KEY);
     if (!token) {
@@ -1678,6 +1704,11 @@ export default function NewProductView({ runId, editingListingId, onBackToProduc
   };
 
   const removeDraftVideo = async () => {
+    if (readOnly) {
+      setError(HISTORY_READONLY_DETAIL);
+      window.alert(HISTORY_READONLY_DETAIL);
+      return;
+    }
     if (!runId || !draft) return;
     const token = localStorage.getItem(ACCESS_TOKEN_KEY);
     if (!token) {

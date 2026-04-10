@@ -52,6 +52,7 @@ interface ProductsResponse {
 
 interface MyProductsViewProps {
   runId: number | null;
+  readOnly?: boolean;
   onGotoNewProduct: (listingId?: number) => void;
 }
 
@@ -90,7 +91,9 @@ function resolveImageUrl(raw: string | null): string {
   return `${API_BASE_URL}${raw.startsWith('/') ? '' : '/'}${raw}`;
 }
 
-export default function MyProductsView({ runId, onGotoNewProduct }: MyProductsViewProps) {
+const HISTORY_READONLY_DETAIL = '历史对局仅支持回溯查看，不能继续经营操作。';
+
+export default function MyProductsView({ runId, readOnly = false, onGotoNewProduct }: MyProductsViewProps) {
   const [activeType, setActiveType] = useState<ProductType>(parseTypeFromPath());
   const [data, setData] = useState<ProductsResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -104,8 +107,10 @@ export default function MyProductsView({ runId, onGotoNewProduct }: MyProductsVi
   const [batchActing, setBatchActing] = useState(false);
 
   const switchType = (nextType: ProductType) => {
-    const nextPath = `${baseShopeePathFromPathname()}/product/list/${nextType}`;
-    if (window.location.pathname !== nextPath) {
+    const params = new URLSearchParams(window.location.search);
+    const nextQuery = params.toString();
+    const nextPath = `${baseShopeePathFromPathname()}/product/list/${nextType}${nextQuery ? `?${nextQuery}` : ''}`;
+    if (`${window.location.pathname}${window.location.search}` !== nextPath) {
       window.history.pushState(null, '', nextPath);
     }
     setActiveType(nextType);
@@ -147,6 +152,10 @@ export default function MyProductsView({ runId, onGotoNewProduct }: MyProductsVi
   };
 
   const runBatchAction = async (action: 'delete' | 'unpublish') => {
+    if (readOnly) {
+      window.alert(HISTORY_READONLY_DETAIL);
+      return;
+    }
     if (!runId) return;
     if (selectedProductIds.length === 0) return;
     const token = localStorage.getItem(ACCESS_TOKEN_KEY);
@@ -219,7 +228,19 @@ export default function MyProductsView({ runId, onGotoNewProduct }: MyProductsVi
             <button type="button" className="h-9 px-4 rounded border border-gray-300 text-[13px] text-gray-700 hover:bg-gray-50 inline-flex items-center gap-2">
               批量功能 <ChevronDown size={14} />
             </button>
-            <button type="button" onClick={onGotoNewProduct} className="h-9 px-5 rounded bg-[#ee4d2d] text-white text-[13px] hover:bg-[#d73211]">+ 添加新商品</button>
+            <button
+              type="button"
+              onClick={() => {
+                if (readOnly) {
+                  window.alert(HISTORY_READONLY_DETAIL);
+                  return;
+                }
+                onGotoNewProduct();
+              }}
+              className="h-9 px-5 rounded bg-[#ee4d2d] text-white text-[13px] hover:bg-[#d73211]"
+            >
+              + 添加新商品
+            </button>
           </div>
         </div>
 
@@ -376,10 +397,16 @@ export default function MyProductsView({ runId, onGotoNewProduct }: MyProductsVi
                     <div className="flex flex-col gap-2">
                       <button
                         type="button"
-                        onClick={() => onGotoNewProduct(row.id)}
+                        onClick={() => {
+                          if (readOnly) {
+                            window.alert(HISTORY_READONLY_DETAIL);
+                            return;
+                          }
+                          onGotoNewProduct(row.id);
+                        }}
                         className="text-left text-[#3478f6] hover:underline"
                       >
-                        编辑
+                        {readOnly ? '查看' : '编辑'}
                       </button>
                       <button className="text-left text-[#3478f6] hover:underline">提升</button>
                       <button className="text-left text-[#3478f6] hover:underline">更多</button>
