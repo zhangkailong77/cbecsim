@@ -1,0 +1,11 @@
+{"t":0,"agent":"a5a7712","agent_type":"unknown","event":"agent_stop","success":true}
+{"t":0,"agent":"a29b86b","agent_type":"Explore","event":"agent_start","parent_mode":"none"}
+{"t":0,"agent":"a29b86b","agent_type":"Explore","event":"agent_stop","success":true,"duration_ms":148813}
+{"t":0,"agent":"a46d6d7","agent_type":"unknown","event":"agent_stop","success":true}
+{"t":0,"agent":"ac3354a","agent_type":"executor","event":"agent_start","parent_mode":"none"}
+{"t":0,"agent":"ac3354a","agent_type":"executor","event":"agent_stop","success":true,"duration_ms":577917}
+{"t":0,"agent":"aed3312","agent_type":"code-reviewer","event":"agent_start","parent_mode":"none"}
+{"t":0,"agent":"aed3312","agent_type":"code-reviewer","event":"agent_stop","success":true,"duration_ms":243616}
+{"t":0,"agent":"ad17de5","agent_type":"qa-tester","event":"agent_start","parent_mode":"none"}
+{"t":0,"agent":"system","event":"skill_invoked","skill_name":"agent-browser"}
+{"t":0,"agent":"ad17de5","agent_type":"qa-tester","event":"agent_stop","success":true,"duration_ms":329952}

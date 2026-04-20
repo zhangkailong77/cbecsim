@@ -105,69 +105,147 @@
   },
   "hotPaths": [
     {
+      "path": "backend/apps/api-gateway/app/api/routes/game.py",
+      "accessCount": 145,
+      "lastAccessed": 1776678916320,
+      "type": "file"
+    },
+    {
+      "path": "frontend/src/modules/game-setup/GameSetupPage.tsx",
+      "accessCount": 135,
+      "lastAccessed": 1776679146538,
+      "type": "file"
+    },
+    {
+      "path": "backend/apps/api-gateway/app/api/routes/shopee.py",
+      "accessCount": 62,
+      "lastAccessed": 1776669869962,
+      "type": "file"
+    },
+    {
+      "path": "backend/apps/api-gateway/tests/test_api.py",
+      "accessCount": 59,
+      "lastAccessed": 1776670853231,
+      "type": "file"
+    },
+    {
+      "path": "frontend/src/modules/admin/AdminBuyerPoolPage.tsx",
+      "accessCount": 34,
+      "lastAccessed": 1776678194997,
+      "type": "file"
+    },
+    {
+      "path": "docs/当前进度.md",
+      "accessCount": 32,
+      "lastAccessed": 1776678770404,
+      "type": "file"
+    },
+    {
+      "path": "frontend/src/modules/admin/AdminRunManagementPage.tsx",
+      "accessCount": 29,
+      "lastAccessed": 1776675003644,
+      "type": "file"
+    },
+    {
+      "path": "frontend/src/App.tsx",
+      "accessCount": 25,
+      "lastAccessed": 1776674660348,
+      "type": "file"
+    },
+    {
+      "path": "backend/apps/api-gateway/app/services/auto_order_tick_worker.py",
+      "accessCount": 23,
+      "lastAccessed": 1776670268287,
+      "type": "file"
+    },
+    {
+      "path": "backend/apps/api-gateway/app/db.py",
+      "accessCount": 15,
+      "lastAccessed": 1776667791996,
+      "type": "file"
+    },
+    {
+      "path": "frontend/src",
+      "accessCount": 15,
+      "lastAccessed": 1776678203007,
+      "type": "directory"
+    },
+    {
+      "path": "backend/apps/api-gateway/app",
+      "accessCount": 14,
+      "lastAccessed": 1776678351282,
+      "type": "directory"
+    },
+    {
+      "path": "",
+      "accessCount": 13,
+      "lastAccessed": 1776678645526,
+      "type": "directory"
+    },
+    {
+      "path": "backend/apps/api-gateway/app/models.py",
+      "accessCount": 12,
+      "lastAccessed": 1776667792050,
+      "type": "file"
+    },
+    {
       "path": "docs/admin/ad01-文档标题.md",
       "accessCount": 9,
       "lastAccessed": 1776654310035,
       "type": "file"
     },
     {
-      "path": "",
-      "accessCount": 5,
-      "lastAccessed": 1776653025489,
-      "type": "directory"
-    },
-    {
-      "path": "backend/apps/api-gateway/app/api/routes/game.py",
-      "accessCount": 4,
-      "lastAccessed": 1776653285811,
+      "path": "docs/admin/ad01-对局管理与运行中对局延长设计.md",
+      "accessCount": 7,
+      "lastAccessed": 1776678651206,
       "type": "file"
     },
     {
-      "path": "frontend/src/modules/game-setup/GameSetupPage.tsx",
-      "accessCount": 4,
-      "lastAccessed": 1776653725432,
+      "path": "docs/admin/ad02-已结束对局续期与追加游戏年限设计.md",
+      "accessCount": 7,
+      "lastAccessed": 1776678658064,
       "type": "file"
     },
     {
       "path": "backend",
-      "accessCount": 2,
-      "lastAccessed": 1776653266380,
+      "accessCount": 4,
+      "lastAccessed": 1776674426817,
       "type": "directory"
     },
     {
-      "path": "backend/apps/api-gateway/app/models.py",
-      "accessCount": 2,
-      "lastAccessed": 1776653273937,
+      "path": "frontend/package.json",
+      "accessCount": 3,
+      "lastAccessed": 1776674932981,
       "type": "file"
-    },
-    {
-      "path": "frontend/src",
-      "accessCount": 2,
-      "lastAccessed": 1776653714010,
-      "type": "directory"
     },
     {
       "path": "cbec_sim.sql",
-      "accessCount": 1,
-      "lastAccessed": 1776651014624,
+      "accessCount": 2,
+      "lastAccessed": 1776657315623,
       "type": "file"
+    },
+    {
+      "path": "docs/设计文档/16-7天对局结束与Shopee订单封盘设计.md",
+      "accessCount": 2,
+      "lastAccessed": 1776663230642,
+      "type": "file"
+    },
+    {
+      "path": "backend/apps/api-gateway",
+      "accessCount": 2,
+      "lastAccessed": 1776664592707,
+      "type": "directory"
+    },
+    {
+      "path": "frontend/src/modules",
+      "accessCount": 2,
+      "lastAccessed": 1776673459074,
+      "type": "directory"
     },
     {
       "path": "backend/.env",
       "accessCount": 1,
       "lastAccessed": 1776651303143,
-      "type": "file"
-    },
-    {
-      "path": "backend/apps/api-gateway/app",
-      "accessCount": 1,
-      "lastAccessed": 1776652093037,
-      "type": "directory"
-    },
-    {
-      "path": "docs/设计文档/16-7天对局结束与Shopee订单封盘设计.md",
-      "accessCount": 1,
-      "lastAccessed": 1776653035106,
       "type": "file"
     },
     {
@@ -177,9 +255,45 @@
       "type": "file"
     },
     {
-      "path": "backend/apps/api-gateway/app/db.py",
+      "path": "start-dev.sh",
       "accessCount": 1,
-      "lastAccessed": 1776653290036,
+      "lastAccessed": 1776662498340,
+      "type": "file"
+    },
+    {
+      "path": "docs/admin",
+      "accessCount": 1,
+      "lastAccessed": 1776663071037,
+      "type": "directory"
+    },
+    {
+      "path": "backend/apps/api-gateway/app/services",
+      "accessCount": 1,
+      "lastAccessed": 1776664592652,
+      "type": "directory"
+    },
+    {
+      "path": "backend/apps/api-gateway/tests",
+      "accessCount": 1,
+      "lastAccessed": 1776667490500,
+      "type": "directory"
+    },
+    {
+      "path": "backend/apps/api-gateway/app/api/routes",
+      "accessCount": 1,
+      "lastAccessed": 1776673391880,
+      "type": "directory"
+    },
+    {
+      "path": "frontend",
+      "accessCount": 1,
+      "lastAccessed": 1776674978668,
+      "type": "directory"
+    },
+    {
+      "path": "docs/admin/ad03-管理员已结束对局统一倒计时冻结设计.md",
+      "accessCount": 1,
+      "lastAccessed": 1776678734270,
       "type": "file"
     }
   ],

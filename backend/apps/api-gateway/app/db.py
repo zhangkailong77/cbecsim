@@ -925,11 +925,40 @@ def _cleanup_game_runs_legacy_columns():
     if "game_runs" not in inspector.get_table_names():
         return
 
+    existing_columns = {col["name"] for col in inspector.get_columns("game_runs")}
+    add_sql = []
+    if "base_real_duration_days" not in existing_columns:
+        add_sql.append("ALTER TABLE game_runs ADD COLUMN base_real_duration_days INTEGER NULL")
+    if "base_game_days" not in existing_columns:
+        add_sql.append("ALTER TABLE game_runs ADD COLUMN base_game_days INTEGER NULL")
+    if "total_game_days" not in existing_columns:
+        add_sql.append("ALTER TABLE game_runs ADD COLUMN total_game_days INTEGER NULL")
+    if "manual_end_time" not in existing_columns:
+        add_sql.append("ALTER TABLE game_runs ADD COLUMN manual_end_time DATETIME NULL")
+
+    with engine.begin() as conn:
+        for sql in add_sql:
+            conn.execute(text(sql))
+        conn.execute(
+            text(
+                "UPDATE game_runs SET "
+                "base_real_duration_days = COALESCE(base_real_duration_days, NULLIF(duration_days, 0), 365), "
+                "base_game_days = COALESCE(base_game_days, 365), "
+                "total_game_days = COALESCE(total_game_days, "
+                "ROUND(COALESCE(NULLIF(duration_days, 0), 365) / "
+                "COALESCE(NULLIF(base_real_duration_days, 0), NULLIF(duration_days, 0), 365) * "
+                "COALESCE(NULLIF(base_game_days, 0), 365)), "
+                "365), "
+                "day_index = COALESCE(day_index, 1)"
+            )
+        )
+
     # sqlite does not support DROP COLUMN in older compatibility paths used by tests;
     # legacy columns are safely ignored there.
     if DATABASE_URL.startswith("sqlite"):
         return
 
+    inspector = inspect(engine)
     existing_columns = {col["name"] for col in inspector.get_columns("game_runs")}
     drop_sql = []
     if "procurement_budget" in existing_columns:
@@ -1431,8 +1460,12 @@ def _ensure_column_comments():
             "user_id": "用户ID",
             "initial_cash": "初始资金",
             "market": "目标市场",
-            "duration_days": "模拟总天数",
-            "day_index": "当前天数",
+            "duration_days": "兼容展示的真实运行天数",
+            "base_real_duration_days": "初始真实运行天数快照",
+            "base_game_days": "初始游戏天数快照",
+            "total_game_days": "当前总游戏天数",
+            "manual_end_time": "管理员手动指定的有效结束时间",
+            "day_index": "当前游戏日快照",
             "status": "对局状态",
             "created_at": "创建时间",
         },

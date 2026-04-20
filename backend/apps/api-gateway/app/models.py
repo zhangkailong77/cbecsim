@@ -73,6 +73,10 @@ class GameRun(Base):
     initial_cash: Mapped[int] = mapped_column(Integer, nullable=False)
     market: Mapped[str] = mapped_column(String(16), nullable=False, default="MY")
     duration_days: Mapped[int] = mapped_column(Integer, nullable=False, default=365)
+    base_real_duration_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    base_game_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    total_game_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    manual_end_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     day_index: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="running")
     created_at: Mapped[datetime] = mapped_column(

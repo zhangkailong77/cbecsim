@@ -42,8 +42,10 @@ from app.services.inventory_lot_sync import reserve_inventory_lots
 router = APIRouter(prefix="/game", tags=["game"])
 REAL_SECONDS_PER_GAME_DAY = 30 * 60
 REAL_SECONDS_PER_GAME_HOUR = REAL_SECONDS_PER_GAME_DAY / 24
+DEFAULT_TOTAL_GAME_DAYS = 365
 BOOKED_SECONDS = 10
 RUN_FINISHED_DETAIL = "当前对局已结束，无法继续订单演化操作"
+RUN_EXTEND_FINISHED_DETAIL = "当前对局已结束，无法继续延长"
 STOCK_MOVEMENT_LABELS = {
     "purchase_in": "采购入库",
     "order_reserve": "订单占用",
@@ -69,6 +71,12 @@ def _game_overview_cache_key(*, name: str, run_id: int | None = None, top_n: int
     if top_n is not None:
         suffix = f":top_n:{int(top_n)}"
     return f"{REDIS_PREFIX}:cache:game:{name}:run:{rid}{suffix}"
+
+
+def _invalidate_admin_run_related_cache(*, run_id: int, user_id: int) -> None:
+    cache_delete_prefix(_game_overview_cache_key(name="buyer_pool_overview", run_id=run_id))
+    cache_delete_prefix(_game_overview_cache_key(name="buyer_pool_overview", run_id=None))
+    cache_delete_prefix(f"{_game_overview_cache_key(name='history_summary', run_id=run_id)}:user:{user_id}")
 
 
 def _enforce_admin_simulate_rate_limit(*, admin_user_id: int) -> None:
@@ -297,6 +305,11 @@ class RunResponse(BaseModel):
     initial_cash: int
     market: str
     duration_days: int
+    base_real_duration_days: int
+    base_game_days: int
+    total_game_days: int
+    manual_end_time: datetime | None
+    effective_end_time: datetime | None
     day_index: int
     status: str
     created_at: datetime
@@ -600,7 +613,13 @@ class AdminBuyerPoolOverviewResponse(BaseModel):
     selected_run_market: str | None
     selected_run_username: str | None
     selected_run_day_index: int | None
+    selected_run_duration_days: int | None
+    selected_run_base_real_duration_days: int | None
+    selected_run_base_game_days: int | None
+    selected_run_total_game_days: int | None
     selected_run_created_at: datetime | None
+    selected_run_manual_end_time: datetime | None
+    selected_run_end_time: datetime | None
     server_time: datetime
     game_clock: str
     game_hour: int
@@ -618,11 +637,85 @@ class AdminRunOptionResponse(BaseModel):
     status: str
     market: str
     day_index: int
+    duration_days: int
+    base_real_duration_days: int
+    base_game_days: int
+    total_game_days: int
     created_at: datetime
+    manual_end_time: datetime | None
+    end_time: datetime
 
 
 class AdminRunOptionsResponse(BaseModel):
     runs: list[AdminRunOptionResponse]
+
+
+class AdminActiveRunItemResponse(BaseModel):
+    run_id: int
+    user_id: int
+    username: str
+    status: str
+    market: str
+    duration_days: int
+    base_real_duration_days: int
+    base_game_days: int
+    total_game_days: int
+    current_day_index: int
+    created_at: datetime
+    manual_end_time: datetime | None
+    end_time: datetime
+    remaining_seconds: int
+
+
+class AdminActiveRunsResponse(BaseModel):
+    runs: list[AdminActiveRunItemResponse]
+
+
+class AdminExtendRunRequest(BaseModel):
+    extend_days: int = Field(ge=1, le=3650)
+
+
+class AdminExtendRunResponse(BaseModel):
+    run_id: int
+    user_id: int
+    username: str
+    status: str
+    market: str
+    old_duration_days: int
+    new_duration_days: int
+    base_real_duration_days: int
+    base_game_days: int
+    total_game_days: int
+    current_day_index: int
+    created_at: datetime
+    manual_end_time: datetime | None
+    new_end_time: datetime
+    remaining_seconds: int
+
+
+class AdminRenewRunRequest(BaseModel):
+    extend_days: int = Field(ge=1, le=3650)
+
+
+class AdminRenewRunResponse(BaseModel):
+    run_id: int
+    user_id: int
+    username: str
+    old_status: str
+    new_status: str
+    market: str
+    old_duration_days: int
+    new_duration_days: int
+    old_total_game_days: int
+    new_total_game_days: int
+    base_real_duration_days: int
+    base_game_days: int
+    current_day_index: int
+    created_at: datetime
+    old_end_time: datetime
+    new_end_time: datetime
+    manual_end_time: datetime | None
+    remaining_seconds: int
 
 
 class AdminSimulateOrdersResponse(BaseModel):
@@ -674,6 +767,109 @@ def _parse_str_list(raw_json: str) -> list[str]:
     return result
 
 
+def _resolve_run_base_real_duration_days(run: GameRun) -> int:
+    return max(1, int(run.base_real_duration_days or run.duration_days or 1))
+
+
+def _resolve_run_base_game_days(run: GameRun) -> int:
+    return max(1, int(run.base_game_days or DEFAULT_TOTAL_GAME_DAYS))
+
+
+def _resolve_run_total_game_days(run: GameRun) -> int:
+    if run.total_game_days is not None and int(run.total_game_days or 0) > 0:
+        return int(run.total_game_days)
+    base_real_duration_days = _resolve_run_base_real_duration_days(run)
+    duration_days = max(1, int(run.duration_days or base_real_duration_days))
+    base_game_days = _resolve_run_base_game_days(run)
+    return max(1, int(round(duration_days / base_real_duration_days * base_game_days)))
+
+
+def _resolve_run_duration_days_by_end_time(run: GameRun, end_time: datetime) -> int:
+    if not run.created_at:
+        return max(1, int(run.duration_days or 1))
+    compare_end_time = _align_compare_time(run.created_at, end_time)
+    total_seconds = max(1, int((compare_end_time - run.created_at).total_seconds()))
+    return max(1, int((total_seconds + 86400 - 1) // 86400))
+
+
+def _resolve_run_total_game_days_by_end_time(run: GameRun, end_time: datetime) -> int:
+    if not run.created_at:
+        return _resolve_run_total_game_days(run)
+    compare_end_time = _align_compare_time(run.created_at, end_time)
+    total_seconds = max(1, int((compare_end_time - run.created_at).total_seconds()))
+    base_real_seconds = _resolve_run_base_real_duration_days(run) * 24 * 60 * 60
+    old_end_time = _resolve_run_end_time(run)
+    old_total_game_days = _resolve_run_total_game_days(run)
+    computed_total_game_days = max(1, int(round(total_seconds / base_real_seconds * _resolve_run_base_game_days(run))))
+    if old_end_time is not None and compare_end_time > _align_compare_time(run.created_at, old_end_time):
+        return max(old_total_game_days + 1, computed_total_game_days)
+    return computed_total_game_days
+
+
+def _resolve_run_effective_duration_seconds(run: GameRun) -> int:
+    if not run.created_at:
+        return max(1, int(run.duration_days or 1)) * 24 * 60 * 60
+    run_end_time = _resolve_run_end_time(run)
+    if not run_end_time:
+        return max(1, int(run.duration_days or 1)) * 24 * 60 * 60
+    return max(1, int((_align_compare_time(run.created_at, run_end_time) - run.created_at).total_seconds()))
+
+
+def _resolve_run_elapsed_seconds(run: GameRun, *, now: datetime | None = None) -> int:
+    if not run.created_at:
+        return 0
+    now = now or datetime.utcnow()
+    compare_now = _align_compare_time(run.created_at, now)
+    run_end_time = _resolve_run_end_time(run)
+    if run_end_time is not None:
+        compare_now = min(compare_now, _align_compare_time(run.created_at, run_end_time))
+    return max(0, int((compare_now - run.created_at).total_seconds()))
+
+
+def _resolve_game_day_float_by_run(run: GameRun, *, now: datetime | None = None) -> float:
+    total_real_seconds = _resolve_run_effective_duration_seconds(run)
+    elapsed_seconds = _resolve_run_elapsed_seconds(run, now=now)
+    total_game_days = _resolve_run_total_game_days(run)
+    return (elapsed_seconds / total_real_seconds) * total_game_days + 1
+
+
+def _resolve_game_day_index_by_run(run: GameRun, *, now: datetime | None = None) -> int:
+    total_game_days = _resolve_run_total_game_days(run)
+    game_day_float = _resolve_game_day_float_by_run(run, now=now)
+    return min(total_game_days, max(1, int(game_day_float)))
+
+
+def _resolve_game_clock_info_by_run(run: GameRun, *, now: datetime | None = None) -> tuple[str, int, int]:
+    game_day_float = _resolve_game_day_float_by_run(run, now=now)
+    frac = max(0.0, game_day_float - int(game_day_float))
+    seconds_of_day = max(0, int(frac * 24 * 60 * 60))
+    game_hour = (seconds_of_day // 3600) % 24
+    game_minute = (seconds_of_day % 3600) // 60
+    game_clock = f"{game_hour:02d}:{game_minute:02d}:{seconds_of_day % 60:02d}"
+    return game_clock, game_hour, game_minute
+
+
+def _resolve_run_remaining_seconds(run: GameRun, *, now: datetime | None = None) -> int:
+    run_end_time = _resolve_run_end_time(run)
+    if not run_end_time:
+        return 0
+    now = now or datetime.utcnow()
+    compare_now = _align_compare_time(run_end_time, now)
+    return max(0, int((run_end_time - compare_now).total_seconds()))
+
+
+def _auto_finish_expired_running_runs(db: Session, *, now: datetime | None = None) -> int:
+    now = now or datetime.utcnow()
+    runs = db.query(GameRun).filter(GameRun.status == "running").all()
+    updated = 0
+    for run in runs:
+        if _persist_run_finished_if_reached(db, run, tick_time=now):
+            updated += 1
+    if updated > 0:
+        db.commit()
+    return updated
+
+
 @router.get("/admin/buyer-pool/overview", response_model=AdminBuyerPoolOverviewResponse)
 def get_admin_buyer_pool_overview(
     run_id: int | None = Query(default=None),
@@ -688,6 +884,12 @@ def get_admin_buyer_pool_overview(
     selected_run: GameRun | None = None
     selected_run_username: str | None = None
     selected_run_day_index: int | None = None
+    selected_run_duration_days: int | None = None
+    selected_run_base_real_duration_days: int | None = None
+    selected_run_base_game_days: int | None = None
+    selected_run_total_game_days: int | None = None
+    selected_run_manual_end_time: datetime | None = None
+    selected_run_end_time: datetime | None = None
     if run_id is not None:
         selected_run = db.query(GameRun).filter(GameRun.id == run_id).first()
         if not selected_run:
@@ -698,22 +900,23 @@ def get_admin_buyer_pool_overview(
         selected_run_username = (
             db.query(User.username).filter(User.id == selected_run.user_id).scalar()
         )
+        selected_run_day_index = _resolve_game_day_index_by_run(selected_run)
+        selected_run_duration_days = int(selected_run.duration_days or 0)
+        selected_run_base_real_duration_days = _resolve_run_base_real_duration_days(selected_run)
+        selected_run_base_game_days = max(1, int(selected_run.base_game_days or DEFAULT_TOTAL_GAME_DAYS))
+        selected_run_total_game_days = _resolve_run_total_game_days(selected_run)
+        selected_run_manual_end_time = selected_run.manual_end_time
+        selected_run_end_time = _resolve_run_end_time(selected_run)
 
     server_now = datetime.now()
     if selected_run:
-        run_created = selected_run.created_at
-        elapsed_seconds = max(0, int((server_now - run_created).total_seconds()))
-        total_real_seconds = 7 * 24 * 60 * 60
-        game_day_float = (elapsed_seconds / total_real_seconds) * 365 + 1
-        selected_run_day_index = min(365, max(1, int(game_day_float)))
-        frac = game_day_float - int(game_day_float)
-        seconds_of_day = max(0, int(frac * 24 * 60 * 60))
+        game_clock, game_hour, game_minute = _resolve_game_clock_info_by_run(selected_run)
     else:
         seconds_of_day = server_now.hour * 3600 + server_now.minute * 60 + server_now.second
-    game_minutes = seconds_of_day % (24 * 60)
-    game_hour = game_minutes // 60
-    game_minute = game_minutes % 60
-    game_clock = f"{game_hour:02d}:{game_minute:02d}:{seconds_of_day % 60:02d}"
+        game_minutes = seconds_of_day % (24 * 60)
+        game_hour = game_minutes // 60
+        game_minute = game_minutes % 60
+        game_clock = f"{game_hour:02d}:{game_minute:02d}:{seconds_of_day % 60:02d}"
 
     rows = (
         db.query(SimBuyerProfile)
@@ -765,7 +968,13 @@ def get_admin_buyer_pool_overview(
         selected_run_market=selected_run.market if selected_run else None,
         selected_run_username=selected_run_username,
         selected_run_day_index=selected_run_day_index if selected_run else None,
+        selected_run_duration_days=selected_run_duration_days,
+        selected_run_base_real_duration_days=selected_run_base_real_duration_days,
+        selected_run_base_game_days=selected_run_base_game_days,
+        selected_run_total_game_days=selected_run_total_game_days,
         selected_run_created_at=selected_run.created_at if selected_run else None,
+        selected_run_manual_end_time=selected_run_manual_end_time,
+        selected_run_end_time=selected_run_end_time,
         server_time=server_now,
         game_clock=game_clock,
         game_hour=game_hour,
@@ -804,12 +1013,174 @@ def get_admin_run_options(
             username=username,
             status=run.status,
             market=run.market,
-            day_index=run.day_index,
+            day_index=_resolve_game_day_index_by_run(run),
+            duration_days=run.duration_days,
+            base_real_duration_days=_resolve_run_base_real_duration_days(run),
+            base_game_days=max(1, int(run.base_game_days or DEFAULT_TOTAL_GAME_DAYS)),
+            total_game_days=_resolve_run_total_game_days(run),
             created_at=run.created_at,
+            manual_end_time=run.manual_end_time,
+            end_time=_resolve_run_end_time(run),
         )
         for run, username in rows
     ]
     return AdminRunOptionsResponse(runs=runs)
+
+
+@router.get("/admin/runs/active", response_model=AdminActiveRunsResponse)
+def get_admin_active_runs(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> AdminActiveRunsResponse:
+    _require_super_admin_or_403(current_user)
+    _auto_finish_expired_running_runs(db)
+
+    rows = (
+        db.query(GameRun, User.username)
+        .join(User, User.id == GameRun.user_id)
+        .filter(GameRun.status == "running")
+        .order_by(GameRun.id.desc())
+        .all()
+    )
+    runs = [
+        AdminActiveRunItemResponse(
+            run_id=run.id,
+            user_id=run.user_id,
+            username=username,
+            status=run.status,
+            market=run.market,
+            duration_days=run.duration_days,
+            base_real_duration_days=_resolve_run_base_real_duration_days(run),
+            base_game_days=max(1, int(run.base_game_days or DEFAULT_TOTAL_GAME_DAYS)),
+            total_game_days=_resolve_run_total_game_days(run),
+            current_day_index=_resolve_game_day_index_by_run(run),
+            created_at=run.created_at,
+            manual_end_time=run.manual_end_time,
+            end_time=_resolve_run_end_time(run),
+            remaining_seconds=_resolve_run_remaining_seconds(run),
+        )
+        for run, username in rows
+    ]
+    return AdminActiveRunsResponse(runs=runs)
+
+
+@router.post("/admin/runs/{run_id}/extend", response_model=AdminExtendRunResponse)
+def admin_extend_run(
+    run_id: int,
+    payload: AdminExtendRunRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> AdminExtendRunResponse:
+    _require_super_admin_or_403(current_user)
+
+    run = db.query(GameRun).filter(GameRun.id == run_id).first()
+    if not run:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
+    if _persist_run_finished_if_reached(db, run):
+        db.commit()
+        db.refresh(run)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=RUN_EXTEND_FINISHED_DETAIL)
+    if (run.status or "").strip() != "running":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Run is not running")
+
+    safe_extend_days = int(payload.extend_days)
+    old_duration_days = int(run.duration_days or 0)
+    old_end_time = _resolve_run_end_time(run)
+    run.duration_days = old_duration_days + safe_extend_days
+    if run.manual_end_time is not None and old_end_time is not None:
+        run.manual_end_time = old_end_time + timedelta(days=safe_extend_days)
+    db.commit()
+    db.refresh(run)
+    _invalidate_admin_run_related_cache(run_id=run.id, user_id=run.user_id)
+
+    owner_username = db.query(User.username).filter(User.id == run.user_id).scalar()
+    return AdminExtendRunResponse(
+        run_id=run.id,
+        user_id=run.user_id,
+        username=owner_username or "",
+        status=run.status,
+        market=run.market,
+        old_duration_days=old_duration_days,
+        new_duration_days=run.duration_days,
+        base_real_duration_days=_resolve_run_base_real_duration_days(run),
+        base_game_days=max(1, int(run.base_game_days or DEFAULT_TOTAL_GAME_DAYS)),
+        total_game_days=_resolve_run_total_game_days(run),
+        current_day_index=_resolve_game_day_index_by_run(run),
+        created_at=run.created_at,
+        manual_end_time=run.manual_end_time,
+        new_end_time=_resolve_run_end_time(run),
+        remaining_seconds=_resolve_run_remaining_seconds(run),
+    )
+
+
+@router.post("/admin/runs/{run_id}/renew", response_model=AdminRenewRunResponse)
+def admin_renew_run(
+    run_id: int,
+    payload: AdminRenewRunRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> AdminRenewRunResponse:
+    _require_super_admin_or_403(current_user)
+
+    run = db.query(GameRun).filter(GameRun.id == run_id).first()
+    if not run:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
+    if (run.status or "").strip() != "finished":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="仅已结束对局支持续期恢复")
+
+    existing_running = (
+        db.query(GameRun)
+        .filter(
+            GameRun.user_id == run.user_id,
+            GameRun.status == "running",
+            GameRun.id != run.id,
+        )
+        .first()
+    )
+    if existing_running:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="该玩家已有其他运行中对局，无法恢复旧对局")
+
+    safe_extend_days = int(payload.extend_days)
+    old_status = (run.status or "").strip()
+    old_duration_days = int(run.duration_days or 0)
+    old_total_game_days = _resolve_run_total_game_days(run)
+    old_end_time = _resolve_run_end_time(run)
+    if old_end_time is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="当前对局缺少有效结束时间，无法续期恢复")
+
+    new_end_time = old_end_time + timedelta(days=safe_extend_days)
+    now = datetime.utcnow()
+    if _align_compare_time(new_end_time, now) >= new_end_time:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="续期后的结束时间必须晚于当前时间")
+    run.status = "running"
+    run.duration_days = _resolve_run_duration_days_by_end_time(run, new_end_time)
+    run.manual_end_time = new_end_time
+    run.total_game_days = _resolve_run_total_game_days_by_end_time(run, new_end_time)
+    db.commit()
+    db.refresh(run)
+    _invalidate_admin_run_related_cache(run_id=run.id, user_id=run.user_id)
+
+    owner_username = db.query(User.username).filter(User.id == run.user_id).scalar()
+    return AdminRenewRunResponse(
+        run_id=run.id,
+        user_id=run.user_id,
+        username=owner_username or "",
+        old_status=old_status,
+        new_status=run.status,
+        market=run.market,
+        old_duration_days=old_duration_days,
+        new_duration_days=int(run.duration_days or 0),
+        old_total_game_days=old_total_game_days,
+        new_total_game_days=_resolve_run_total_game_days(run),
+        base_real_duration_days=_resolve_run_base_real_duration_days(run),
+        base_game_days=_resolve_run_base_game_days(run),
+        current_day_index=_resolve_game_day_index_by_run(run),
+        created_at=run.created_at,
+        old_end_time=old_end_time,
+        new_end_time=_resolve_run_end_time(run) or new_end_time,
+        manual_end_time=run.manual_end_time,
+        remaining_seconds=_resolve_run_remaining_seconds(run),
+    )
 
 
 @router.post("/admin/runs/{run_id}/orders/simulate", response_model=AdminSimulateOrdersResponse)
@@ -824,7 +1195,7 @@ def admin_simulate_orders(
     run = db.query(GameRun).filter(GameRun.id == run_id).first()
     if not run:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
-    if _mark_run_finished_if_reached(db, run):
+    if _persist_run_finished_if_reached(db, run):
         db.commit()
         db.refresh(run)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=RUN_FINISHED_DETAIL)
@@ -901,7 +1272,12 @@ def _to_run_response(run: GameRun) -> RunResponse:
         initial_cash=run.initial_cash,
         market=run.market,
         duration_days=run.duration_days,
-        day_index=run.day_index,
+        base_real_duration_days=_resolve_run_base_real_duration_days(run),
+        base_game_days=max(1, int(run.base_game_days or DEFAULT_TOTAL_GAME_DAYS)),
+        total_game_days=_resolve_run_total_game_days(run),
+        manual_end_time=run.manual_end_time,
+        effective_end_time=_resolve_run_end_time(run),
+        day_index=_resolve_game_day_index_by_run(run),
         status=run.status,
         created_at=run.created_at,
     )
@@ -948,7 +1324,7 @@ def _get_owned_writable_run_or_400(db: Session, run_id: int, user_id: int) -> Ga
     )
     if not run:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Game not found")
-    if _mark_run_finished_if_reached(db, run):
+    if _persist_run_finished_if_reached(db, run):
         db.commit()
         db.refresh(run)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=RUN_FINISHED_DETAIL)
@@ -1199,6 +1575,8 @@ def _align_compare_time(ref: datetime, val: datetime) -> datetime:
 def _resolve_run_end_time(run: GameRun) -> datetime | None:
     if not run.created_at:
         return None
+    if run.manual_end_time is not None:
+        return _align_compare_time(run.created_at, run.manual_end_time)
     return run.created_at + timedelta(days=max(1, int(run.duration_days or 1)))
 
 
@@ -1209,7 +1587,12 @@ def _resolve_game_hour_tick_by_run(run: GameRun, now: datetime | None = None) ->
     compare_now = _align_compare_time(run.created_at, now)
     elapsed_seconds = max(0, int((compare_now - run.created_at).total_seconds()))
     elapsed_game_hours = int(elapsed_seconds // REAL_SECONDS_PER_GAME_HOUR)
-    return run.created_at + timedelta(hours=elapsed_game_hours)
+    tick_time = run.created_at + timedelta(hours=elapsed_game_hours)
+    run_end_time = _resolve_run_end_time(run)
+    if not run_end_time:
+        return tick_time
+    compare_tick = _align_compare_time(run_end_time, tick_time)
+    return min(compare_tick, run_end_time)
 
 
 def _mark_run_finished_if_reached(db: Session, run: GameRun, *, tick_time: datetime | None = None) -> bool:
@@ -1221,11 +1604,22 @@ def _mark_run_finished_if_reached(db: Session, run: GameRun, *, tick_time: datet
     run_end_time = _resolve_run_end_time(run)
     if not run_end_time:
         return False
-    compare_tick = tick_time or _resolve_game_hour_tick_by_run(run)
-    compare_tick = _align_compare_time(run_end_time, compare_tick)
-    if compare_tick < run_end_time:
+    compare_time = tick_time or datetime.utcnow()
+    compare_time = _align_compare_time(run_end_time, compare_time)
+    if compare_time < run_end_time:
         return False
     run.status = "finished"
+    return True
+
+
+def _persist_run_finished_if_reached(db: Session, run: GameRun, *, tick_time: datetime | None = None) -> bool:
+    old_status = (run.status or "").strip()
+    reached = _mark_run_finished_if_reached(db, run, tick_time=tick_time)
+    if not reached:
+        return False
+    if old_status != "finished" and (run.status or "").strip() == "finished":
+        db.commit()
+        db.refresh(run)
     return True
 
 
@@ -1241,8 +1635,7 @@ def _auto_finish_expired_running_runs_for_user(db: Session, *, user_id: int, now
     )
     updated = 0
     for run in runs:
-        tick_time = _resolve_game_hour_tick_by_run(run, now=now)
-        if _mark_run_finished_if_reached(db, run, tick_time=tick_time):
+        if _persist_run_finished_if_reached(db, run, tick_time=now):
             updated += 1
     if updated > 0:
         db.commit()
@@ -1311,7 +1704,9 @@ def get_run_history_summary(
     cache_key = f"{_game_overview_cache_key(name='history_summary', run_id=run.id)}:user:{user_id}"
     cached_payload = cache_get_json(cache_key)
     if isinstance(cached_payload, dict):
-        return RunHistorySummaryResponse.model_validate(cached_payload)
+        normalized_cached_payload = dict(cached_payload)
+        normalized_cached_payload["run"] = _to_run_response(run).model_dump(mode="json")
+        return RunHistorySummaryResponse.model_validate(normalized_cached_payload)
 
     procurement_spent_total = _calc_run_procurement_spent(db, run.id)
     logistics_spent_total = _calc_run_logistics_spent(db, run.id)
@@ -1433,11 +1828,15 @@ def create_run(
             detail="A running game already exists",
         )
 
+    normalized_duration_days = int(payload.duration_days)
     run = GameRun(
         user_id=user.id,
         initial_cash=payload.initial_cash,
         market=payload.market.strip().upper(),
-        duration_days=payload.duration_days,
+        duration_days=normalized_duration_days,
+        base_real_duration_days=normalized_duration_days,
+        base_game_days=DEFAULT_TOTAL_GAME_DAYS,
+        total_game_days=DEFAULT_TOTAL_GAME_DAYS,
         day_index=1,
         status="running",
     )

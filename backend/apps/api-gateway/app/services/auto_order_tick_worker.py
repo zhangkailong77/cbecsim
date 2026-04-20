@@ -12,13 +12,11 @@ from sqlalchemy.orm import Session
 from app.core.distributed_lock import acquire_distributed_lock, release_distributed_lock
 from app.db import SessionLocal
 from app.models import GameRun, ShopeeOrderGenerationLog
+from app.api.routes.game import _align_compare_time, _persist_run_finished_if_reached, _resolve_game_hour_tick_by_run, _resolve_run_end_time
 from app.services.shopee_order_cancellation import auto_cancel_overdue_orders_by_tick
 from app.services.shopee_order_simulator import simulate_orders_for_run
 
 logger = logging.getLogger(__name__)
-
-REAL_SECONDS_PER_GAME_DAY = 30 * 60
-REAL_SECONDS_PER_GAME_HOUR = REAL_SECONDS_PER_GAME_DAY / 24
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -35,43 +33,7 @@ REDIS_LOCK_TTL_SEC = max(10, int(os.getenv("REDIS_LOCK_TTL_SEC", "45")))
 
 
 def _resolve_target_game_tick(run: GameRun, now: datetime) -> datetime:
-    if not run.created_at:
-        return now
-    elapsed_seconds = max(0, int((now - run.created_at).total_seconds()))
-    elapsed_game_hours = int(elapsed_seconds // REAL_SECONDS_PER_GAME_HOUR)
-    return run.created_at + timedelta(hours=elapsed_game_hours)
-
-
-def _align_compare_time(ref: datetime, val: datetime) -> datetime:
-    if ref.tzinfo is not None and val.tzinfo is None:
-        return val.replace(tzinfo=ref.tzinfo)
-    if ref.tzinfo is None and val.tzinfo is not None:
-        return val.replace(tzinfo=None)
-    return val
-
-
-def _resolve_run_end_time(run: GameRun) -> datetime | None:
-    if not run.created_at:
-        return None
-    return run.created_at + timedelta(days=max(1, int(run.duration_days or 1)))
-
-
-def _mark_run_finished_if_reached(db: Session, run: GameRun, *, tick_time: datetime) -> bool:
-    status_value = (run.status or "").strip()
-    if status_value == "finished":
-        return True
-    if status_value != "running":
-        return False
-    run_end_time = _resolve_run_end_time(run)
-    if not run_end_time:
-        return False
-    compare_tick = _align_compare_time(run_end_time, tick_time)
-    if compare_tick < run_end_time:
-        return False
-    run.status = "finished"
-    db.commit()
-    db.refresh(run)
-    return True
+    return _resolve_game_hour_tick_by_run(run, now=now)
 
 
 def _run_one_cycle(db: Session, now: datetime) -> tuple[int, int]:
@@ -85,7 +47,7 @@ def _run_one_cycle(db: Session, now: datetime) -> tuple[int, int]:
         if lock_token is None:
             continue
         try:
-            if _mark_run_finished_if_reached(db, run, tick_time=_resolve_target_game_tick(run, now)):
+            if _persist_run_finished_if_reached(db, run, tick_time=now):
                 continue
             latest_tick_time = (
                 db.query(func.max(ShopeeOrderGenerationLog.tick_time))

@@ -295,7 +295,13 @@ def test_game_create_run_accepts_7_days_duration():
         },
     )
     assert response.status_code == 201
-    assert response.json()["duration_days"] == 7
+    payload = response.json()
+    assert payload["duration_days"] == 7
+    assert payload["base_real_duration_days"] == 7
+    assert payload["base_game_days"] == 365
+    assert payload["total_game_days"] == 365
+    assert payload["manual_end_time"] is None
+    assert payload["effective_end_time"] is not None
 
 
 def test_game_create_run_auto_finishes_expired_running_run():
@@ -1576,6 +1582,277 @@ def test_shopee_bundle_campaign_create_and_list(monkeypatch):
     assert any(item["campaign_type"] == "bundle" for item in list_payload["list"]["items"])
 
 
+def test_admin_active_runs_returns_running_runs_with_duration_fields():
+    from app.db import SessionLocal
+    from app.models import GameRun
+
+    player_token = _register_or_login_player("13800138237")
+    active_run = _create_running_run(player_token, duration_days=30)
+
+    expired_player_token = _register_or_login_player("13800138238")
+    expired_run = _create_running_run(expired_player_token, duration_days=7)
+
+    with SessionLocal() as db:
+        expired_row = db.query(GameRun).filter(GameRun.id == expired_run["id"]).first()
+        assert expired_row is not None
+        expired_row.created_at = datetime.utcnow() - timedelta(days=8)
+        db.commit()
+
+    admin_login = client.post("/auth/login", json={"username": "yzcube", "password": "yzcube123"})
+    assert admin_login.status_code == 200
+    admin_token = admin_login.json()["access_token"]
+
+    response = client.get(
+        "/game/admin/runs/active",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload["runs"]) >= 1
+    target = next((item for item in payload["runs"] if int(item["run_id"]) == active_run["id"]), None)
+    assert target is not None
+    assert target["duration_days"] == 30
+    assert target["current_day_index"] >= 1
+    assert target["remaining_seconds"] > 0
+    assert target["end_time"] is not None
+    assert all(int(item["run_id"]) != expired_run["id"] for item in payload["runs"])
+
+    with SessionLocal() as db:
+        expired_row = db.query(GameRun).filter(GameRun.id == expired_run["id"]).first()
+        assert expired_row is not None
+        assert expired_row.status == "finished"
+
+
+
+def test_admin_extend_run_successfully_updates_running_run():
+    player_token = _register_or_login_player("13800138239")
+    run = _create_running_run(player_token, duration_days=30)
+
+    admin_login = client.post("/auth/login", json={"username": "yzcube", "password": "yzcube123"})
+    assert admin_login.status_code == 200
+    admin_token = admin_login.json()["access_token"]
+
+    response = client.post(
+        f"/game/admin/runs/{run['id']}/extend",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        json={"extend_days": 15},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["run_id"] == run["id"]
+    assert payload["old_duration_days"] == 30
+    assert payload["new_duration_days"] == 45
+    assert payload["current_day_index"] >= 1
+    assert payload["remaining_seconds"] > 0
+    assert payload["new_end_time"] is not None
+
+    options_resp = client.get(
+        "/game/admin/runs/options",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert options_resp.status_code == 200
+    target = next((item for item in options_resp.json()["runs"] if int(item["run_id"]) == run["id"]), None)
+    assert target is not None
+    assert target["duration_days"] == 45
+    assert target["end_time"] is not None
+
+
+
+def test_admin_extend_run_updates_manual_end_time_when_present():
+    from app.db import SessionLocal
+    from app.models import GameRun
+
+    player_token = _register_or_login_player("13800138243")
+    run = _create_running_run(player_token, duration_days=30)
+
+    with SessionLocal() as db:
+        row = db.query(GameRun).filter(GameRun.id == run["id"]).first()
+        assert row is not None
+        base_end_time = row.created_at + timedelta(days=30)
+        row.manual_end_time = base_end_time + timedelta(days=2)
+        expected_new_end_time = row.manual_end_time + timedelta(days=5)
+        db.commit()
+
+    admin_login = client.post("/auth/login", json={"username": "yzcube", "password": "yzcube123"})
+    assert admin_login.status_code == 200
+    admin_token = admin_login.json()["access_token"]
+
+    response = client.post(
+        f"/game/admin/runs/{run['id']}/extend",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        json={"extend_days": 5},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["new_duration_days"] == 35
+    assert payload["manual_end_time"] is not None
+    assert payload["new_end_time"] is not None
+
+    with SessionLocal() as db:
+        row = db.query(GameRun).filter(GameRun.id == run["id"]).first()
+        assert row is not None
+        assert row.duration_days == 35
+        assert row.manual_end_time is not None
+        assert row.manual_end_time == expected_new_end_time
+
+
+
+def test_admin_run_management_requires_super_admin():
+    player_token = _register_or_login_player("13800138240")
+    run = _create_running_run(player_token, duration_days=30)
+
+    active_resp = client.get(
+        "/game/admin/runs/active",
+        headers={"Authorization": f"Bearer {player_token}"},
+    )
+    assert active_resp.status_code == 403
+
+    extend_resp = client.post(
+        f"/game/admin/runs/{run['id']}/extend",
+        headers={"Authorization": f"Bearer {player_token}"},
+        json={"extend_days": 3},
+    )
+    assert extend_resp.status_code == 403
+
+
+
+def test_admin_extend_run_rejects_finished_boundary_and_marks_finished():
+    from app.db import SessionLocal
+    from app.models import GameRun
+
+    player_token = _register_or_login_player("13800138241")
+    run = _create_running_run(player_token, duration_days=7)
+
+    with SessionLocal() as db:
+        row = db.query(GameRun).filter(GameRun.id == run["id"]).first()
+        assert row is not None
+        row.created_at = datetime.utcnow() - timedelta(days=8)
+        db.commit()
+
+    admin_login = client.post("/auth/login", json={"username": "yzcube", "password": "yzcube123"})
+    assert admin_login.status_code == 200
+    admin_token = admin_login.json()["access_token"]
+
+    response = client.post(
+        f"/game/admin/runs/{run['id']}/extend",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        json={"extend_days": 5},
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"] == "当前对局已结束，无法继续延长"
+
+    with SessionLocal() as db:
+        row = db.query(GameRun).filter(GameRun.id == run["id"]).first()
+        assert row is not None
+        assert row.status == "finished"
+
+
+
+def test_admin_buyer_pool_overview_returns_dynamic_duration_fields():
+    player_token = _register_or_login_player("13800138242")
+    run = _create_running_run(player_token, duration_days=30)
+
+    admin_login = client.post("/auth/login", json={"username": "yzcube", "password": "yzcube123"})
+    assert admin_login.status_code == 200
+    admin_token = admin_login.json()["access_token"]
+
+    response = client.get(
+        "/game/admin/buyer-pool/overview",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        params={"run_id": run["id"]},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["selected_run_id"] == run["id"]
+    assert payload["selected_run_duration_days"] == 30
+    assert payload["selected_run_end_time"] is not None
+    assert payload["selected_run_day_index"] >= 1
+
+
+
+def test_admin_renew_run_restores_finished_run_and_appends_game_days():
+    from app.db import SessionLocal
+    from app.models import GameRun
+
+    player_token = _register_or_login_player("13800138244")
+    run = _create_running_run(player_token, duration_days=7)
+
+    with SessionLocal() as db:
+        row = db.query(GameRun).filter(GameRun.id == run["id"]).first()
+        assert row is not None
+        row.status = "finished"
+        row.created_at = datetime.utcnow() - timedelta(days=8)
+        row.total_game_days = 365
+        row.manual_end_time = row.created_at + timedelta(days=7)
+        db.commit()
+
+    admin_login = client.post("/auth/login", json={"username": "yzcube", "password": "yzcube123"})
+    assert admin_login.status_code == 200
+    admin_token = admin_login.json()["access_token"]
+
+    response = client.post(
+        f"/game/admin/runs/{run['id']}/renew",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        json={"extend_days": 7},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["run_id"] == run["id"]
+    assert payload["old_status"] == "finished"
+    assert payload["new_status"] == "running"
+    assert payload["old_duration_days"] == 7
+    assert payload["new_duration_days"] == 14
+    assert payload["old_total_game_days"] == 365
+    assert payload["new_total_game_days"] == 730
+    assert payload["remaining_seconds"] > 0
+
+    current_resp = client.get("/game/runs/current", headers={"Authorization": f"Bearer {player_token}"})
+    assert current_resp.status_code == 200
+    current_payload = current_resp.json()
+    assert current_payload["run"] is not None
+    assert current_payload["run"]["id"] == run["id"]
+    assert current_payload["run"]["status"] == "running"
+    assert current_payload["run"]["total_game_days"] == 730
+
+    history_resp = client.get("/game/runs/history/options", headers={"Authorization": f"Bearer {player_token}"})
+    assert history_resp.status_code == 200
+    history_ids = [int(item["id"]) for item in history_resp.json().get("runs", [])]
+    assert run["id"] not in history_ids
+
+
+
+def test_admin_renew_run_rejects_when_player_has_other_running_run():
+    from app.db import SessionLocal
+    from app.models import GameRun
+
+    player_token = _register_or_login_player("13800138245")
+    finished_run = _create_running_run(player_token, duration_days=7)
+
+    with SessionLocal() as db:
+        row = db.query(GameRun).filter(GameRun.id == finished_run["id"]).first()
+        assert row is not None
+        row.status = "finished"
+        row.created_at = datetime.utcnow() - timedelta(days=8)
+        row.manual_end_time = row.created_at + timedelta(days=7)
+        db.commit()
+
+    running_run = _create_running_run(player_token, duration_days=30)
+    assert running_run["status"] == "running"
+
+    admin_login = client.post("/auth/login", json={"username": "yzcube", "password": "yzcube123"})
+    assert admin_login.status_code == 200
+    admin_token = admin_login.json()["access_token"]
+
+    response = client.post(
+        f"/game/admin/runs/{finished_run['id']}/renew",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        json={"extend_days": 7},
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"] == "该玩家已有其他运行中对局，无法恢复旧对局"
+
+
+
 def test_admin_simulate_orders_generates_orders_and_visible_to_player(monkeypatch):
     player_token = _register_or_login_player("13800138211")
     run = _create_running_run(player_token, duration_days=7)
@@ -2776,7 +3053,7 @@ def test_auto_order_tick_worker_skips_and_finishes_expired_run(monkeypatch):
     from app.services import auto_order_tick_worker as worker
 
     player_token = _register_or_login_player("13800138219")
-    run = _create_running_run(player_token)
+    run = _create_running_run(player_token, duration_days=7)
 
     with SessionLocal() as db:
         row = db.query(GameRun).filter(GameRun.id == run["id"]).first()
@@ -2784,23 +3061,25 @@ def test_auto_order_tick_worker_skips_and_finishes_expired_run(monkeypatch):
         row.created_at = datetime.utcnow() - timedelta(days=8)
         db.commit()
 
-    called: list[int] = []
+    called_run_ids: list[int] = []
     monkeypatch.setattr(worker, "acquire_distributed_lock", lambda *_args, **_kwargs: "token", raising=False)
     monkeypatch.setattr(worker, "release_distributed_lock", lambda *_args, **_kwargs: None, raising=False)
     monkeypatch.setattr(
         worker,
         "simulate_orders_for_run",
-        lambda *_args, **_kwargs: called.append(1),
+        lambda _db, *, run_id, user_id, tick_time: (
+            called_run_ids.append(run_id) or {"tick_time": tick_time}
+        ),
         raising=False,
     )
+    monkeypatch.setattr(worker, "auto_cancel_overdue_orders_by_tick", lambda *_args, **_kwargs: [], raising=False)
 
     with SessionLocal() as db:
-        run_cnt, tick_cnt = worker._run_one_cycle(db, datetime.utcnow())
-        assert run_cnt == 0
-        assert tick_cnt == 0
+        worker._run_one_cycle(db, datetime.utcnow())
+
+    assert run["id"] not in called_run_ids
 
     with SessionLocal() as db:
         row = db.query(GameRun).filter(GameRun.id == run["id"]).first()
         assert row is not None
         assert row.status == "finished"
-    assert called == []

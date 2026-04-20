@@ -73,11 +73,17 @@ from app.services.shopee_order_cancellation import (
 from app.services.inventory_lot_sync import consume_reserved_inventory_lots
 from app.services.shopee_listing_quality import recompute_listing_quality
 from app.services.shopee_order_simulator import simulate_orders_for_run
+from app.api.routes.game import (
+    REAL_SECONDS_PER_GAME_DAY,
+    REAL_SECONDS_PER_GAME_HOUR,
+    _align_compare_time,
+    _persist_run_finished_if_reached,
+    _resolve_game_hour_tick_by_run,
+    _resolve_run_end_time,
+)
 
 
 router = APIRouter(prefix="/shopee", tags=["shopee"])
-REAL_SECONDS_PER_GAME_DAY = 30 * 60
-REAL_SECONDS_PER_GAME_HOUR = REAL_SECONDS_PER_GAME_DAY / 24
 ORDER_SIM_TICK_GAME_HOURS = 8
 ORDER_INCOME_RELEASE_DELAY_GAME_DAYS = 3
 RM_TO_RMB_RATE = float(os.getenv("RM_TO_RMB_RATE", "1.74"))
@@ -2377,41 +2383,8 @@ def _try_recompute_listing_quality(
         db.rollback()
 
 
-def _align_compare_time(ref: datetime, val: datetime) -> datetime:
-    if ref.tzinfo is not None and val.tzinfo is None:
-        return val.replace(tzinfo=ref.tzinfo)
-    if ref.tzinfo is None and val.tzinfo is not None:
-        return val.replace(tzinfo=None)
-    return val
-
-
-def _resolve_run_end_time(run: GameRun) -> datetime | None:
-    if not run.created_at:
-        return None
-    return run.created_at + timedelta(days=max(1, int(run.duration_days or 1)))
-
-
-def _mark_run_finished_if_reached(db: Session, run: GameRun, *, tick_time: datetime | None = None) -> bool:
-    status_value = (run.status or "").strip()
-    if status_value == "finished":
-        return True
-    if status_value != "running":
-        return False
-    run_end_time = _resolve_run_end_time(run)
-    if not run_end_time:
-        return False
-    compare_tick = tick_time or _resolve_game_hour_tick_by_run(run)
-    compare_tick = _align_compare_time(run_end_time, compare_tick)
-    if compare_tick < run_end_time:
-        return False
-    run.status = "finished"
-    db.commit()
-    db.refresh(run)
-    return True
-
-
 def _ensure_run_writable_or_400(db: Session, run: GameRun, *, tick_time: datetime | None = None) -> None:
-    if _mark_run_finished_if_reached(db, run, tick_time=tick_time):
+    if _persist_run_finished_if_reached(db, run):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=RUN_FINISHED_DETAIL)
 
 
@@ -2787,15 +2760,6 @@ def _resolve_game_tick(db: Session, run_id: int, user_id: int) -> datetime:
     if latest_tick_time:
         return latest_tick_time
     return datetime.utcnow()
-
-
-def _resolve_game_hour_tick_by_run(run: GameRun) -> datetime:
-    if not run.created_at:
-        return datetime.utcnow()
-    now = datetime.utcnow()
-    elapsed_seconds = max(0, int((now - run.created_at).total_seconds()))
-    elapsed_game_hours = int(elapsed_seconds // REAL_SECONDS_PER_GAME_HOUR)
-    return run.created_at + timedelta(hours=elapsed_game_hours)
 
 
 def _auto_simulate_orders_by_game_hour(
@@ -3622,11 +3586,11 @@ def list_shopee_orders(
     user_id = int(current_user["id"])
     _enforce_shopee_orders_list_rate_limit(user_id=user_id)
     run = _get_owned_order_readable_run_or_404(db, run_id, user_id)
-    is_finished = _mark_run_finished_if_reached(db, run)
+    is_finished = _persist_run_finished_if_reached(db, run)
     if not is_finished:
         _auto_simulate_orders_by_game_hour(db, run=run, user_id=user_id, max_ticks_per_request=1)
     current_tick = _resolve_game_tick(db, run.id, user_id)
-    if not _mark_run_finished_if_reached(db, run, tick_time=current_tick):
+    if not _persist_run_finished_if_reached(db, run):
         _auto_cancel_overdue_orders_by_tick(db, run_id=run.id, user_id=user_id, current_tick=current_tick)
         _auto_progress_shipping_orders_by_tick(db, run_id=run.id, user_id=user_id, current_tick=current_tick)
         _backfill_income_for_completed_orders(db, run_id=run.id, user_id=user_id, current_tick=current_tick)
@@ -3811,7 +3775,7 @@ def get_shopee_order_detail(
     user_id = int(current_user["id"])
     run = _get_owned_order_readable_run_or_404(db, run_id, user_id)
     current_tick = _resolve_game_tick(db, run.id, user_id)
-    if not _mark_run_finished_if_reached(db, run, tick_time=current_tick):
+    if not _persist_run_finished_if_reached(db, run):
         _auto_cancel_overdue_orders_by_tick(db, run_id=run.id, user_id=user_id, current_tick=current_tick)
         _auto_progress_shipping_orders_by_tick(db, run_id=run.id, user_id=user_id, current_tick=current_tick)
         _backfill_income_for_completed_orders(db, run_id=run.id, user_id=user_id, current_tick=current_tick)
@@ -4072,7 +4036,7 @@ def get_order_logistics(
     user_id = int(current_user["id"])
     run = _get_owned_order_readable_run_or_404(db, run_id, user_id)
     current_tick = _resolve_game_tick(db, run.id, user_id)
-    if not _mark_run_finished_if_reached(db, run, tick_time=current_tick):
+    if not _persist_run_finished_if_reached(db, run):
         _auto_cancel_overdue_orders_by_tick(db, run_id=run.id, user_id=user_id, current_tick=current_tick)
         _auto_progress_shipping_orders_by_tick(db, run_id=run.id, user_id=user_id, current_tick=current_tick)
     order = _get_owned_order_or_404(db, run.id, user_id, order_id)
@@ -4205,7 +4169,7 @@ def get_shopee_finance_overview(
     user_id = int(current_user["id"])
     run = _get_owned_order_readable_run_or_404(db, run_id, user_id)
     current_tick = _resolve_game_tick(db, run.id, user_id)
-    if not _mark_run_finished_if_reached(db, run, tick_time=current_tick):
+    if not _persist_run_finished_if_reached(db, run):
         _backfill_income_for_completed_orders(db, run_id=run.id, user_id=user_id, current_tick=current_tick)
 
     wallet_balance = _calc_wallet_balance(db, run_id=run.id, user_id=user_id)
@@ -4297,7 +4261,7 @@ def list_shopee_finance_transactions(
     user_id = int(current_user["id"])
     run = _get_owned_order_readable_run_or_404(db, run_id, user_id)
     current_tick = _resolve_game_tick(db, run.id, user_id)
-    if not _mark_run_finished_if_reached(db, run, tick_time=current_tick):
+    if not _persist_run_finished_if_reached(db, run):
         _backfill_income_for_completed_orders(db, run_id=run.id, user_id=user_id, current_tick=current_tick)
 
     query = (
@@ -4359,7 +4323,7 @@ def list_shopee_finance_income(
     user_id = int(current_user["id"])
     run = _get_owned_order_readable_run_or_404(db, run_id, user_id)
     current_tick = _resolve_game_tick(db, run.id, user_id)
-    if not _mark_run_finished_if_reached(db, run, tick_time=current_tick):
+    if not _persist_run_finished_if_reached(db, run):
         _backfill_income_for_completed_orders(db, run_id=run.id, user_id=user_id, current_tick=current_tick)
 
     query = (

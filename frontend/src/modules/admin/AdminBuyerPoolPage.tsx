@@ -32,6 +32,12 @@ interface AdminBuyerPoolOverviewResponse {
   selected_run_username: string | null;
   selected_run_day_index: number | null;
   selected_run_created_at: string | null;
+  selected_run_duration_days?: number | null;
+  selected_run_base_real_duration_days?: number | null;
+  selected_run_base_game_days?: number | null;
+  selected_run_total_game_days?: number | null;
+  selected_run_manual_end_time?: string | null;
+  selected_run_end_time?: string | null;
   server_time: string;
   game_clock: string;
   game_hour: number;
@@ -139,6 +145,11 @@ interface AdminBuyerPoolPageProps {
     market: string | null;
     dayIndex: number | null;
     createdAt: string | null;
+    durationDays: number | null;
+    baseGameDays: number | null;
+    totalGameDays: number | null;
+    manualEndTime: string | null;
+    endTime: string | null;
     gameClock: string | null;
   }) => void;
 }
@@ -176,7 +187,7 @@ export default function AdminBuyerPoolPage({
   const [refreshTs, setRefreshTs] = useState<number>(Date.now());
   const [fastForwardHours, setFastForwardHours] = useState<number>(1);
 
-  const displayName = currentUser?.full_name?.trim() || currentUser?.username || 'yzcube';
+  const displayName = currentUser?.full_name?.trim() || currentUser?.username || '超级管理员';
 
   const loadRunOptions = async () => {
     const token = localStorage.getItem(ACCESS_TOKEN_KEY);
@@ -315,6 +326,11 @@ export default function AdminBuyerPoolPage({
       market: data?.selected_run_market ?? null,
       dayIndex: data?.selected_run_day_index ?? null,
       createdAt: data?.selected_run_created_at ?? null,
+      durationDays: data?.selected_run_duration_days ?? null,
+      baseGameDays: data?.selected_run_base_game_days ?? null,
+      totalGameDays: data?.selected_run_total_game_days ?? null,
+      manualEndTime: data?.selected_run_manual_end_time ?? null,
+      endTime: data?.selected_run_end_time ?? null,
       gameClock: data?.game_clock ?? null,
     });
   }, [data, onRunContextChange]);

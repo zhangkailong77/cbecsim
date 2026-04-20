@@ -17,7 +17,7 @@ const ACCESS_TOKEN_KEY = 'cbec_access_token';
 
 type AppStage = 'loading' | 'setup' | 'intel' | 'logistics' | 'warehouse' | 'shopee';
 type RoutedStage = Exclude<AppStage, 'loading'>;
-type SetupSubView = 'default' | 'run-data' | 'finance' | 'history' | 'admin-buyer-pool';
+type SetupSubView = 'default' | 'run-data' | 'finance' | 'history' | 'admin-buyer-pool' | 'admin-run-management';
 
 function parseStageFromPath(
   pathname: string
@@ -31,6 +31,7 @@ function parseStageFromPath(
   let setupSubView: SetupSubView = 'default';
   if (stage === 'setup') {
     if (tail === 'admin/buyer-pool') setupSubView = 'admin-buyer-pool';
+    else if (tail === 'admin/run-management') setupSubView = 'admin-run-management';
     else if (tail === 'run-data') setupSubView = 'run-data';
     else if (tail === 'finance') setupSubView = 'finance';
     else if (tail === 'history') setupSubView = 'history';
@@ -51,6 +52,8 @@ function buildStagePath(
   let path = '';
   if (stage === 'setup' && setupSubView === 'admin-buyer-pool') {
     path = `/u/${encodeURIComponent(publicId)}/setup/admin/buyer-pool`;
+  } else if (stage === 'setup' && setupSubView === 'admin-run-management') {
+    path = `/u/${encodeURIComponent(publicId)}/setup/admin/run-management`;
   } else if (stage === 'setup' && setupSubView === 'run-data') {
     path = `/u/${encodeURIComponent(publicId)}/setup/run-data`;
   } else if (stage === 'setup' && setupSubView === 'finance') {
@@ -73,6 +76,11 @@ interface CurrentRunResponse {
     initial_cash: number;
     market: string;
     duration_days: number;
+    base_real_duration_days: number;
+    base_game_days: number;
+    total_game_days: number;
+    manual_end_time: string | null;
+    effective_end_time: string | null;
     day_index: number;
     status: string;
     created_at: string;
