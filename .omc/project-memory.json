@@ -1,0 +1,187 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1776650781068,
+  "projectRoot": "/Users/zhangkailong/workspace/code/cbec_sim",
+  "techStack": {
+    "languages": [],
+    "frameworks": [],
+    "packageManager": null,
+    "runtime": null
+  },
+  "build": {
+    "buildCommand": null,
+    "testCommand": null,
+    "lintCommand": null,
+    "devCommand": null,
+    "scripts": {}
+  },
+  "conventions": {
+    "namingStyle": null,
+    "importStyle": null,
+    "testPattern": null,
+    "fileOrganization": null
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [
+      "docs"
+    ],
+    "gitBranches": {
+      "defaultBranch": "main",
+      "branchingStrategy": null
+    }
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "backend": {
+      "path": "backend",
+      "purpose": null,
+      "fileCount": 4,
+      "lastAccessed": 1776650781054,
+      "keyFiles": [
+        "requirements.txt"
+      ]
+    },
+    "docs": {
+      "path": "docs",
+      "purpose": "Documentation",
+      "fileCount": 1,
+      "lastAccessed": 1776650781054,
+      "keyFiles": [
+        "当前进度.md"
+      ]
+    },
+    "frontend": {
+      "path": "frontend",
+      "purpose": null,
+      "fileCount": 9,
+      "lastAccessed": 1776650781054,
+      "keyFiles": [
+        "Dockerfile",
+        "index.html",
+        "nginx.cbec.conf",
+        "package-lock.json",
+        "package.json"
+      ]
+    },
+    "infra": {
+      "path": "infra",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1776650781055,
+      "keyFiles": []
+    },
+    "shopee_my_sim_plan": {
+      "path": "shopee_my_sim_plan",
+      "purpose": null,
+      "fileCount": 0,
+      "lastAccessed": 1776650781055,
+      "keyFiles": []
+    },
+    "backend/tests": {
+      "path": "backend/tests",
+      "purpose": "Test files",
+      "fileCount": 1,
+      "lastAccessed": 1776650781056,
+      "keyFiles": []
+    },
+    "frontend/dist": {
+      "path": "frontend/dist",
+      "purpose": "Distribution/build output",
+      "fileCount": 2,
+      "lastAccessed": 1776650781056,
+      "keyFiles": [
+        "index.html"
+      ]
+    },
+    "frontend/node_modules": {
+      "path": "frontend/node_modules",
+      "purpose": "Dependencies",
+      "fileCount": 1,
+      "lastAccessed": 1776650781056,
+      "keyFiles": []
+    }
+  },
+  "hotPaths": [
+    {
+      "path": "docs/admin/ad01-文档标题.md",
+      "accessCount": 9,
+      "lastAccessed": 1776654310035,
+      "type": "file"
+    },
+    {
+      "path": "",
+      "accessCount": 5,
+      "lastAccessed": 1776653025489,
+      "type": "directory"
+    },
+    {
+      "path": "backend/apps/api-gateway/app/api/routes/game.py",
+      "accessCount": 4,
+      "lastAccessed": 1776653285811,
+      "type": "file"
+    },
+    {
+      "path": "frontend/src/modules/game-setup/GameSetupPage.tsx",
+      "accessCount": 4,
+      "lastAccessed": 1776653725432,
+      "type": "file"
+    },
+    {
+      "path": "backend",
+      "accessCount": 2,
+      "lastAccessed": 1776653266380,
+      "type": "directory"
+    },
+    {
+      "path": "backend/apps/api-gateway/app/models.py",
+      "accessCount": 2,
+      "lastAccessed": 1776653273937,
+      "type": "file"
+    },
+    {
+      "path": "frontend/src",
+      "accessCount": 2,
+      "lastAccessed": 1776653714010,
+      "type": "directory"
+    },
+    {
+      "path": "cbec_sim.sql",
+      "accessCount": 1,
+      "lastAccessed": 1776651014624,
+      "type": "file"
+    },
+    {
+      "path": "backend/.env",
+      "accessCount": 1,
+      "lastAccessed": 1776651303143,
+      "type": "file"
+    },
+    {
+      "path": "backend/apps/api-gateway/app",
+      "accessCount": 1,
+      "lastAccessed": 1776652093037,
+      "type": "directory"
+    },
+    {
+      "path": "docs/设计文档/16-7天对局结束与Shopee订单封盘设计.md",
+      "accessCount": 1,
+      "lastAccessed": 1776653035106,
+      "type": "file"
+    },
+    {
+      "path": "backend/apps/api-gateway/app/api/routes/auth.py",
+      "accessCount": 1,
+      "lastAccessed": 1776653281198,
+      "type": "file"
+    },
+    {
+      "path": "backend/apps/api-gateway/app/db.py",
+      "accessCount": 1,
+      "lastAccessed": 1776653290036,
+      "type": "file"
+    }
+  ],
+  "userDirectives": []
+}
