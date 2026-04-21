@@ -185,6 +185,7 @@ interface TimelineRunContext {
   dayIndex: number | null;
   createdAt: string | null;
   durationDays: number | null;
+  baseRealDurationDays: number | null;
   baseGameDays: number | null;
   totalGameDays: number | null;
   manualEndTime: string | null;
@@ -272,15 +273,15 @@ function getTotalRealSeconds(durationDays: number | null | undefined) {
   return Math.max(1, Math.floor(Number(durationDays || 0) * 24 * 60 * 60));
 }
 
-function getGameClockLabel(
+function getGameClockLabelByRealSeconds(
   elapsedSeconds: number,
-  durationDays: number | null | undefined,
+  totalRealSeconds: number,
   totalGameDays?: number | null,
 ) {
-  const totalRealSeconds = getTotalRealSeconds(durationDays);
+  const safeTotalRealSeconds = Math.max(1, totalRealSeconds);
   const resolvedTotalGameDays = getTotalGameDays(totalGameDays);
-  const clampedElapsed = Math.min(Math.max(0, elapsedSeconds), totalRealSeconds);
-  const gameDayFloat = (clampedElapsed / totalRealSeconds) * resolvedTotalGameDays + 1;
+  const clampedElapsed = Math.min(Math.max(0, elapsedSeconds), Math.max(0, safeTotalRealSeconds - 1));
+  const gameDayFloat = (clampedElapsed / safeTotalRealSeconds) * resolvedTotalGameDays + 1;
   const frac = gameDayFloat - Math.floor(gameDayFloat);
   const totalSeconds = Math.max(0, Math.floor(frac * 24 * 60 * 60));
   const hour = Math.floor(totalSeconds / 3600) % 24;
@@ -289,6 +290,13 @@ function getGameClockLabel(
   return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:${String(second).padStart(2, '0')}`;
 }
 
+function getGameClockLabel(
+  elapsedSeconds: number,
+  durationDays: number | null | undefined,
+  totalGameDays?: number | null,
+) {
+  return getGameClockLabelByRealSeconds(elapsedSeconds, getTotalRealSeconds(durationDays), totalGameDays);
+}
 function getGameDayClockFromTimestamps(
   runCreatedAt: string,
   eventAt: string,
@@ -359,7 +367,7 @@ export default function GameSetupPage({
   const [scale, setScale] = useState(1);
   const [initialCash] = useState(UNIFIED_INITIAL_CASH);
   const [market, setMarket] = useState('MY');
-  const [durationDays, setDurationDays] = useState(365);
+  const [durationDays, setDurationDays] = useState(7);
   const [nowMs, setNowMs] = useState(Date.now());
   const [procurementSummary, setProcurementSummary] = useState<ProcurementSummary | null>(null);
   const [latestShipment, setLatestShipment] = useState<LocalShipment | null>(null);
@@ -611,6 +619,11 @@ export default function GameSetupPage({
     : activeMenu === 'history'
       ? selectedHistoryRun?.duration_days ?? currentRun?.duration_days ?? null
       : currentRun?.duration_days ?? null;
+  const timelineBaseRealDurationDays = sidebarUsingAdminRun
+    ? adminSelectedRunContext?.baseRealDurationDays ?? adminSelectedRunContext?.durationDays ?? null
+    : activeMenu === 'history'
+      ? selectedHistoryRun?.base_real_duration_days ?? currentRun?.base_real_duration_days ?? selectedHistoryRun?.duration_days ?? currentRun?.duration_days ?? null
+      : currentRun?.base_real_duration_days ?? currentRun?.duration_days ?? null;
   const timelineBaseGameDays = sidebarUsingAdminRun
     ? adminSelectedRunContext?.baseGameDays ?? null
     : activeMenu === 'history'
@@ -632,10 +645,10 @@ export default function GameSetupPage({
       ? selectedHistoryRun?.status ?? currentRun?.status ?? null
       : currentRun?.status ?? null;
   const timelineEffectiveEndAt = sidebarUsingAdminRun
-    ? adminSelectedRunContext?.endTime ?? adminSelectedRunContext?.manualEndTime ?? null
+    ? adminSelectedRunContext?.endTime ?? null
     : activeMenu === 'history'
-      ? selectedHistoryRun?.effective_end_time ?? selectedHistoryRun?.manual_end_time ?? currentRun?.effective_end_time ?? currentRun?.manual_end_time ?? null
-      : currentRun?.effective_end_time ?? currentRun?.manual_end_time ?? null;
+      ? selectedHistoryRun?.effective_end_time ?? currentRun?.effective_end_time ?? null
+      : currentRun?.effective_end_time ?? null;
   const resolvedTimelineBaseGameDays = getBaseGameDays(timelineBaseGameDays);
   const resolvedTimelineTotalGameDays = getTotalGameDays(timelineTotalGameDays, timelineBaseGameDays);
   const elapsedSeconds = useMemo(() => {
@@ -646,30 +659,43 @@ export default function GameSetupPage({
     return Math.max(0, Math.floor((compareMs - createdAtMs) / 1000));
   }, [timelineCreatedAt, timelineEffectiveEndAt, nowMs]);
   const hasTimelineRun = sidebarUsingAdminRun ? Boolean(adminSelectedRunContext?.runId) : Boolean(timelineCreatedAt);
-  const totalRealSeconds = getTotalRealSeconds(timelineRunDurationDays);
+  const totalRealSeconds = useMemo(() => {
+    if (timelineCreatedAt && timelineEffectiveEndAt) {
+      return Math.max(1, Math.floor((parseServerDateMs(timelineEffectiveEndAt) - parseServerDateMs(timelineCreatedAt)) / 1000));
+    }
+    if (sidebarUsingAdminRun) {
+      return getTotalRealSeconds(timelineBaseRealDurationDays);
+    }
+    return getTotalRealSeconds(timelineRunDurationDays);
+  }, [sidebarUsingAdminRun, timelineCreatedAt, timelineEffectiveEndAt, timelineBaseRealDurationDays, timelineRunDurationDays]);
   const isTimelineFinished = (timelineStatus || '').trim() === 'finished';
   const remainSeconds = isTimelineFinished ? 0 : Math.max(0, totalRealSeconds - elapsedSeconds);
+  const clampedTimelineElapsed = Math.min(Math.max(0, elapsedSeconds), Math.max(0, totalRealSeconds - 1));
+  const elapsedGameSeconds = Math.min(
+    resolvedTimelineTotalGameDays * 24 * 60 * 60,
+    Math.max(0, Math.floor((elapsedSeconds / totalRealSeconds) * resolvedTimelineTotalGameDays * 24 * 60 * 60)),
+  );
+  const remainGameSeconds = isTimelineFinished
+    ? 0
+    : Math.max(0, resolvedTimelineTotalGameDays * 24 * 60 * 60 - elapsedGameSeconds);
   const derivedDayByTimeline = Math.min(
     resolvedTimelineTotalGameDays,
-    Math.max(1, Math.floor((elapsedSeconds / totalRealSeconds) * resolvedTimelineTotalGameDays) + 1),
+    Math.max(1, Math.floor((clampedTimelineElapsed / totalRealSeconds) * resolvedTimelineTotalGameDays) + 1),
   );
-  const gameDayMapped = sidebarUsingAdminRun
-    ? Math.min(
-        resolvedTimelineTotalGameDays,
-        Math.max(1, isTimelineFinished ? derivedDayByTimeline : (adminSelectedRunContext?.dayIndex ?? derivedDayByTimeline)),
-      )
-    : activeMenu === 'history' && selectedHistoryRun
-      ? Math.min(resolvedTimelineTotalGameDays, Math.max(1, selectedHistoryRun.day_index))
+  const gameDayMapped = activeMenu === 'history' && selectedHistoryRun
+    ? Math.min(resolvedTimelineTotalGameDays, Math.max(1, selectedHistoryRun.day_index))
+    : sidebarUsingAdminRun && adminSelectedRunContext?.dayIndex
+      ? Math.min(resolvedTimelineTotalGameDays, Math.max(1, adminSelectedRunContext.dayIndex))
       : hasTimelineRun
-        ? derivedDayByTimeline
+        ? (isTimelineFinished ? resolvedTimelineTotalGameDays : derivedDayByTimeline)
         : 1;
   const remainGameDays = Math.max(0, resolvedTimelineTotalGameDays - gameDayMapped);
   const gameClockLabel = useMemo(() => {
-    if (sidebarUsingAdminRun && adminSelectedRunContext?.gameClock && !isTimelineFinished) {
-      return adminSelectedRunContext.gameClock;
+    if (isTimelineFinished) {
+      return '23:59:59';
     }
-    return getGameClockLabel(elapsedSeconds, timelineRunDurationDays, resolvedTimelineTotalGameDays);
-  }, [elapsedSeconds, sidebarUsingAdminRun, adminSelectedRunContext?.gameClock, isTimelineFinished, timelineRunDurationDays, resolvedTimelineTotalGameDays]);
+    return getGameClockLabelByRealSeconds(elapsedSeconds, totalRealSeconds, resolvedTimelineTotalGameDays);
+  }, [elapsedSeconds, isTimelineFinished, totalRealSeconds, resolvedTimelineTotalGameDays]);
   const latestShipmentRuntime = useMemo(() => {
     if (!latestShipment) return null;
     return { shipment: latestShipment, runtime: calcShipmentRuntime(latestShipment, nowMs) };
@@ -731,18 +757,17 @@ export default function GameSetupPage({
     },
   ];
 
-  const menuItems = [
-    { key: 'overview', label: '工作台总览', icon: <LayoutDashboard size={15} /> },
-    { key: 'run-data', label: '当前对局数据', icon: <BarChart3 size={15} /> },
-    { key: 'finance', label: '营业额与资金', icon: <Coins size={15} /> },
-    { key: 'history', label: '历史经营记录', icon: <History size={15} /> },
-    ...(canEnterAdminPanel
-      ? ([
-          { key: 'run-management', label: '对局管理', icon: <CalendarClock size={15} /> },
-          { key: 'buyer-pool', label: '买家池总览', icon: <Users size={15} /> },
-        ] as const)
-      : []),
-  ] as const;
+  const menuItems = canEnterAdminPanel
+    ? ([
+        { key: 'run-management', label: '对局管理', icon: <CalendarClock size={15} /> },
+        { key: 'buyer-pool', label: '买家池总览', icon: <Users size={15} /> },
+      ] as const)
+    : ([
+        { key: 'overview', label: '工作台总览', icon: <LayoutDashboard size={15} /> },
+        { key: 'run-data', label: '当前对局数据', icon: <BarChart3 size={15} /> },
+        { key: 'finance', label: '营业额与资金', icon: <Coins size={15} /> },
+        { key: 'history', label: '历史经营记录', icon: <History size={15} /> },
+      ] as const);
 
   return (
     <div className="fixed inset-0 overflow-hidden bg-[#eef4ff]">
@@ -868,8 +893,8 @@ export default function GameSetupPage({
             </aside>
 
             <div className="flex-1 overflow-auto p-4">
-              <div className={`grid ${activeMenu === 'history' ? 'grid-cols-1' : 'grid-cols-[1fr_420px]'} gap-4`}>
-                <section className="space-y-4">
+              <div className={`grid ${activeMenu === 'history' ? 'grid-cols-1' : 'grid-cols-[minmax(0,1fr)_420px]'} gap-4`}>
+                <section className="min-w-0 space-y-4">
                   {activeMenu === 'overview' ? (
                     <>
                       <div className="rounded-2xl border border-[#dbeafe] bg-gradient-to-r from-[#eff6ff] to-[#f8fbff] px-5 py-4 text-[14px] text-[#1e3a8a]">
@@ -941,9 +966,9 @@ export default function GameSetupPage({
                                 onChange={(event) => setDurationDays(Number(event.target.value))}
                                 className="h-10 w-[240px] rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 outline-none"
                               >
-                                <option value={365}>365 天（标准）</option>
-                                <option value={180}>180 天（短）</option>
-                                <option value={730}>730 天（长）</option>
+                                <option value={7}>7 天（标准，映射 365 游戏天）</option>
+                                <option value={14}>14 天（双周，映射 365 游戏天）</option>
+                                <option value={30}>30 天（长周期，映射 365 游戏天）</option>
                               </select>
                             </div>
                           </div>
@@ -1161,7 +1186,7 @@ export default function GameSetupPage({
                 </section>
 
                 {activeMenu !== 'history' && (
-                <aside className="space-y-4">
+                <aside className="min-w-[420px] space-y-4">
                   <div className="rounded-2xl border border-[#dbeafe] bg-white p-4">
                     <div className="mb-3 flex items-center gap-2 text-[17px] font-black text-slate-800">
                       <CalendarClock size={16} />
@@ -1169,13 +1194,15 @@ export default function GameSetupPage({
                     </div>
                     <div className="space-y-3 text-[13px]">
                       <CountCard
-                        title={sidebarUsingAdminRun ? (isTimelineFinished ? '选中对局已结束' : '选中对局倒计时') : '本局总倒计时'}
-                        value={hasTimelineRun ? (isTimelineFinished ? '已结束' : fmtDurationSeconds(remainSeconds)) : '--'}
+                        title={sidebarUsingAdminRun ? (isTimelineFinished ? '选中对局已结束' : '选中对局游戏剩余时间') : '本局总倒计时'}
+                        value={hasTimelineRun ? (isTimelineFinished ? '已结束' : fmtDurationSeconds(sidebarUsingAdminRun ? remainGameSeconds : remainSeconds)) : '--'}
                         sub={
                           hasTimelineRun
                             ? isTimelineFinished
                               ? `截止于 ${timelineEffectiveEndAt ? new Date(parseServerDateMs(timelineEffectiveEndAt)).toLocaleString() : `Day ${gameDayMapped}`}`
-                              : `规则：1局=${timelineRunDurationDays ?? '--'}天映射${resolvedTimelineTotalGameDays}游戏天（基准年${resolvedTimelineBaseGameDays}天）`
+                              : sidebarUsingAdminRun
+                                ? `按游戏时间倒计时：现实 ${timelineBaseRealDurationDays ?? '--'} 天 = 游戏 ${resolvedTimelineTotalGameDays} 天`
+                                : `规则：1局=${timelineRunDurationDays ?? '--'}天映射${resolvedTimelineTotalGameDays}游戏天（基准年${resolvedTimelineBaseGameDays}天）`
                             : `规则：按对局实际天数映射${resolvedTimelineTotalGameDays}游戏天（基准年${resolvedTimelineBaseGameDays}天）`
                         }
                       />

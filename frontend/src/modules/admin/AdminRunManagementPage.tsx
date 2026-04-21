@@ -28,6 +28,8 @@ interface ExtendRunResponse {
   run_id: number;
   old_duration_days: number;
   new_duration_days: number;
+  old_total_game_days: number;
+  new_total_game_days: number;
   new_end_time: string;
   status: string;
 }
@@ -57,6 +59,7 @@ interface AdminRunManagementPageProps {
     dayIndex: number | null;
     createdAt: string | null;
     durationDays: number | null;
+    baseRealDurationDays: number | null;
     baseGameDays: number | null;
     totalGameDays: number | null;
     manualEndTime: string | null;
@@ -83,7 +86,7 @@ function parseServerDateMs(value: string | null | undefined) {
 
 function getRunRemainingSeconds(run: AdminRunOption, nowMs: number) {
   if (run.status !== 'running') return 0;
-  const endMs = parseServerDateMs(run.manual_end_time || run.end_time);
+  const endMs = parseServerDateMs(run.end_time);
   if (!Number.isFinite(endMs)) return 0;
   return Math.max(0, Math.floor((endMs - nowMs) / 1000));
 }
@@ -109,6 +112,7 @@ export default function AdminRunManagementPage({
   const [successMessage, setSuccessMessage] = useState('');
   const [submittingRunId, setSubmittingRunId] = useState<number | null>(null);
   const [nowMs, setNowMs] = useState<number>(Date.now());
+  const [usernameKeyword, setUsernameKeyword] = useState('');
 
   const displayName = currentUser?.full_name?.trim() || currentUser?.username || '超级管理员';
 
@@ -184,14 +188,13 @@ export default function AdminRunManagementPage({
 
       if (isFinished) {
         const payload = (await resp.json()) as RenewRunResponse;
-        const nextEndTime = payload.new_end_time || payload.manual_end_time;
         setSuccessMessage(
-          `对局 #${payload.run_id} 已续期 ${safeDays} 天，状态 ${payload.old_status} → ${payload.new_status}，总游戏日更新为 ${payload.new_total_game_days} 天，新结束时间为 ${new Date(nextEndTime).toLocaleString()}`,
+          `对局 #${payload.run_id} 已续期 ${safeDays} 天，状态 ${payload.old_status} → ${payload.new_status}，总游戏日更新为 ${payload.new_total_game_days} 天，新结束时间为 ${new Date(payload.new_end_time).toLocaleString()}`,
         );
       } else {
         const payload = (await resp.json()) as ExtendRunResponse;
         setSuccessMessage(
-          `对局 #${payload.run_id} 已从 ${payload.old_duration_days} 天延长到 ${payload.new_duration_days} 天，新的结束时间为 ${new Date(payload.new_end_time).toLocaleString()}`,
+          `对局 #${payload.run_id} 已从 ${payload.old_duration_days} 天延长到 ${payload.new_duration_days} 天，总游戏日从 ${payload.old_total_game_days} 天更新为 ${payload.new_total_game_days} 天，新的结束时间为 ${new Date(payload.new_end_time).toLocaleString()}`,
         );
       }
       await loadRuns(run.run_id);
@@ -211,9 +214,15 @@ export default function AdminRunManagementPage({
     return () => window.clearInterval(timer);
   }, []);
 
+  const filteredRuns = useMemo(() => {
+    const keyword = usernameKeyword.trim().toLowerCase();
+    if (!keyword) return runs;
+    return runs.filter((item) => item.username.toLowerCase().includes(keyword));
+  }, [runs, usernameKeyword]);
+
   const selectedRun = useMemo(
-    () => runs.find((item) => item.run_id === selectedRunId) ?? runs[0] ?? null,
-    [runs, selectedRunId],
+    () => filteredRuns.find((item) => item.run_id === selectedRunId) ?? filteredRuns[0] ?? null,
+    [filteredRuns, selectedRunId],
   );
 
   const runningCount = useMemo(() => runs.filter((item) => item.status === 'running').length, [runs]);
@@ -229,6 +238,7 @@ export default function AdminRunManagementPage({
       dayIndex: selectedRun?.day_index ?? null,
       createdAt: selectedRun?.created_at ?? null,
       durationDays: selectedRun?.duration_days ?? null,
+      baseRealDurationDays: selectedRun?.base_real_duration_days ?? null,
       baseGameDays: selectedRun?.base_game_days ?? null,
       totalGameDays: selectedRun?.total_game_days ?? null,
       manualEndTime: selectedRun?.manual_end_time ?? null,
@@ -307,108 +317,124 @@ export default function AdminRunManagementPage({
         )}
 
         <div className="mt-4 overflow-hidden rounded-2xl border border-[#dbeafe] bg-white">
-          <div className="grid grid-cols-[0.7fr_1fr_0.8fr_0.8fr_0.8fr_0.8fr_1fr_1fr_1fr_2.3fr] bg-[#f8fbff] px-4 py-3 text-[12px] font-semibold text-slate-500">
-            <div>对局ID</div>
-            <div>玩家</div>
-            <div>市场</div>
-            <div>状态</div>
-            <div>周期</div>
-            <div>当前Day</div>
-            <div>创建时间</div>
-            <div>结束时间</div>
-            <div>时间信息</div>
-            <div>操作</div>
+          <div className="flex items-center justify-between gap-3 border-b border-slate-100 bg-[#f8fbff] px-5 py-4">
+            <div>
+              <div className="text-[13px] font-semibold text-slate-700">对局列表</div>
+              <div className="mt-1 text-[12px] text-slate-500">支持按玩家账号快速筛选，并可点击整行切换右侧详情。</div>
+            </div>
+            <div className="flex w-full max-w-[320px] items-center gap-2 rounded-xl border border-[#dbeafe] bg-white px-3 py-2">
+              <span className="text-[12px] font-semibold text-slate-500">账号筛选</span>
+              <input
+                type="text"
+                value={usernameKeyword}
+                onChange={(event) => setUsernameKeyword(event.target.value)}
+                placeholder="输入玩家账号"
+                className="h-8 flex-1 bg-transparent text-[13px] text-slate-700 outline-none placeholder:text-slate-400"
+              />
+            </div>
           </div>
-          <div className="max-h-[620px] overflow-y-auto custom-scrollbar">
-            {loading && runs.length === 0 && (
-              <div className="px-4 py-8 text-[13px] text-slate-500">加载中...</div>
-            )}
-            {!loading && runs.length === 0 && (
-              <div className="px-4 py-8 text-[13px] text-slate-500">暂无可管理对局</div>
-            )}
-            {runs.map((run) => {
-              const active = selectedRun?.run_id === run.run_id;
-              const currentCustomDays = customDays[run.run_id] ?? 7;
-              const busy = submittingRunId === run.run_id;
-              const isFinished = run.status === 'finished';
-              const remainSeconds = getRunRemainingSeconds(run, nowMs);
-              const actionLabel = isFinished ? '续期' : '延长';
-              const timeLabel = isFinished
-                ? `总游戏日 ${run.total_game_days} · 基准 ${run.base_game_days}`
-                : `剩余 ${fmtDurationSeconds(remainSeconds)}`;
-              return (
-                <div
-                  key={run.run_id}
-                  className={`grid grid-cols-[0.7fr_1fr_0.8fr_0.8fr_0.8fr_0.8fr_1fr_1fr_1fr_2.3fr] items-center border-t border-slate-100 px-4 py-3 text-[13px] ${
-                    active ? 'bg-blue-50/70' : 'bg-white'
-                  }`}
-                >
-                  <button
-                    type="button"
-                    onClick={() => setSelectedRunId(run.run_id)}
-                    className="text-left font-bold text-[#2563eb] hover:underline"
-                  >
-                    #{run.run_id}
-                  </button>
-                  <div className="font-semibold text-slate-800">{run.username}</div>
-                  <div className="text-slate-700">{run.market}</div>
-                  <div>
-                    <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${getRunStatusTone(run.status)}`}>
-                      {run.status}
-                    </span>
-                  </div>
-                  <div className="text-slate-700">{run.duration_days} 天</div>
-                  <div className="text-slate-700">Day {run.day_index}</div>
-                  <div className="text-slate-500">{new Date(run.created_at).toLocaleString()}</div>
-                  <div className="text-slate-500">{new Date((run.manual_end_time || run.end_time)).toLocaleString()}</div>
-                  <div className="text-[12px] font-semibold text-[#1d4ed8]">{timeLabel}</div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => void submitRunAction(run, 7)}
-                      disabled={busy}
-                      className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-[12px] font-semibold text-blue-700 hover:bg-blue-100 disabled:opacity-50"
+          <div className="overflow-x-auto custom-scrollbar">
+            <div className="min-w-[1360px]">
+              <div className="grid grid-cols-[96px_1.35fr_0.9fr_0.9fr_0.95fr_0.95fr_1.4fr_1.4fr_1.8fr] gap-x-4 bg-[#f8fbff] px-5 py-3 text-[12px] font-semibold text-slate-500">
+                <div>选择 / 对局ID</div>
+                <div>玩家</div>
+                <div>市场</div>
+                <div>状态</div>
+                <div>真实总周期</div>
+                <div>当前Day</div>
+                <div>创建时间</div>
+                <div>结束时间</div>
+                <div>操作</div>
+              </div>
+              <div className="max-h-[620px] overflow-y-auto custom-scrollbar">
+                {loading && filteredRuns.length === 0 && (
+                  <div className="px-5 py-8 text-[13px] text-slate-500">加载中...</div>
+                )}
+                {!loading && filteredRuns.length === 0 && (
+                  <div className="px-5 py-8 text-[13px] text-slate-500">未找到匹配的玩家对局</div>
+                )}
+                {filteredRuns.map((run) => {
+                  const active = selectedRun?.run_id === run.run_id;
+                  const currentCustomDays = customDays[run.run_id] ?? 7;
+                  const busy = submittingRunId === run.run_id;
+                  const isFinished = run.status === 'finished';
+                  const actionLabel = isFinished ? '续期' : '延长';
+                  return (
+                    <div
+                      key={run.run_id}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => setSelectedRunId(run.run_id)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault();
+                          setSelectedRunId(run.run_id);
+                        }
+                      }}
+                      className={`grid grid-cols-[96px_1.35fr_0.9fr_0.9fr_0.95fr_0.95fr_1.4fr_1.4fr_1.8fr] items-center gap-x-4 border-t border-slate-100 px-5 py-4 text-[13px] transition ${
+                        active ? 'bg-blue-50/80' : 'bg-white hover:bg-slate-50'
+                      }`}
                     >
-                      {actionLabel}7天
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void submitRunAction(run, 14)}
-                      disabled={busy}
-                      className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-[12px] font-semibold text-blue-700 hover:bg-blue-100 disabled:opacity-50"
-                    >
-                      {actionLabel}14天
-                    </button>
-                    <div className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-2 py-1">
-                      <input
-                        type="number"
-                        min={1}
-                        step={1}
-                        value={currentCustomDays}
-                        onFocus={() => setSelectedRunId(run.run_id)}
-                        onChange={(event) => {
-                          const next = Number(event.target.value);
-                          setCustomDays((current) => ({
-                            ...current,
-                            [run.run_id]: Number.isFinite(next) ? Math.max(1, Math.floor(next)) : 1,
-                          }));
-                        }}
-                        className="h-7 w-16 rounded border border-slate-200 px-2 text-[12px] font-semibold text-slate-700 outline-none"
-                      />
-                      <span className="text-[12px] text-slate-500">天</span>
-                      <button
-                        type="button"
-                        onClick={() => void submitRunAction(run, currentCustomDays)}
-                        disabled={busy}
-                        className="rounded-md bg-[#2563eb] px-3 py-1.5 text-[12px] font-semibold text-white hover:bg-[#1d4ed8] disabled:opacity-50"
+                      <div className="flex items-center gap-3">
+                        <span
+                          className={`flex h-5 w-5 items-center justify-center rounded border text-[12px] font-bold ${
+                            active
+                              ? 'border-[#2563eb] bg-[#2563eb] text-white'
+                              : 'border-slate-300 bg-white text-transparent'
+                          }`}
+                        >
+                          ✓
+                        </span>
+                        <span className="font-bold text-[#2563eb]">#{run.run_id}</span>
+                      </div>
+                      <div className="font-semibold text-slate-800">{run.username}</div>
+                      <div className="text-slate-700">{run.market}</div>
+                      <div>
+                        <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${getRunStatusTone(run.status)}`}>
+                          {run.status}
+                        </span>
+                      </div>
+                      <div className="text-slate-700">{run.duration_days} 天</div>
+                      <div className="text-slate-700">Day {run.day_index}</div>
+                      <div className="text-slate-500">{new Date(run.created_at).toLocaleString()}</div>
+                      <div className="text-slate-500">{new Date(run.end_time).toLocaleString()}</div>
+                      <div
+                        className="flex items-center justify-start"
+                        onClick={(event) => event.stopPropagation()}
+                        onKeyDown={(event) => event.stopPropagation()}
                       >
-                        {busy ? '提交中...' : `${actionLabel}提交`}
-                      </button>
+                        <div className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-2 py-1.5 shadow-sm">
+                          <input
+                            type="number"
+                            min={1}
+                            step={1}
+                            value={currentCustomDays}
+                            onFocus={() => setSelectedRunId(run.run_id)}
+                            onChange={(event) => {
+                              const next = Number(event.target.value);
+                              setCustomDays((current) => ({
+                                ...current,
+                                [run.run_id]: Number.isFinite(next) ? Math.max(1, Math.floor(next)) : 1,
+                              }));
+                            }}
+                            className="h-8 w-20 rounded border border-slate-200 px-2 text-[12px] font-semibold text-slate-700 outline-none"
+                          />
+                          <span className="text-[12px] text-slate-500">天</span>
+                          <button
+                            type="button"
+                            onClick={() => void submitRunAction(run, currentCustomDays)}
+                            disabled={busy}
+                            className="rounded-md bg-[#2563eb] px-3 py-2 text-[12px] font-semibold text-white hover:bg-[#1d4ed8] disabled:opacity-50"
+                          >
+                            {busy ? '提交中...' : `${actionLabel}提交`}
+                          </button>
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                </div>
-              );
-            })}
+                  );
+                })}
+              </div>
+            </div>
           </div>
         </div>
 
@@ -425,7 +451,7 @@ export default function AdminRunManagementPage({
           </div>
           {selectedRun && (
             <div className="mt-2 text-[12px] text-slate-500">
-              结束时间：{new Date((selectedRun.manual_end_time || selectedRun.end_time)).toLocaleString()} ｜ 实际周期：{selectedRun.duration_days} 天 ｜ 基准真实周期：{selectedRun.base_real_duration_days} 天
+              结束时间：{new Date(selectedRun.end_time).toLocaleString()} ｜ 实际周期：{selectedRun.duration_days} 天 ｜ 基准真实周期：{selectedRun.base_real_duration_days} 天
             </div>
           )}
           {selectedRun?.status === 'running' && (

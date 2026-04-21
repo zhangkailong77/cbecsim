@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "lastScanned": 1776650781068,
+  "lastScanned": 1776741472523,
   "projectRoot": "/Users/zhangkailong/workspace/code/cbec_sim",
   "techStack": {
     "languages": [],
@@ -38,7 +38,7 @@
       "path": "backend",
       "purpose": null,
       "fileCount": 4,
-      "lastAccessed": 1776650781054,
+      "lastAccessed": 1776741472510,
       "keyFiles": [
         "requirements.txt"
       ]
@@ -47,7 +47,7 @@
       "path": "docs",
       "purpose": "Documentation",
       "fileCount": 1,
-      "lastAccessed": 1776650781054,
+      "lastAccessed": 1776741472510,
       "keyFiles": [
         "当前进度.md"
       ]
@@ -56,7 +56,7 @@
       "path": "frontend",
       "purpose": null,
       "fileCount": 9,
-      "lastAccessed": 1776650781054,
+      "lastAccessed": 1776741472510,
       "keyFiles": [
         "Dockerfile",
         "index.html",
@@ -69,28 +69,28 @@
       "path": "infra",
       "purpose": null,
       "fileCount": 1,
-      "lastAccessed": 1776650781055,
+      "lastAccessed": 1776741472511,
       "keyFiles": []
     },
     "shopee_my_sim_plan": {
       "path": "shopee_my_sim_plan",
       "purpose": null,
       "fileCount": 0,
-      "lastAccessed": 1776650781055,
+      "lastAccessed": 1776741472511,
       "keyFiles": []
     },
     "backend/tests": {
       "path": "backend/tests",
       "purpose": "Test files",
       "fileCount": 1,
-      "lastAccessed": 1776650781056,
+      "lastAccessed": 1776741472511,
       "keyFiles": []
     },
     "frontend/dist": {
       "path": "frontend/dist",
       "purpose": "Distribution/build output",
       "fileCount": 2,
-      "lastAccessed": 1776650781056,
+      "lastAccessed": 1776741472511,
       "keyFiles": [
         "index.html"
       ]
@@ -99,57 +99,69 @@
       "path": "frontend/node_modules",
       "purpose": "Dependencies",
       "fileCount": 1,
-      "lastAccessed": 1776650781056,
+      "lastAccessed": 1776741472512,
       "keyFiles": []
     }
   },
   "hotPaths": [
     {
       "path": "backend/apps/api-gateway/app/api/routes/game.py",
-      "accessCount": 145,
-      "lastAccessed": 1776678916320,
+      "accessCount": 281,
+      "lastAccessed": 1776763948120,
       "type": "file"
     },
     {
       "path": "frontend/src/modules/game-setup/GameSetupPage.tsx",
-      "accessCount": 135,
-      "lastAccessed": 1776679146538,
-      "type": "file"
-    },
-    {
-      "path": "backend/apps/api-gateway/app/api/routes/shopee.py",
-      "accessCount": 62,
-      "lastAccessed": 1776669869962,
-      "type": "file"
-    },
-    {
-      "path": "backend/apps/api-gateway/tests/test_api.py",
-      "accessCount": 59,
-      "lastAccessed": 1776670853231,
-      "type": "file"
-    },
-    {
-      "path": "frontend/src/modules/admin/AdminBuyerPoolPage.tsx",
-      "accessCount": 34,
-      "lastAccessed": 1776678194997,
-      "type": "file"
-    },
-    {
-      "path": "docs/当前进度.md",
-      "accessCount": 32,
-      "lastAccessed": 1776678770404,
+      "accessCount": 232,
+      "lastAccessed": 1776762242223,
       "type": "file"
     },
     {
       "path": "frontend/src/modules/admin/AdminRunManagementPage.tsx",
-      "accessCount": 29,
-      "lastAccessed": 1776675003644,
+      "accessCount": 80,
+      "lastAccessed": 1776758983022,
+      "type": "file"
+    },
+    {
+      "path": "backend/apps/api-gateway/tests/test_api.py",
+      "accessCount": 77,
+      "lastAccessed": 1776759644137,
+      "type": "file"
+    },
+    {
+      "path": "frontend/src/modules/admin/AdminBuyerPoolPage.tsx",
+      "accessCount": 77,
+      "lastAccessed": 1776762242171,
+      "type": "file"
+    },
+    {
+      "path": "backend/apps/api-gateway/app/api/routes/shopee.py",
+      "accessCount": 63,
+      "lastAccessed": 1776763970298,
+      "type": "file"
+    },
+    {
+      "path": "docs/当前进度.md",
+      "accessCount": 58,
+      "lastAccessed": 1776759629151,
+      "type": "file"
+    },
+    {
+      "path": "docs/change-log.md",
+      "accessCount": 43,
+      "lastAccessed": 1776762685591,
+      "type": "file"
+    },
+    {
+      "path": "backend/apps/api-gateway/app/db.py",
+      "accessCount": 32,
+      "lastAccessed": 1776759998701,
       "type": "file"
     },
     {
       "path": "frontend/src/App.tsx",
-      "accessCount": 25,
-      "lastAccessed": 1776674660348,
+      "accessCount": 26,
+      "lastAccessed": 1776746374145,
       "type": "file"
     },
     {
@@ -159,33 +171,27 @@
       "type": "file"
     },
     {
-      "path": "backend/apps/api-gateway/app/db.py",
-      "accessCount": 15,
-      "lastAccessed": 1776667791996,
-      "type": "file"
-    },
-    {
       "path": "frontend/src",
-      "accessCount": 15,
-      "lastAccessed": 1776678203007,
+      "accessCount": 22,
+      "lastAccessed": 1776756172619,
       "type": "directory"
     },
     {
       "path": "backend/apps/api-gateway/app",
-      "accessCount": 14,
-      "lastAccessed": 1776678351282,
+      "accessCount": 17,
+      "lastAccessed": 1776751403219,
       "type": "directory"
     },
     {
       "path": "",
-      "accessCount": 13,
-      "lastAccessed": 1776678645526,
+      "accessCount": 15,
+      "lastAccessed": 1776758920247,
       "type": "directory"
     },
     {
       "path": "backend/apps/api-gateway/app/models.py",
-      "accessCount": 12,
-      "lastAccessed": 1776667792050,
+      "accessCount": 15,
+      "lastAccessed": 1776763938811,
       "type": "file"
     },
     {
@@ -196,8 +202,8 @@
     },
     {
       "path": "docs/admin/ad01-对局管理与运行中对局延长设计.md",
-      "accessCount": 7,
-      "lastAccessed": 1776678651206,
+      "accessCount": 8,
+      "lastAccessed": 1776758612160,
       "type": "file"
     },
     {
@@ -208,15 +214,51 @@
     },
     {
       "path": "backend",
-      "accessCount": 4,
-      "lastAccessed": 1776674426817,
+      "accessCount": 6,
+      "lastAccessed": 1776756160568,
       "type": "directory"
     },
     {
       "path": "frontend/package.json",
-      "accessCount": 3,
-      "lastAccessed": 1776674932981,
+      "accessCount": 5,
+      "lastAccessed": 1776754695143,
       "type": "file"
+    },
+    {
+      "path": "backend/apps/api-gateway",
+      "accessCount": 5,
+      "lastAccessed": 1776763910475,
+      "type": "directory"
+    },
+    {
+      "path": "backend/apps/api-gateway/app/services/shopee_order_simulator.py",
+      "accessCount": 4,
+      "lastAccessed": 1776764599273,
+      "type": "directory"
+    },
+    {
+      "path": "frontend/src/modules",
+      "accessCount": 3,
+      "lastAccessed": 1776733870413,
+      "type": "directory"
+    },
+    {
+      "path": "CLAUDE.md",
+      "accessCount": 3,
+      "lastAccessed": 1776741976044,
+      "type": "file"
+    },
+    {
+      "path": "frontend/src/modules/admin",
+      "accessCount": 3,
+      "lastAccessed": 1776756166393,
+      "type": "directory"
+    },
+    {
+      "path": "backend/apps/api-gateway/app/services",
+      "accessCount": 3,
+      "lastAccessed": 1776764611887,
+      "type": "directory"
     },
     {
       "path": "cbec_sim.sql",
@@ -231,16 +273,10 @@
       "type": "file"
     },
     {
-      "path": "backend/apps/api-gateway",
+      "path": "docs/设计文档/22-管理员对局管理统一时间口径设计.md",
       "accessCount": 2,
-      "lastAccessed": 1776664592707,
-      "type": "directory"
-    },
-    {
-      "path": "frontend/src/modules",
-      "accessCount": 2,
-      "lastAccessed": 1776673459074,
-      "type": "directory"
+      "lastAccessed": 1776758743442,
+      "type": "file"
     },
     {
       "path": "backend/.env",
@@ -267,12 +303,6 @@
       "type": "directory"
     },
     {
-      "path": "backend/apps/api-gateway/app/services",
-      "accessCount": 1,
-      "lastAccessed": 1776664592652,
-      "type": "directory"
-    },
-    {
       "path": "backend/apps/api-gateway/tests",
       "accessCount": 1,
       "lastAccessed": 1776667490500,
@@ -294,6 +324,42 @@
       "path": "docs/admin/ad03-管理员已结束对局统一倒计时冻结设计.md",
       "accessCount": 1,
       "lastAccessed": 1776678734270,
+      "type": "file"
+    },
+    {
+      "path": "docs",
+      "accessCount": 1,
+      "lastAccessed": 1776741544857,
+      "type": "directory"
+    },
+    {
+      "path": "frontend/src/modules/game-setup",
+      "accessCount": 1,
+      "lastAccessed": 1776756166339,
+      "type": "directory"
+    },
+    {
+      "path": "docs/设计文档",
+      "accessCount": 1,
+      "lastAccessed": 1776758598958,
+      "type": "directory"
+    },
+    {
+      "path": "docs/设计文档/21-Shopee套餐优惠创建页设计.md",
+      "accessCount": 1,
+      "lastAccessed": 1776758612109,
+      "type": "file"
+    },
+    {
+      "path": "backend/apps/api-gateway/app/services/shopee_order_cancellation.py",
+      "accessCount": 1,
+      "lastAccessed": 1776763925460,
+      "type": "file"
+    },
+    {
+      "path": "backend/apps/api-gateway/app/services/inventory_lot_sync.py",
+      "accessCount": 1,
+      "lastAccessed": 1776763938863,
       "type": "file"
     }
   ],

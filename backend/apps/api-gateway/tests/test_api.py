@@ -1668,6 +1668,7 @@ def test_admin_extend_run_updates_manual_end_time_when_present():
     with SessionLocal() as db:
         row = db.query(GameRun).filter(GameRun.id == run["id"]).first()
         assert row is not None
+        row.total_game_days = 30 * 365
         base_end_time = row.created_at + timedelta(days=30)
         row.manual_end_time = base_end_time + timedelta(days=2)
         expected_new_end_time = row.manual_end_time + timedelta(days=5)
@@ -1684,16 +1685,83 @@ def test_admin_extend_run_updates_manual_end_time_when_present():
     )
     assert response.status_code == 200
     payload = response.json()
-    assert payload["new_duration_days"] == 35
+    assert payload["new_duration_days"] == 37
+    assert payload["new_total_game_days"] == 1929
+    assert payload["current_day_index"] < 365
     assert payload["manual_end_time"] is not None
     assert payload["new_end_time"] is not None
 
     with SessionLocal() as db:
         row = db.query(GameRun).filter(GameRun.id == run["id"]).first()
         assert row is not None
-        assert row.duration_days == 35
+        assert row.duration_days == 37
+        assert row.total_game_days == 1929
         assert row.manual_end_time is not None
         assert row.manual_end_time == expected_new_end_time
+
+
+def test_admin_run_options_falls_back_to_duration_when_manual_end_time_is_invalid():
+    from app.db import SessionLocal
+    from app.models import GameRun
+
+    player_token = _register_or_login_player("13800138246")
+    run = _create_running_run(player_token, duration_days=7)
+
+    with SessionLocal() as db:
+        row = db.query(GameRun).filter(GameRun.id == run["id"]).first()
+        assert row is not None
+        row.manual_end_time = row.created_at
+        db.commit()
+
+    admin_login = client.post("/auth/login", json={"username": "yzcube", "password": "yzcube123"})
+    assert admin_login.status_code == 200
+    admin_token = admin_login.json()["access_token"]
+
+    response = client.get(
+        "/game/admin/runs/options",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert response.status_code == 200
+    target = next((item for item in response.json()["runs"] if int(item["run_id"]) == run["id"]), None)
+    assert target is not None
+    assert target["duration_days"] == 7
+    expected_end_time = datetime.fromisoformat(target["created_at"]) + timedelta(days=7)
+    assert datetime.fromisoformat(target["end_time"]) == expected_end_time
+
+
+
+def test_admin_run_options_falls_back_to_base_real_duration_for_legacy_runs():
+    from app.db import SessionLocal
+    from app.models import GameRun
+
+    player_token = _register_or_login_player("13800138247")
+    run = _create_running_run(player_token, duration_days=7)
+
+    with SessionLocal() as db:
+        row = db.query(GameRun).filter(GameRun.id == run["id"]).first()
+        assert row is not None
+        row.duration_days = 365
+        row.base_real_duration_days = 7
+        row.base_game_days = 365
+        row.total_game_days = 365
+        row.manual_end_time = None
+        db.commit()
+
+    admin_login = client.post("/auth/login", json={"username": "yzcube", "password": "yzcube123"})
+    assert admin_login.status_code == 200
+    admin_token = admin_login.json()["access_token"]
+
+    response = client.get(
+        "/game/admin/runs/options",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert response.status_code == 200
+    target = next((item for item in response.json()["runs"] if int(item["run_id"]) == run["id"]), None)
+    assert target is not None
+    assert target["duration_days"] == 7
+    assert target["total_game_days"] == 365
+    expected_end_time = datetime.fromisoformat(target["created_at"]) + timedelta(days=7)
+    assert datetime.fromisoformat(target["end_time"]) == expected_end_time
 
 
 

@@ -146,6 +146,7 @@ interface AdminBuyerPoolPageProps {
     dayIndex: number | null;
     createdAt: string | null;
     durationDays: number | null;
+    baseRealDurationDays: number | null;
     baseGameDays: number | null;
     totalGameDays: number | null;
     manualEndTime: string | null;
@@ -170,6 +171,34 @@ function fmtDecisionLabel(decision: string) {
   return map[decision] ?? decision;
 }
 
+function parseServerDateMs(value: string | null | undefined) {
+  if (!value) return NaN;
+  const hasTimezone = /(?:Z|[+-]\d{2}:\d{2})$/.test(value);
+  const normalized = hasTimezone ? value : `${value}Z`;
+  return new Date(normalized).getTime();
+}
+
+function getTotalRealSeconds(durationDays: number | null | undefined) {
+  return Math.max(1, Math.floor(Number(durationDays || 0) * 24 * 60 * 60));
+}
+
+function getGameClockLabelByRealSeconds(
+  elapsedSeconds: number,
+  totalRealSeconds: number,
+  totalGameDays?: number | null,
+) {
+  const safeTotalRealSeconds = Math.max(1, totalRealSeconds);
+  const resolvedTotalGameDays = Math.max(1, Math.floor(Number(totalGameDays || 365)));
+  const clampedElapsed = Math.min(Math.max(0, elapsedSeconds), Math.max(0, safeTotalRealSeconds - 1));
+  const gameDayFloat = (clampedElapsed / safeTotalRealSeconds) * resolvedTotalGameDays + 1;
+  const frac = gameDayFloat - Math.floor(gameDayFloat);
+  const totalSeconds = Math.max(0, Math.floor(frac * 24 * 60 * 60));
+  const hour = Math.floor(totalSeconds / 3600) % 24;
+  const minute = Math.floor((totalSeconds % 3600) / 60);
+  const second = totalSeconds % 60;
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:${String(second).padStart(2, '0')}`;
+}
+
 export default function AdminBuyerPoolPage({
   currentUser,
   onBackToSetup,
@@ -185,9 +214,36 @@ export default function AdminBuyerPoolPage({
   const [simulateError, setSimulateError] = useState('');
   const [simulateResult, setSimulateResult] = useState<AdminSimulateOrdersResponse | null>(null);
   const [refreshTs, setRefreshTs] = useState<number>(Date.now());
+  const [nowMs, setNowMs] = useState<number>(Date.now());
   const [fastForwardHours, setFastForwardHours] = useState<number>(1);
 
   const displayName = currentUser?.full_name?.trim() || currentUser?.username || '超级管理员';
+  const isSelectedRunFinished = (data?.selected_run_status || '').trim() === 'finished';
+  const derivedGameClock = useMemo(() => {
+    if (!data?.selected_run_created_at) return '--:--:--';
+    if (isSelectedRunFinished) return '23:59:59';
+    const createdAtMs = parseServerDateMs(data.selected_run_created_at);
+    const endAtMs = parseServerDateMs(data?.selected_run_end_time);
+    const compareMs = Number.isFinite(endAtMs) ? Math.min(nowMs, endAtMs) : nowMs;
+    const elapsedSeconds = Math.max(0, Math.floor((compareMs - createdAtMs) / 1000));
+    const totalRealSeconds = Number.isFinite(endAtMs)
+      ? Math.max(1, Math.floor((endAtMs - createdAtMs) / 1000))
+      : getTotalRealSeconds(data.selected_run_duration_days ?? data.selected_run_base_real_duration_days ?? 7);
+    return getGameClockLabelByRealSeconds(elapsedSeconds, totalRealSeconds, data.selected_run_total_game_days ?? 365);
+  }, [
+    data?.selected_run_created_at,
+    data?.selected_run_duration_days,
+    data?.selected_run_base_real_duration_days,
+    data?.selected_run_end_time,
+    data?.selected_run_total_game_days,
+    isSelectedRunFinished,
+    nowMs,
+  ]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const loadRunOptions = async () => {
     const token = localStorage.getItem(ACCESS_TOKEN_KEY);
@@ -327,6 +383,7 @@ export default function AdminBuyerPoolPage({
       dayIndex: data?.selected_run_day_index ?? null,
       createdAt: data?.selected_run_created_at ?? null,
       durationDays: data?.selected_run_duration_days ?? null,
+      baseRealDurationDays: data?.selected_run_base_real_duration_days ?? null,
       baseGameDays: data?.selected_run_base_game_days ?? null,
       totalGameDays: data?.selected_run_total_game_days ?? null,
       manualEndTime: data?.selected_run_manual_end_time ?? null,
@@ -411,15 +468,21 @@ export default function AdminBuyerPoolPage({
               <button
                 type="button"
                 onClick={() => void triggerSimulateOnce()}
-                disabled={simulateLoading || !(selectedRunId ?? data?.selected_run_id)}
+                disabled={simulateLoading || isSelectedRunFinished || !(selectedRunId ?? data?.selected_run_id)}
                 className="inline-flex h-10 items-center gap-2 rounded-xl bg-[#ea580c] px-4 text-[13px] font-semibold text-white hover:bg-[#c2410c] disabled:cursor-not-allowed disabled:bg-[#fdba74]"
               >
                 {simulateLoading ? <RefreshCw size={14} className="animate-spin" /> : <Users size={14} />}
-                {simulateLoading ? '模拟中...' : `模拟 ${Math.max(1, fastForwardHours)} 小时订单`}
+                {simulateLoading ? '模拟中...' : isSelectedRunFinished ? '对局已结束，停止模拟' : `模拟 ${Math.max(1, fastForwardHours)} 小时订单`}
               </button>
             </div>
           </div>
         </div>
+
+        {isSelectedRunFinished && (
+          <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-[13px] text-amber-700">
+            当前选中对局已结束，买家池概率模拟已停止，以下展示为结束时刻的最终静态快照。
+          </div>
+        )}
 
         <div className="mt-4 grid grid-cols-4 gap-4">
           <div className="rounded-2xl border border-[#dbeafe] bg-white p-4">
@@ -445,7 +508,7 @@ export default function AdminBuyerPoolPage({
             <div className="text-[12px] text-slate-500">当前游戏时刻（按选中对局）</div>
             <div className="mt-2 inline-flex items-center gap-2 text-[24px] font-black text-[#1e3a8a]">
               <CalendarClock size={17} />
-              {data?.game_clock ?? '--:--:--'}
+              {derivedGameClock}
             </div>
             <div className="mt-1 text-[12px] text-slate-500">
               对局：#{data?.selected_run_id ?? '--'} / {data?.selected_run_market || '--'} / {data?.selected_run_status || '--'}

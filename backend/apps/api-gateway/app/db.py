@@ -942,13 +942,9 @@ def _cleanup_game_runs_legacy_columns():
         conn.execute(
             text(
                 "UPDATE game_runs SET "
-                "base_real_duration_days = COALESCE(base_real_duration_days, NULLIF(duration_days, 0), 365), "
-                "base_game_days = COALESCE(base_game_days, 365), "
-                "total_game_days = COALESCE(total_game_days, "
-                "ROUND(COALESCE(NULLIF(duration_days, 0), 365) / "
-                "COALESCE(NULLIF(base_real_duration_days, 0), NULLIF(duration_days, 0), 365) * "
-                "COALESCE(NULLIF(base_game_days, 0), 365)), "
-                "365), "
+                "base_real_duration_days = 7, "
+                "base_game_days = 365, "
+                "total_game_days = 365, "
                 "day_index = COALESCE(day_index, 1)"
             )
         )
