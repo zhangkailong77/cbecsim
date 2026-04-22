@@ -3069,10 +3069,129 @@ def test_simulate_shopee_orders_invalidates_orders_cache(monkeypatch):
     assert called, "orders cache should be invalidated after simulate succeeds"
 
 
+def test_auto_simulate_orders_by_game_hour_uses_game_hour_seconds(monkeypatch):
+    from app.api.routes import shopee as shopee_route
+    from app.db import SessionLocal
+    from app.models import GameRun
+
+    player_token = _register_or_login_player("13800138220")
+    run = _create_running_run(player_token, duration_days=7)
+
+    with SessionLocal() as db:
+        row = db.query(GameRun).filter(GameRun.id == run["id"]).first()
+        assert row is not None
+        row.created_at = datetime.utcnow() - timedelta(seconds=610)
+        db.commit()
+        db.refresh(row)
+
+        called_tick_times: list[datetime] = []
+        monkeypatch.setattr(
+            shopee_route,
+            "simulate_orders_for_run",
+            lambda _db, run_id, user_id, tick_time: called_tick_times.append(tick_time),
+            raising=False,
+        )
+
+        shopee_route._auto_simulate_orders_by_game_hour(
+            db,
+            run=row,
+            user_id=run["user_id"],
+            max_ticks_per_request=5,
+        )
+
+        assert len(called_tick_times) == 5
+        assert called_tick_times[0] == row.created_at + timedelta(seconds=600)
+        assert called_tick_times[-1] == row.created_at + timedelta(seconds=3000)
+        assert all(
+            called_tick_times[index] - called_tick_times[index - 1] == timedelta(seconds=600)
+            for index in range(1, len(called_tick_times))
+        )
+
+
+def test_ship_order_uses_game_day_seconds_for_eta():
+    from app.api.routes import shopee as shopee_route
+    from app.db import SessionLocal
+    from app.models import ShopeeOrder, ShopeeOrderItem
+
+    player_token = _register_or_login_player("13800138216")
+    run = _create_running_run(player_token, duration_days=7)
+
+    with SessionLocal() as db:
+        order = ShopeeOrder(
+            run_id=run["id"],
+            user_id=run["user_id"],
+            order_no=f"TEST-SHIP-{int(datetime.utcnow().timestamp() * 1000)}",
+            buyer_name="测试买家",
+            buyer_payment=199,
+            type_bucket="toship",
+            process_status="processing",
+            stock_fulfillment_status="in_stock",
+            shipping_priority="today",
+            shipping_channel="标准快递",
+            destination="吉隆坡",
+            countdown_text="请在今日内处理",
+            action_text="查看详情",
+        )
+        db.add(order)
+        db.flush()
+        db.add(
+            ShopeeOrderItem(
+                order_id=order.id,
+                product_name="测试商品",
+                variant_name="默认款",
+                quantity=1,
+                unit_price=199,
+            )
+        )
+        db.commit()
+        order_id = order.id
+
+    monkeypatch = __import__("pytest").MonkeyPatch()
+    monkeypatch.setattr(shopee_route, "haversine_km", lambda *_args, **_kwargs: 100.0, raising=False)
+    try:
+        ship_resp = client.post(
+            f"/shopee/runs/{run['id']}/orders/{order_id}/ship",
+            headers={"Authorization": f"Bearer {player_token}"},
+            json={"shipping_channel": "标准快递"},
+        )
+        assert ship_resp.status_code == 200
+        payload = ship_resp.json()
+        assert payload["transit_days_expected"] == 7
+
+        with SessionLocal() as db:
+            order = db.query(ShopeeOrder).filter(ShopeeOrder.id == order_id).first()
+            assert order is not None
+            assert order.shipped_at is not None
+            assert order.eta_start_at == order.shipped_at + timedelta(seconds=7 * 1800)
+            assert order.eta_end_at == order.shipped_at + timedelta(seconds=8 * 1800)
+    finally:
+        monkeypatch.undo()
+
+
+def test_shipping_metrics_use_game_day_seconds():
+    from app.api.routes import shopee as shopee_route
+    from app.models import ShopeeOrder
+
+    shipped_at = datetime.utcnow()
+    order = ShopeeOrder(
+        shipped_at=shipped_at,
+        eta_start_at=shipped_at + timedelta(seconds=5 * 1800),
+        type_bucket="shipping",
+        shipping_channel="标准快递",
+        delivery_line_key="standard",
+        delivery_line_label="标准线（马来）",
+    )
+
+    metrics = shopee_route._calc_order_shipping_metrics(order, shipped_at + timedelta(seconds=2 * 1800))
+    assert metrics["transit_days_expected"] == 5
+    assert metrics["transit_days_elapsed"] == 2
+    assert metrics["transit_days_remaining"] == 3
+
+
 def test_shopee_orders_list_returns_429_when_rate_limited(monkeypatch):
     from app.api.routes import shopee as shopee_route
 
-    player_token = _register_or_login_player("13800138216")
+    player_token = _register_or_login_player("13800138221")
     run = _create_running_run(player_token)
     monkeypatch.setattr(shopee_route, "check_rate_limit", lambda **_kwargs: (True, 0, 0), raising=False)
 

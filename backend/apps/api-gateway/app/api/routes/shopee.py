@@ -1,6 +1,7 @@
 from datetime import date, datetime, timedelta
 import hashlib
 import json
+import logging
 import os
 from typing import Any
 from uuid import uuid4
@@ -70,7 +71,7 @@ from app.services.shopee_order_cancellation import (
     cancel_order as service_cancel_order,
     rebalance_backorders_from_current_inventory as service_rebalance_backorders_from_current_inventory,
 )
-from app.services.inventory_lot_sync import consume_reserved_inventory_lots
+from app.services.inventory_lot_sync import consume_available_inventory_lots, consume_reserved_inventory_lots
 from app.services.shopee_listing_quality import recompute_listing_quality
 from app.services.shopee_order_simulator import simulate_orders_for_run
 from app.api.routes.game import (
@@ -84,6 +85,7 @@ from app.api.routes.game import (
 
 
 router = APIRouter(prefix="/shopee", tags=["shopee"])
+logger = logging.getLogger(__name__)
 ORDER_SIM_TICK_GAME_HOURS = 8
 ORDER_INCOME_RELEASE_DELAY_GAME_DAYS = 3
 RM_TO_RMB_RATE = float(os.getenv("RM_TO_RMB_RATE", "1.74"))
@@ -2680,7 +2682,10 @@ def _resolve_line_meta_by_channel(shipping_channel: str) -> tuple[str, str]:
 def _infer_forwarder_key_by_eta(order: ShopeeOrder) -> str | None:
     if not order.shipped_at or not order.eta_start_at:
         return None
-    expected_days = max(1, int(round((order.eta_start_at - order.shipped_at).total_seconds() / 86400)))
+    expected_days = max(
+        1,
+        int(round((order.eta_start_at - order.shipped_at).total_seconds() / REAL_SECONDS_PER_GAME_DAY)),
+    )
 
     matched_keys: list[str] = []
     for key, (min_days, max_days) in LINE_TRANSIT_DAY_BOUNDS.items():
@@ -2721,8 +2726,8 @@ def _calc_order_shipping_metrics(order: ShopeeOrder, current_tick: datetime) -> 
     remaining_days: int | None = None
     if order.shipped_at and order.eta_start_at:
         delta_sec = (order.eta_start_at - order.shipped_at).total_seconds()
-        expected_days = max(1, int(round(delta_sec / 86400)))
-        elapsed_days = max(0, int((current_tick - order.shipped_at).total_seconds() // 86400))
+        expected_days = max(1, int(round(delta_sec / REAL_SECONDS_PER_GAME_DAY)))
+        elapsed_days = max(0, int((current_tick - order.shipped_at).total_seconds() // REAL_SECONDS_PER_GAME_DAY))
         if order.type_bucket == "completed":
             remaining_days = 0
         else:
@@ -2782,18 +2787,35 @@ def _auto_simulate_orders_by_game_hour(
         return
 
     current_game_tick = _resolve_game_hour_tick_by_run(run)
-    step_seconds = 3600 * ORDER_SIM_TICK_GAME_HOURS
+    step_seconds = max(1, int(REAL_SECONDS_PER_GAME_HOUR * ORDER_SIM_TICK_GAME_HOURS))
     missing_steps = int((current_game_tick - base_tick).total_seconds() // step_seconds)
+    logger.info(
+        "[order-auto-sim] run_id=%s user_id=%s latest_tick_time=%s base_tick=%s current_game_tick=%s step_seconds=%s missing_steps=%s max_ticks_per_request=%s",
+        run.id,
+        user_id,
+        latest_tick_time,
+        base_tick,
+        current_game_tick,
+        step_seconds,
+        missing_steps,
+        max_ticks_per_request,
+    )
     if missing_steps <= 0:
         return
 
     ticks_to_run = min(missing_steps, max(1, int(max_ticks_per_request)))
+    logger.info(
+        "[order-auto-sim] run_id=%s user_id=%s ticks_to_run=%s",
+        run.id,
+        user_id,
+        ticks_to_run,
+    )
     for offset in range(1, ticks_to_run + 1):
         simulate_orders_for_run(
             db,
             run_id=run.id,
             user_id=user_id,
-            tick_time=base_tick + timedelta(hours=offset * ORDER_SIM_TICK_GAME_HOURS),
+            tick_time=base_tick + timedelta(seconds=offset * step_seconds),
         )
 
 
@@ -3104,9 +3126,9 @@ def _auto_progress_shipping_orders_by_tick(
             continue
         if not order.shipped_at:
             continue
-        delivered_due_at = order.eta_start_at or (order.shipped_at + timedelta(days=3))
+        delivered_due_at = order.eta_start_at or (order.shipped_at + timedelta(seconds=3 * REAL_SECONDS_PER_GAME_DAY))
         if delivered_due_at <= order.shipped_at:
-            delivered_due_at = order.shipped_at + timedelta(days=1)
+            delivered_due_at = order.shipped_at + timedelta(seconds=REAL_SECONDS_PER_GAME_DAY)
 
         step_code = latest_event.event_code
         if step_code not in LOGISTICS_FLOW:
@@ -3907,8 +3929,17 @@ def ship_order(
             product_id=int(listing.product_id),
             qty=order_ship_qty,
         )
+        shortfall = order_ship_qty - reserved_consumed
+        if shortfall > 0:
+            available_consumed = consume_available_inventory_lots(
+                db,
+                run_id=run.id,
+                product_id=int(listing.product_id),
+                qty=shortfall,
+            )
+            reserved_consumed += available_consumed
         if reserved_consumed < order_ship_qty:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="库存预占不足，订单暂不可发货")
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="库存不足，订单暂不可发货")
 
     now = current_tick
     warehouse_latlng = _resolve_warehouse_latlng(db, run)
@@ -3924,8 +3955,8 @@ def ship_order(
         forwarder_key=forwarder_key,
         distance_km=distance_km,
     )
-    eta_start_at = now + timedelta(days=transit_days)
-    eta_end_at = now + timedelta(days=min(transit_days + 1, max_days))
+    eta_start_at = now + timedelta(seconds=transit_days * REAL_SECONDS_PER_GAME_DAY)
+    eta_end_at = now + timedelta(seconds=min(transit_days + 1, max_days) * REAL_SECONDS_PER_GAME_DAY)
 
     order.tracking_no = gen_tracking_no(now)
     order.waybill_no = gen_waybill_no(now)

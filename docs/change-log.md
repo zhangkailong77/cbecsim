@@ -1,6 +1,19 @@
 # Change Log
 
-最后更新：2026-04-21
+最后更新：2026-04-22 (订单模拟 tick 时间换算修复)
+
+## 2026-04-22
+
+### 更新
+- 已修正 Shopee 订单自动模拟按“8 游戏小时”补跑 tick 时误用真实小时的问题：`_auto_simulate_orders_by_game_hour` 现改为按 `REAL_SECONDS_PER_GAME_HOUR * 8` 计算步长，并按同一真实秒数推进 `tick_time`。
+  - 涉及文件：`backend/apps/api-gateway/app/api/routes/shopee.py`、`backend/apps/api-gateway/tests/test_api.py`
+  - 影响范围：订单列表自动补跑、订单生成频率与状态推进将按“每 8 个游戏小时 = 600 真实秒”执行，不再错误地按 8 个真实小时才推进一次。
+- 已修正 Shopee 物流 ETA、运输中到已完成推进、以及运输天数字段误按真实天计算的问题，统一改为按 `REAL_SECONDS_PER_GAME_DAY` 的游戏日秒数换算。
+  - 涉及文件：`backend/apps/api-gateway/app/api/routes/shopee.py`、`backend/apps/api-gateway/tests/test_api.py`
+  - 影响范围：发货后的 `eta_start_at / eta_end_at`、物流事件推进、以及 `transit_days_expected / elapsed / remaining` 现将按“1 游戏日 = 1800 真实秒”口径一致计算，不再错误地拖成真实天。
+- 已为 Shopee 订单自动模拟补充临时调试日志，输出 `latest_tick_time`、`base_tick`、`current_game_tick`、`step_seconds`、`missing_steps` 与 `ticks_to_run`，用于排查订单列表刷新时为何没有新增模拟日志。
+  - 涉及文件：`backend/apps/api-gateway/app/api/routes/shopee.py`
+  - 影响范围：刷新 `/shopee/runs/{run_id}/orders` 时，后端终端将打印 `[order-auto-sim]` 调试信息，便于定位自动模拟是否因时间步长判断未命中而提前返回。
 
 ## 2026-04-21
 
@@ -58,6 +71,9 @@
 - 已直接修复本地 MySQL 容器 `cbec-mysql` 中 `cbec_sim.game_runs` 的历史脏数据：将满足“`duration_days=365`、`base_real_duration_days=7`、`total_game_days=365`、`manual_end_time IS NULL`”条件的旧对局回填为真实周期 7 天，并补齐 `manual_end_time = created_at + 7天`。
   - 涉及位置：本地 MySQL 容器 `cbec-mysql` / 数据库 `cbec_sim` / 表 `game_runs`
   - 影响范围：这批旧局在数据库层也回到正确时间口径，管理员“对局管理”页面与底层表数据保持一致。
-- 已统一管理员“买家池总览”中部“当前游戏时刻”与右侧统一倒计时中心的时间轴口径：中部卡片优先按 `selected_run_created_at -> selected_run_end_time` 的真实跨度换算游戏时刻，不再固定按基准 7 天推导。
+- 已统一管理员”买家池总览”中部”当前游戏时刻”与右侧统一倒计时中心的时间轴口径：中部卡片优先按 `selected_run_created_at -> selected_run_end_time` 的真实跨度换算游戏时刻，不再固定按基准 7 天推导。
   - 涉及文件：`frontend/src/modules/admin/AdminBuyerPoolPage.tsx`
-  - 影响范围：手动延长过的 running 对局在买家池总览中，中部“当前游戏时刻”将与右侧统一时间中心保持一致，不再提前停在旧周期。
+  - 影响范围：手动延长过的 running 对局在买家池总览中，中部”当前游戏时刻”将与右侧统一时间中心保持一致，不再提前停在旧周期。
+- 修复下单时库存预占逻辑：将 `variant_available_stock` 的来源从 `variant.stock`（listing 层展示值）改为直接查询 `inventory_lots.quantity_available`（lot 层真实可用量），消除两者长期不同步导致订单被错误标记为 backorder 的问题；同时移除下单后的 shortfall 追加兜底逻辑（该逻辑在 lot 层为真实来源后已无必要）；在 `inventory_lot_sync.py` 新增 `get_lot_available_qty` 查询函数。
+  - 涉及文件：`backend/apps/api-gateway/app/services/shopee_order_simulator.py`、`backend/apps/api-gateway/app/services/inventory_lot_sync.py`
+  - 影响范围：下单时将以仓库实际可用库存为准，不再因 `variant.stock` 与 lot 层偏差导致有货订单被标为缺货；取消订单后库存回退逻辑也因此恢复正确（backorder_qty=0，stock_release=qty）。

@@ -17,7 +17,7 @@ from app.models import (
     ShopeeListingVariant,
     SimBuyerProfile,
 )
-from app.services.inventory_lot_sync import release_reserved_inventory_lots, reserve_inventory_lots
+from app.services.inventory_lot_sync import get_lot_available_qty, release_reserved_inventory_lots, reserve_inventory_lots
 
 BACKORDER_GRACE_GAME_HOURS = 48
 
@@ -397,9 +397,13 @@ def simulate_orders_for_run(
         variant_oversell_remaining = 0
         sellable_cap = _listing_sellable_cap(best_listing)
         if variant:
-            variant_available_stock = max(0, int(variant.stock or 0))
+            product_id_for_lot = int(best_listing.product_id or 0)
+            if product_id_for_lot > 0:
+                variant_available_stock = get_lot_available_qty(db, run_id=run_id, product_id=product_id_for_lot)
+            else:
+                variant_available_stock = max(0, int(variant.stock or 0))
             variant_oversell_remaining = _variant_oversell_remaining(variant)
-            sellable_cap = _variant_sellable_cap(variant)
+            sellable_cap = variant_available_stock + variant_oversell_remaining
         if sellable_cap <= 0:
             skip_reasons["no_stock"] = skip_reasons.get("no_stock", 0) + 1
             journey["decision"] = "skipped_no_stock"
@@ -447,22 +451,6 @@ def simulate_orders_for_run(
                 qty=stock_consumed_planned,
             )
         stock_consumed = reserved_qty
-        if stock_consumed_planned > reserved_qty:
-            shortfall_qty += stock_consumed_planned - reserved_qty
-        if shortfall_qty > 0 and variant and shortfall_qty > variant_oversell_remaining:
-            # 兜底：当库存批次与商品库存展示不同步时，避免透支超卖上限。
-            if int(best_listing.product_id or 0) > 0 and reserved_qty > 0:
-                release_reserved_inventory_lots(
-                    db,
-                    run_id=run_id,
-                    product_id=int(best_listing.product_id),
-                    qty=reserved_qty,
-                )
-            skip_reasons["oversell_limit_reached"] = skip_reasons.get("oversell_limit_reached", 0) + 1
-            journey["decision"] = "skipped_oversell_limit_reached"
-            journey["reason"] = "shortfall_gt_oversell_remaining_after_reserve"
-            buyer_journeys.append(journey)
-            continue
         best_listing.sales_count = int(best_listing.sales_count or 0) + quantity
         best_listing.stock_available = max(0, int(best_listing.stock_available or 0) - stock_consumed)
         if variant:

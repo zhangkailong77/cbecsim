@@ -5,6 +5,25 @@ from sqlalchemy.orm import Session
 from app.models import InventoryLot
 
 
+def get_lot_available_qty(
+    db: Session,
+    *,
+    run_id: int,
+    product_id: int,
+) -> int:
+    """Return total quantity_available across all lots for a product."""
+    from sqlalchemy import func
+    result = (
+        db.query(func.coalesce(func.sum(InventoryLot.quantity_available), 0))
+        .filter(
+            InventoryLot.run_id == run_id,
+            InventoryLot.product_id == product_id,
+        )
+        .scalar()
+    )
+    return max(0, int(result or 0))
+
+
 def reserve_inventory_lots(
     db: Session,
     *,
@@ -91,6 +110,40 @@ def release_reserved_inventory_lots(
         if fallback_lot:
             fallback_lot.quantity_available = max(0, int(fallback_lot.quantity_available or 0) + need)
     return moved
+
+
+def consume_available_inventory_lots(
+    db: Session,
+    *,
+    run_id: int,
+    product_id: int,
+    qty: int,
+) -> int:
+    """Directly consume quantity_available (for ship-time fallback when reserved was already consumed)."""
+    need = max(0, int(qty or 0))
+    if need <= 0:
+        return 0
+    lots = (
+        db.query(InventoryLot)
+        .filter(
+            InventoryLot.run_id == run_id,
+            InventoryLot.product_id == product_id,
+            InventoryLot.quantity_available > 0,
+        )
+        .order_by(InventoryLot.created_at.asc(), InventoryLot.id.asc())
+        .all()
+    )
+    consumed = 0
+    for lot in lots:
+        if need <= 0:
+            break
+        can_take = min(need, max(0, int(lot.quantity_available or 0)))
+        if can_take <= 0:
+            continue
+        lot.quantity_available = max(0, int(lot.quantity_available or 0) - can_take)
+        consumed += can_take
+        need -= can_take
+    return consumed
 
 
 def consume_reserved_inventory_lots(
