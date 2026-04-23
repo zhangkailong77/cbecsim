@@ -54,6 +54,9 @@ interface OrderRow {
   transit_days_remaining?: number | null;
   created_at: string;
   items: OrderItem[];
+  marketing_campaign_id?: number | null;
+  marketing_campaign_name_snapshot?: string | null;
+  discount_percent?: number | null;
 }
 
 interface OrdersResponse {
@@ -760,7 +763,19 @@ export default function MyOrdersView({ runId, onOpenOrderDetail, readOnly = fals
                             </div>
                           </div>
                         </div>
-                        <div className="text-gray-800">{formatMoney(row.buyer_payment)}</div>
+                        <div>
+                          <div className="text-gray-800">{formatMoney(row.buyer_payment)}</div>
+                          {row.marketing_campaign_id && (
+                            <div className="text-[11px] text-orange-500 mt-0.5">
+                              折扣活动：{row.marketing_campaign_name_snapshot || '折扣'}
+                            </div>
+                          )}
+                          {row.discount_percent != null && row.discount_percent > 0 && (
+                            <div className="text-[11px] text-orange-400 mt-0.5">
+                              折扣 {row.discount_percent}% off
+                            </div>
+                          )}
+                        </div>
                         {isShippingView ? (
                           <>
                             <div>

@@ -1989,6 +1989,155 @@ def test_admin_simulate_orders_skips_when_no_stock(monkeypatch):
     assert "no_stock" in payload["skip_reasons"]
 
 
+def test_discount_create_bootstrap_returns_game_time_strings(monkeypatch):
+    from app.api.routes import shopee as shopee_route
+    from app.db import SessionLocal
+    from app.models import GameRun
+
+    token = _register_or_login_player("13800138240")
+    run = _create_running_run(token, duration_days=30)
+
+    with SessionLocal() as db:
+        run_row = db.query(GameRun).filter(GameRun.id == run["id"]).first()
+        assert run_row is not None
+        run_row.created_at = datetime(2026, 4, 10, 0, 0, 0)
+        db.commit()
+
+    monkeypatch.setattr(shopee_route, "_resolve_game_tick", lambda _db, _run_id, _user_id: datetime(2026, 4, 10, 0, 0, 0))
+
+    resp = client.get(
+        f"/shopee/runs/{run['id']}/marketing/discount/create/bootstrap",
+        headers={"Authorization": f"Bearer {token}"},
+        params={"campaign_type": "discount"},
+    )
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["form"]["start_at"].endswith("T00:00")
+    assert payload["form"]["end_at"].endswith("T01:00")
+    assert payload["form"]["start_at"][5:] == "01-01T00:00"
+    assert payload["form"]["end_at"][5:] == "01-01T01:00"
+
+
+def test_discount_campaign_create_converts_game_time_to_stored_datetime(monkeypatch):
+    from app.db import SessionLocal
+    from app.models import GameRun, ShopeeDiscountCampaign
+
+    token = _register_or_login_player("13800138241")
+    run = _create_running_run(token, duration_days=30)
+    listing_id = _insert_live_listing_for_run(run["id"], stock=20, price=120)
+    run_created_at = datetime(2026, 4, 10, 0, 0, 0)
+
+    with SessionLocal() as db:
+        run_row = db.query(GameRun).filter(GameRun.id == run["id"]).first()
+        assert run_row is not None
+        run_row.created_at = run_created_at
+        db.commit()
+
+    eligible_resp = client.get(
+        f"/shopee/runs/{run['id']}/marketing/discount/eligible-products",
+        headers={"Authorization": f"Bearer {token}"},
+        params={"page": 1, "page_size": 20},
+    )
+    assert eligible_resp.status_code == 200
+    selected_item = next((item for item in eligible_resp.json()["items"] if int(item["listing_id"]) == listing_id), None)
+    assert selected_item is not None
+
+    create_resp = client.post(
+        f"/shopee/runs/{run['id']}/marketing/discount/campaigns",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "campaign_type": "discount",
+            "campaign_name": "游戏时间折扣",
+            "start_at": "2026-01-02T00:00",
+            "end_at": "2026-01-03T00:00",
+            "items": [selected_item],
+        },
+    )
+    assert create_resp.status_code == 201
+
+    expected_start_at = run_created_at + timedelta(seconds=(24 * 60 * 60 / 86400) * (604800 / 365))
+    expected_end_at = run_created_at + timedelta(seconds=(2 * 24 * 60 * 60 / 86400) * (604800 / 365))
+
+    with SessionLocal() as db:
+        campaign = db.query(ShopeeDiscountCampaign).filter(ShopeeDiscountCampaign.campaign_name == "游戏时间折扣").first()
+        assert campaign is not None
+        assert campaign.start_at is not None
+        assert campaign.end_at is not None
+        assert campaign.start_at == expected_start_at
+        assert campaign.end_at == expected_end_at
+
+
+def test_simulate_orders_use_discount_price_and_marketing_fields(monkeypatch):
+    from app.db import SessionLocal
+    from app.models import GameRun, ShopeeDiscountCampaign, ShopeeDiscountCampaignItem, ShopeeListing, ShopeeOrder, ShopeeOrderItem, SimBuyerProfile
+    from app.services.shopee_order_simulator import simulate_orders_for_run
+
+    token = _register_or_login_player("13800138242")
+    run = _create_running_run(token, duration_days=30)
+    listing_id = _insert_live_listing_for_run(run["id"], stock=20, price=120)
+
+    with SessionLocal() as db:
+        run_row = db.query(GameRun).filter(GameRun.id == run["id"]).first()
+        assert run_row is not None
+        listing = db.query(ShopeeListing).filter(ShopeeListing.id == listing_id).first()
+        assert listing is not None
+        buyer = db.query(SimBuyerProfile).filter(SimBuyerProfile.is_active == True).order_by(SimBuyerProfile.id.asc()).first()
+        assert buyer is not None
+
+        buyer.active_hours_json = json.dumps([1.0] * 24, ensure_ascii=False)
+        buyer.weekday_factors_json = json.dumps([1.0] * 7, ensure_ascii=False)
+        buyer.base_buy_intent = 1.0
+        buyer.impulse_level = 1.0
+        buyer.purchase_power = 0.3
+        buyer.price_sensitivity = 0.8
+
+        campaign = ShopeeDiscountCampaign(
+            run_id=run_row.id,
+            user_id=run_row.user_id,
+            campaign_type="discount",
+            campaign_name="生效折扣",
+            campaign_status="ongoing",
+            start_at=datetime.utcnow() - timedelta(hours=1),
+            end_at=datetime.utcnow() + timedelta(hours=1),
+            market="MY",
+            currency="RM",
+            rules_json="{}",
+        )
+        db.add(campaign)
+        db.flush()
+        db.add(
+            ShopeeDiscountCampaignItem(
+                campaign_id=campaign.id,
+                listing_id=listing.id,
+                variant_id=None,
+                product_name_snapshot=listing.title,
+                image_url_snapshot=listing.cover_url,
+                sku_snapshot=listing.sku_code,
+                original_price=float(listing.price),
+                discount_type="final_price",
+                discount_value=25,
+                final_price=90,
+                sort_order=0,
+            )
+        )
+        db.commit()
+
+        result = simulate_orders_for_run(db, run_id=run_row.id, user_id=run_row.user_id, tick_time=datetime.utcnow())
+        assert result["generated_order_count"] > 0
+
+        order = db.query(ShopeeOrder).order_by(ShopeeOrder.id.desc()).first()
+        assert order is not None
+        assert order.marketing_campaign_type == "discount"
+        assert order.marketing_campaign_name_snapshot == "生效折扣"
+        assert order.marketing_campaign_id == campaign.id
+        assert order.buyer_payment > 0
+
+        order_item = db.query(ShopeeOrderItem).filter(ShopeeOrderItem.order_id == order.id).first()
+        assert order_item is not None
+        assert order_item.unit_price == 90
+        assert order.buyer_payment == 90 * order_item.quantity
+
+
 def test_shopee_products_list_allows_finished_run_and_returns_existing_listings():
     from app.db import SessionLocal
     from app.models import GameRun, ShopeeListing, ShopeeListingVariant

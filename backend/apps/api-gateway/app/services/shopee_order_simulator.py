@@ -10,11 +10,12 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.models import (
     InventoryStockMovement,
+    ShopeeDiscountCampaign,
     ShopeeListing,
+    ShopeeListingVariant,
     ShopeeOrder,
     ShopeeOrderGenerationLog,
     ShopeeOrderItem,
-    ShopeeListingVariant,
     SimBuyerProfile,
 )
 from app.services.inventory_lot_sync import get_lot_available_qty, release_reserved_inventory_lots, reserve_inventory_lots
@@ -109,36 +110,124 @@ def _listing_sellable_cap(listing: ShopeeListing) -> int:
     return _listing_available_stock(listing)
 
 
+def _resolve_price_score(*, price: float, target_price: float, price_sensitivity: float) -> tuple[float, float]:
+    safe_target_price = max(float(target_price), 1.0)
+    safe_price = max(float(price), 1.0)
+    sensitivity = _clamp(float(price_sensitivity or 0.5), 0.0, 1.0)
+    price_gap = (safe_price - safe_target_price) / safe_target_price
+    if price_gap >= 0:
+        price_score = _clamp(1 - price_gap * (0.5 + sensitivity * 0.5), 0.0, 1.0)
+    else:
+        price_score = _clamp(1 + abs(price_gap) * (0.5 - sensitivity * 0.5), 0.0, 1.0)
+    return price_score, price_gap
+
+
+def _load_ongoing_discount_map(db: Session, *, run_id: int, user_id: int, tick_time: datetime) -> dict[tuple[int, int | None], dict[str, Any]]:
+    campaigns = (
+        db.query(ShopeeDiscountCampaign)
+        .options(selectinload(ShopeeDiscountCampaign.items))
+        .filter(
+            ShopeeDiscountCampaign.run_id == run_id,
+            ShopeeDiscountCampaign.user_id == user_id,
+            ShopeeDiscountCampaign.campaign_type == "discount",
+            ShopeeDiscountCampaign.campaign_status.in_(("ongoing", "upcoming")),
+            ShopeeDiscountCampaign.start_at.isnot(None),
+            ShopeeDiscountCampaign.end_at.isnot(None),
+            ShopeeDiscountCampaign.start_at <= tick_time,
+            ShopeeDiscountCampaign.end_at >= tick_time,
+        )
+        .all()
+    )
+    discount_map: dict[tuple[int, int | None], dict[str, Any]] = {}
+    for campaign in campaigns:
+        for item in sorted(campaign.items or [], key=lambda row: (row.sort_order, row.id)):
+            if item.final_price is None or float(item.final_price) <= 0:
+                continue
+            discount_map[(int(item.listing_id or 0), int(item.variant_id) if item.variant_id is not None else None)] = {
+                "campaign_id": campaign.id,
+                "campaign_name": campaign.campaign_name,
+                "campaign_type": campaign.campaign_type,
+                "listing_id": int(item.listing_id or 0),
+                "variant_id": int(item.variant_id) if item.variant_id is not None else None,
+                "discount_type": item.discount_type,
+                "discount_value": float(item.discount_value or 0),
+                "final_price": max(1, int(round(float(item.final_price)))),
+            }
+    return discount_map
+
+
+def _resolve_effective_price(
+    listing: ShopeeListing,
+    *,
+    variant: ShopeeListingVariant | None,
+    discount_map: dict[tuple[int, int | None], dict[str, Any]],
+) -> tuple[int, dict[str, Any] | None]:
+    listing_id = int(listing.id)
+    variant_id = int(variant.id) if variant else None
+    discount = discount_map.get((listing_id, variant_id)) or discount_map.get((listing_id, None))
+    base_price = max(1, int((variant.price if variant else listing.price) or 0))
+    if not discount:
+        return base_price, None
+    return max(1, int(discount["final_price"])), discount
+
+
 def _pick_variant_for_buyer(
     listing: ShopeeListing,
     *,
     buyer_purchase_power: float,
+    buyer_price_sensitivity: float,
     rng: random.Random,
-) -> ShopeeListingVariant | None:
+    discount_map: dict[tuple[int, int | None], dict[str, Any]],
+) -> tuple[ShopeeListingVariant | None, int, dict[str, Any] | None, float, float]:
     variants = [
         row
         for row in sorted(list(listing.variants or []), key=lambda x: (x.sort_order, x.id))
         if _variant_sellable_cap(row) > 0
     ]
     if not variants:
-        return None
+        base_price, discount = _resolve_effective_price(listing, variant=None, discount_map=discount_map)
+        price_score, price_gap = _resolve_price_score(
+            price=base_price,
+            target_price=30 + _clamp(float(buyer_purchase_power or 0.5), 0.0, 1.0) * 300,
+            price_sensitivity=buyer_price_sensitivity,
+        )
+        return None, base_price, discount, price_score, price_gap
     if len(variants) == 1:
-        return variants[0]
+        effective_price, discount = _resolve_effective_price(listing, variant=variants[0], discount_map=discount_map)
+        price_score, price_gap = _resolve_price_score(
+            price=effective_price,
+            target_price=30 + _clamp(float(buyer_purchase_power or 0.5), 0.0, 1.0) * 300,
+            price_sensitivity=buyer_price_sensitivity,
+        )
+        return variants[0], effective_price, discount, price_score, price_gap
 
     target_price = 30 + _clamp(float(buyer_purchase_power or 0.5), 0.0, 1.0) * 300
     best: ShopeeListingVariant | None = None
+    best_discount: dict[str, Any] | None = None
+    best_effective_price = 0
+    best_price_score = 0.0
+    best_price_gap = 0.0
     best_score = -1.0
     for row in variants:
-        price = max(1, int(row.price or 0))
-        price_gap = abs(price - target_price) / max(target_price, 1)
-        price_score = _clamp(1 - price_gap, 0.0, 1.0)
+        effective_price, discount = _resolve_effective_price(listing, variant=row, discount_map=discount_map)
+        price_score, price_gap = _resolve_price_score(
+            price=effective_price,
+            target_price=target_price,
+            price_sensitivity=buyer_price_sensitivity,
+        )
         stock_score = _clamp(float(_variant_sellable_cap(row)) / 30.0, 0.0, 1.0)
         jitter = rng.random() * 0.06
         score = 0.70 * price_score + 0.24 * stock_score + 0.06 * jitter
         if score > best_score:
             best_score = score
             best = row
-    return best
+            best_discount = discount
+            best_effective_price = effective_price
+            best_price_score = price_score
+            best_price_gap = price_gap
+    return best, best_effective_price, best_discount, best_price_score, best_price_gap
+
+
 
 
 def _resolve_shipping_channel(listing: ShopeeListing, rng: random.Random) -> str:
@@ -190,6 +279,8 @@ def simulate_orders_for_run(
         .order_by(ShopeeListing.id.asc())
         .all()
     )
+
+    discount_map = _load_ongoing_discount_map(db, run_id=run_id, user_id=user_id, tick_time=now)
 
     skip_reasons: dict[str, int] = {}
     if not live_products:
@@ -321,9 +412,13 @@ def simulate_orders_for_run(
         for listing in candidates[:8]:
             category_match = _category_match_score(listing.category, preferred_categories)
             target_price = 30 + float(buyer.purchase_power or 0.5) * 300
-            price = max(1, int(listing.price or 0))
-            price_gap = abs(price - target_price) / max(target_price, 1)
-            price_score = _clamp(1 - price_gap, 0.0, 1.0)
+            preview_variant, effective_price, hit_discount, price_score, price_gap = _pick_variant_for_buyer(
+                listing,
+                buyer_purchase_power=float(buyer.purchase_power or 0.5),
+                buyer_price_sensitivity=float(buyer.price_sensitivity or 0.5),
+                rng=rng,
+                discount_map=discount_map,
+            )
             quality_score = _resolve_listing_quality_score(listing)
             stock_score = _clamp(float(_listing_sellable_cap(listing)) / 40.0, 0.0, 1.0)
             base_intent = _clamp(float(buyer.base_buy_intent or 0.0), 0.0, 1.0)
@@ -344,6 +439,11 @@ def simulate_orders_for_run(
                     "sku": listing.sku_code,
                     "parent_sku": listing.parent_sku,
                     "price": int(listing.price or 0),
+                    "effective_price": effective_price,
+                    "price_gap": round(price_gap, 4),
+                    "discount_hit": bool(hit_discount),
+                    "discount_campaign_id": hit_discount["campaign_id"] if hit_discount else None,
+                    "discount_variant_id": preview_variant.id if preview_variant and hit_discount else None,
                     "stock_available": _listing_available_stock(listing),
                     "sellable_cap": _listing_sellable_cap(listing),
                     "score_components": {
@@ -371,12 +471,25 @@ def simulate_orders_for_run(
 
         order_prob = _clamp(0.08 + best_score * 0.95, 0.05, 0.90)
         order_roll = rng.random()
+        variant, effective_price, hit_discount, selected_price_score, selected_price_gap = _pick_variant_for_buyer(
+            best_listing,
+            buyer_purchase_power=float(buyer.purchase_power or 0.5),
+            buyer_price_sensitivity=float(buyer.price_sensitivity or 0.5),
+            rng=rng,
+            discount_map=discount_map,
+        )
         journey["selected_candidate"] = {
             "listing_id": best_listing.id,
             "title": best_listing.title,
             "sku": best_listing.sku_code,
             "parent_sku": best_listing.parent_sku,
             "price": int(best_listing.price or 0),
+            "effective_price": effective_price,
+            "price_gap": round(selected_price_gap, 4),
+            "price_score": round(selected_price_score, 4),
+            "discount_hit": bool(hit_discount),
+            "discount_campaign_id": hit_discount["campaign_id"] if hit_discount else None,
+            "discount_campaign_name": hit_discount["campaign_name"] if hit_discount else None,
             "score": round(best_score, 4),
         }
         journey["order_prob"] = round(order_prob, 4)
@@ -388,11 +501,6 @@ def simulate_orders_for_run(
             buyer_journeys.append(journey)
             continue
 
-        variant = _pick_variant_for_buyer(
-            best_listing,
-            buyer_purchase_power=float(buyer.purchase_power or 0.5),
-            rng=rng,
-        )
         variant_available_stock = _listing_available_stock(best_listing)
         variant_oversell_remaining = 0
         sellable_cap = _listing_sellable_cap(best_listing)
@@ -430,8 +538,7 @@ def simulate_orders_for_run(
             buyer_journeys.append(journey)
             continue
 
-        unit_price = int((variant.price if variant else best_listing.price) or 0)
-        unit_price = max(unit_price, 1)
+        unit_price = max(int(effective_price or 0), 1)
         payment = unit_price * quantity
         shortfall_qty = max(0, quantity - variant_available_stock)
         if shortfall_qty > 0 and variant and shortfall_qty > variant_oversell_remaining:
@@ -482,6 +589,9 @@ def simulate_orders_for_run(
             stock_fulfillment_status="backorder" if shortfall_qty > 0 else "in_stock",
             backorder_qty=shortfall_qty,
             must_restock_before_at=(now + timedelta(hours=BACKORDER_GRACE_GAME_HOURS)) if shortfall_qty > 0 else None,
+            marketing_campaign_type=hit_discount["campaign_type"] if hit_discount else None,
+            marketing_campaign_id=hit_discount["campaign_id"] if hit_discount else None,
+            marketing_campaign_name_snapshot=hit_discount["campaign_name"] if hit_discount else None,
         )
         db.add(order)
         db.flush()
@@ -525,6 +635,12 @@ def simulate_orders_for_run(
             "quantity": quantity,
             "unit_price": unit_price,
             "buyer_payment": payment,
+            "effective_price": effective_price,
+            "price_gap": round(selected_price_gap, 4),
+            "price_score": round(selected_price_score, 4),
+            "discount_hit": bool(hit_discount),
+            "discount_campaign_id": hit_discount["campaign_id"] if hit_discount else None,
+            "discount_campaign_name": hit_discount["campaign_name"] if hit_discount else None,
             "stock_fulfillment_status": "backorder" if shortfall_qty > 0 else "in_stock",
             "backorder_qty": shortfall_qty,
         }

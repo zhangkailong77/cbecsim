@@ -1,6 +1,28 @@
 # Change Log
 
-最后更新：2026-04-22 (current_game_tick 计算修复 + max_ticks_per_request 恢复)
+最后更新：2026-04-23（Shopee 单品折扣游戏时间生效链路补齐）
+
+## 2026-04-23
+
+### 修复
+- 修复 `_parse_discount_game_datetime` 中游戏年份基准与 `_format_discount_game_datetime` 不一致的问题：将 `datetime(parsed_value.year, 1, 1)` 改为 `datetime(run.created_at.year, 1, 1)`，使解析与格式化使用相同基准年，消除跨年游戏时间（如 2027-11 月）存库后折扣立即显示”已结束”的 bug。
+  - 涉及文件：`backend/apps/api-gateway/app/api/routes/shopee.py`
+  - 影响范围：单品折扣创建页选择跨年游戏时间后，折扣状态将正确显示为进行中/即将开始，不再错误显示已结束。
+
+### 新增
+- 订单列表接口新增 `marketing_campaign_id`、`marketing_campaign_name_snapshot`、`discount_percent` 字段，命中折扣的订单会返回折扣活动名称与折扣比例。
+  - 涉及文件：`backend/apps/api-gateway/app/api/routes/shopee.py`
+  - 影响范围：`GET /shopee/runs/{run_id}/orders` 返回结构新增三个折扣相关字段，不影响未命中折扣的订单。
+- 订单列表前端在买家实付金额下方新增折扣标注：命中折扣时显示”折扣活动：{活动名}”与”折扣 X% off”两行橙色小字。
+  - 涉及文件：`frontend/src/modules/shopee/views/MyOrdersView.tsx`
+  - 影响范围：我的订单列表中，折扣价购买的订单可一眼识别折扣活动与折扣比例。
+
+### 更新
+- 已补齐 Shopee 单品折扣游戏时间生效链路（接上 2026-04-23 首条记录）：
+  - 折扣创建页时间语义改为游戏时间，bootstrap/草稿/创建统一换算存库；
+  - 订单模拟器接入 ongoing 折扣，成交价改用折后价，`price_sensitivity` 正式参与 `price_score` 计算；
+  - 订单营销归因字段（`marketing_campaign_type/id/name_snapshot`）正确写入；
+  - 已通过 3 条后端回归测试验证，并经真实对局手动联调确认折扣生效。
 
 ## 2026-04-22 (续)
 

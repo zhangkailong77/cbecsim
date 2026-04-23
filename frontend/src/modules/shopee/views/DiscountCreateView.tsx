@@ -79,12 +79,9 @@ interface DiscountCreateViewProps {
   onBackToDiscount: () => void;
 }
 
-function toDateTimeLocal(value: string | null | undefined) {
+function normalizeGameDateTime(value: string | null | undefined) {
   if (!value) return '';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '';
-  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
-  return local.toISOString().slice(0, 16);
+  return value.trim().replace(' ', 'T').slice(0, 16);
 }
 
 function formatMoney(value: number) {
@@ -95,13 +92,17 @@ function addMinutesToLocalDateTime(value: string, minutes: number): string {
   const date = parseLocalDateTime(value);
   if (!date) return '';
   date.setMinutes(date.getMinutes() + minutes);
-  return toDateTimeLocal(date.toISOString());
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  const hour = String(date.getHours()).padStart(2, '0');
+  const minute = String(date.getMinutes()).padStart(2, '0');
+  return `${year}-${month}-${day}T${hour}:${minute}`;
 }
 
-function buildCurrentDefaultDiscountWindow() {
-  const now = new Date();
-  const start = toDateTimeLocal(now.toISOString());
-  const end = addMinutesToLocalDateTime(start, 60);
+function buildDefaultDiscountWindowFromBootstrap(startAt: string | null | undefined, endAt: string | null | undefined) {
+  const start = normalizeGameDateTime(startAt);
+  const end = normalizeGameDateTime(endAt) || (start ? addMinutesToLocalDateTime(start, 60) : '');
   return { start, end };
 }
 
@@ -196,14 +197,9 @@ export default function DiscountCreateView({ runId, readOnly = false, onBackToDi
         if (cancelled) return;
         setBootstrap(result);
         setCampaignName(result.form.campaign_name || '');
-        if (result.draft) {
-          setStartAt(toDateTimeLocal(result.form.start_at));
-          setEndAt(toDateTimeLocal(result.form.end_at));
-        } else {
-          const defaults = buildCurrentDefaultDiscountWindow();
-          setStartAt(defaults.start);
-          setEndAt(defaults.end);
-        }
+        const defaults = buildDefaultDiscountWindowFromBootstrap(result.form.start_at, result.form.end_at);
+        setStartAt(defaults.start);
+        setEndAt(defaults.end);
         setSelectedProducts(result.selected_products || []);
       } catch {
         if (!cancelled) {

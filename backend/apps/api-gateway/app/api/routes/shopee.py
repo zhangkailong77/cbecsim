@@ -283,6 +283,9 @@ class ShopeeOrderResponse(BaseModel):
     transit_days_remaining: int | None = None
     created_at: datetime
     items: list[ShopeeOrderItemResponse]
+    marketing_campaign_id: int | None = None
+    marketing_campaign_name_snapshot: str | None = None
+    discount_percent: float | None = None
 
 
 class ShopeeOrderTabCounts(BaseModel):
@@ -649,8 +652,8 @@ class ShopeeDiscountCreateMetaResponse(BaseModel):
 class ShopeeDiscountCreateFormResponse(BaseModel):
     campaign_name: str = ""
     name_max_length: int = 150
-    start_at: datetime | None = None
-    end_at: datetime | None = None
+    start_at: str | None = None
+    end_at: str | None = None
     max_duration_days: int = 180
 
 
@@ -731,8 +734,8 @@ class ShopeeDiscountDraftDetailResponse(BaseModel):
     id: int
     campaign_type: str
     campaign_name: str
-    start_at: datetime | None = None
-    end_at: datetime | None = None
+    start_at: str | None = None
+    end_at: str | None = None
     status: str
     items: list[ShopeeDiscountCreateProductRowResponse] = Field(default_factory=list)
     created_at: datetime
@@ -765,8 +768,8 @@ class ShopeeBundleTierResponse(BaseModel):
 class ShopeeBundleCreateFormResponse(BaseModel):
     campaign_name: str = ""
     name_max_length: int = 25
-    start_at: datetime | None = None
-    end_at: datetime | None = None
+    start_at: str | None = None
+    end_at: str | None = None
     max_duration_days: int = 180
     bundle_type: str = "percent"
     purchase_limit: int | None = None
@@ -1804,6 +1807,27 @@ def _parse_discount_datetime(raw_value: str | None) -> datetime | None:
     return None
 
 
+def _format_discount_game_datetime(value: datetime | None, *, run: GameRun) -> str | None:
+    if value is None or run.created_at is None:
+        return None
+    aligned_value = _align_compare_time(run.created_at, value)
+    elapsed_seconds = max(0.0, (aligned_value - run.created_at).total_seconds())
+    game_seconds = round((elapsed_seconds / REAL_SECONDS_PER_GAME_DAY) * 24 * 60 * 60)
+    game_base = datetime(run.created_at.year, 1, 1, 0, 0, 0)
+    game_value = game_base + timedelta(seconds=game_seconds)
+    return game_value.strftime("%Y-%m-%dT%H:%M")
+
+
+def _parse_discount_game_datetime(raw_value: str | None, *, run: GameRun) -> datetime | None:
+    parsed_value = _parse_discount_datetime(raw_value)
+    if parsed_value is None or run.created_at is None:
+        return parsed_value
+    game_year_start = datetime(run.created_at.year, 1, 1, 0, 0, 0)
+    game_elapsed_seconds = max(0.0, (parsed_value - game_year_start).total_seconds())
+    real_elapsed_seconds = (game_elapsed_seconds / (24 * 60 * 60)) * REAL_SECONDS_PER_GAME_DAY
+    return run.created_at + timedelta(seconds=real_elapsed_seconds)
+
+
 def _compute_discount_final_price(*, original_price: float, discount_mode: str, discount_percent: float | None, final_price: float | None) -> tuple[float | None, float | None]:
     safe_original_price = float(original_price or 0)
     if safe_original_price <= 0:
@@ -1909,12 +1933,13 @@ def _build_discount_draft_detail_response(db: Session, draft: ShopeeDiscountDraf
                 activity_stock_limit=item.activity_stock_limit,
             )
         )
+    run = db.query(GameRun).filter(GameRun.id == draft.run_id).first()
     return ShopeeDiscountDraftDetailResponse(
         id=draft.id,
         campaign_type=draft.campaign_type,
         campaign_name=draft.campaign_name,
-        start_at=draft.start_at,
-        end_at=draft.end_at,
+        start_at=_format_discount_game_datetime(draft.start_at, run=run) if run else None,
+        end_at=_format_discount_game_datetime(draft.end_at, run=run) if run else None,
         status=draft.status,
         items=rows,
         created_at=draft.created_at,
@@ -1932,8 +1957,8 @@ def _build_discount_create_bootstrap_payload(
     campaign_type: str,
     draft: ShopeeDiscountDraft | None = None,
 ) -> ShopeeDiscountCreateBootstrapResponse:
-    start_at = draft.start_at if draft and draft.start_at else current_tick
-    end_at = draft.end_at if draft and draft.end_at else current_tick + timedelta(hours=1)
+    start_at = _format_discount_game_datetime(draft.start_at, run=run) if draft and draft.start_at else _format_discount_game_datetime(current_tick, run=run)
+    end_at = _format_discount_game_datetime(draft.end_at, run=run) if draft and draft.end_at else _format_discount_game_datetime(current_tick + timedelta(seconds=REAL_SECONDS_PER_GAME_HOUR), run=run)
     selected_products: list[ShopeeDiscountCreateProductRowResponse] = []
     if draft:
         selected_products = _build_discount_draft_detail_response(db, draft).items
@@ -1977,8 +2002,8 @@ def _build_bundle_create_bootstrap_payload(
         ),
         form=ShopeeBundleCreateFormResponse(
             campaign_name="",
-            start_at=current_tick,
-            end_at=current_tick + timedelta(hours=1),
+            start_at=_format_discount_game_datetime(current_tick, run=run),
+            end_at=_format_discount_game_datetime(current_tick + timedelta(seconds=REAL_SECONDS_PER_GAME_HOUR), run=run),
             bundle_type="percent",
             purchase_limit=None,
             tiers=[ShopeeBundleTierResponse(tier_no=1, buy_quantity=2, discount_value=10)],
@@ -2764,6 +2789,9 @@ def _resolve_game_tick(db: Session, run_id: int, user_id: int) -> datetime:
     )
     if latest_tick_time:
         return latest_tick_time
+    run = db.query(GameRun).filter(GameRun.id == run_id, GameRun.user_id == user_id).first()
+    if run is not None:
+        return _resolve_game_hour_tick_by_run(run)
     return datetime.utcnow()
 
 
@@ -3681,6 +3709,21 @@ def list_shopee_orders(
 
     total = query.count()
     rows = query.offset((page - 1) * page_size).limit(page_size).all()
+
+    # 预加载命中折扣的比例：(campaign_id, variant_id) -> discount_percent
+    campaign_ids = [r.marketing_campaign_id for r in rows if r.marketing_campaign_id]
+    discount_percent_map: dict[tuple[int, int | None], float] = {}
+    if campaign_ids:
+        discount_items = (
+            db.query(ShopeeDiscountCampaignItem)
+            .filter(ShopeeDiscountCampaignItem.campaign_id.in_(campaign_ids))
+            .all()
+        )
+        for di in discount_items:
+            pct = float(di.discount_value or 0) if (di.discount_type or "") == "percent" else None
+            if pct is not None:
+                discount_percent_map[(int(di.campaign_id), int(di.variant_id) if di.variant_id else None)] = pct
+
     readonly_backorder_projection: dict[int, tuple[str, int, datetime | None]] = {}
     if (run.status or "").strip() == "finished":
         readonly_backorder_projection = _project_readonly_backorder_fulfillment(
@@ -3752,6 +3795,12 @@ def list_shopee_orders(
                         "eta_end_at": row.eta_end_at,
                         "distance_km": row.distance_km,
                         "created_at": row.created_at,
+                        "marketing_campaign_id": row.marketing_campaign_id,
+                        "marketing_campaign_name_snapshot": row.marketing_campaign_name_snapshot,
+                        "discount_percent": (
+                            discount_percent_map.get((int(row.marketing_campaign_id), int(row.variant_id) if row.variant_id else None))
+                            or discount_percent_map.get((int(row.marketing_campaign_id), None))
+                        ) if row.marketing_campaign_id else None,
                         "items": [
                             ShopeeOrderItemResponse(
                                 product_name=item.product_name,
@@ -5027,8 +5076,8 @@ def upsert_shopee_discount_draft(
     safe_campaign_type = _resolve_discount_type(payload.campaign_type)
     if safe_campaign_type != "discount":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="当前仅支持单品折扣草稿")
-    start_at = _parse_discount_datetime(payload.start_at)
-    end_at = _parse_discount_datetime(payload.end_at)
+    start_at = _parse_discount_game_datetime(payload.start_at, run=run)
+    end_at = _parse_discount_game_datetime(payload.end_at, run=run)
     if payload.campaign_name.strip() or start_at or end_at or payload.items:
         _validate_discount_create_payload(
             db=db,
@@ -5135,8 +5184,8 @@ def create_shopee_discount_campaign(
     safe_campaign_type = _resolve_discount_type(payload.campaign_type)
     if safe_campaign_type != "discount":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="当前仅支持创建单品折扣活动")
-    start_at = _parse_discount_datetime(payload.start_at)
-    end_at = _parse_discount_datetime(payload.end_at)
+    start_at = _parse_discount_game_datetime(payload.start_at, run=run)
+    end_at = _parse_discount_game_datetime(payload.end_at, run=run)
     _validate_discount_create_payload(
         db=db,
         run=run,
@@ -5232,8 +5281,8 @@ def create_shopee_bundle_campaign(
     if _resolve_discount_type(payload.campaign_type) != "bundle":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="当前仅支持创建套餐优惠活动")
 
-    start_at = _parse_discount_datetime(payload.start_at)
-    end_at = _parse_discount_datetime(payload.end_at)
+    start_at = _parse_discount_game_datetime(payload.start_at, run=run)
+    end_at = _parse_discount_game_datetime(payload.end_at, run=run)
     safe_bundle_type = _resolve_bundle_discount_type(payload.bundle_type)
     normalized_tiers = _validate_bundle_create_payload(
         db=db,
