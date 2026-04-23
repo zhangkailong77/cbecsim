@@ -1,10 +1,28 @@
 # Change Log
 
-最后更新：2026-04-22 (订单模拟 tick 时间换算修复)
+最后更新：2026-04-22 (current_game_tick 计算修复 + max_ticks_per_request 恢复)
+
+## 2026-04-22 (续)
+
+### 修复
+- 修正 `_resolve_game_hour_tick_by_run` 中 `current_game_tick` 计算逻辑：改为在真实秒数上直接 clamp（`min(elapsed_seconds, total_game_days × REAL_SECONDS_PER_GAME_DAY)`），避免游戏时间超出对局总时长后被错误截断到终点，导致模拟永久停止。
+  - 涉及文件：`backend/apps/api-gateway/app/api/routes/game.py`
+  - 影响范围：`current_game_tick` 现在正确反映真实时间进度，不再在对局未结束时卡在 `game_end_time`。
+- 修复 `_cleanup_game_runs_legacy_columns` 中 UPDATE 无 WHERE 条件导致每次重启后端都将所有对局 `total_game_days` 重置为 365 的问题，改为 `COALESCE` 仅填充空值。
+  - 涉及文件：`backend/apps/api-gateway/app/db.py`
+  - 影响范围：手动修改过 `total_game_days` 的对局不再被重启覆盖。
+- 恢复 `max_ticks_per_request` 从临时调试值 240 改回 10。
+  - 涉及文件：`backend/apps/api-gateway/app/api/routes/shopee.py`
+
+### 新增
+- 新增 `docs/说明文档/时间变量说明.md`，以表格形式说明系统中所有时间相关变量的含义、时间轴归属与常见误区。
 
 ## 2026-04-22
 
 ### 更新
+- 已为 Shopee 订单自动模拟补上未来 `tick_time` 钳制保护：当 `latest_tick_time/base_tick` 晚于当前游戏时刻时，后端会记录 warning 日志并将 `base_tick` 钳制到 `current_game_tick`，避免历史脏数据导致 `missing_steps <= 0` 后永久卡死。
+  - 涉及文件：`backend/apps/api-gateway/app/api/routes/shopee.py`、`backend/apps/api-gateway/tests/test_api.py`
+  - 影响范围：`/shopee/runs/{run_id}/orders` 自动补跑订单时，即使存在未来 `tick_time` 脏数据，也不会再因基准时间落到未来而持续停摆；后端日志会输出 `[order-auto-sim] clamp future base_tick ...` 便于排查。
 - 已修正 Shopee 订单自动模拟按“8 游戏小时”补跑 tick 时误用真实小时的问题：`_auto_simulate_orders_by_game_hour` 现改为按 `REAL_SECONDS_PER_GAME_HOUR * 8` 计算步长，并按同一真实秒数推进 `tick_time`。
   - 涉及文件：`backend/apps/api-gateway/app/api/routes/shopee.py`、`backend/apps/api-gateway/tests/test_api.py`
   - 影响范围：订单列表自动补跑、订单生成频率与状态推进将按“每 8 个游戏小时 = 600 真实秒”执行，不再错误地按 8 个真实小时才推进一次。
@@ -14,6 +32,9 @@
 - 已为 Shopee 订单自动模拟补充临时调试日志，输出 `latest_tick_time`、`base_tick`、`current_game_tick`、`step_seconds`、`missing_steps` 与 `ticks_to_run`，用于排查订单列表刷新时为何没有新增模拟日志。
   - 涉及文件：`backend/apps/api-gateway/app/api/routes/shopee.py`
   - 影响范围：刷新 `/shopee/runs/{run_id}/orders` 时，后端终端将打印 `[order-auto-sim]` 调试信息，便于定位自动模拟是否因时间步长判断未命中而提前返回。
+- 已新增 bug 记录文档，沉淀“订单自动模拟被未来 `tick_time` 脏数据卡死”的现象、证据、根因与修复建议，便于后续修复时直接对照处理。
+  - 涉及文件：`docs/bug/2026-04-22-订单自动模拟被未来tick卡死问题.md`
+  - 影响范围：后续排查 run 级订单自动模拟停滞问题时，可直接参考该文档中的调试日志、SQL 与代码修复建议。
 
 ## 2026-04-21
 

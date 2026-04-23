@@ -1,3 +1,5 @@
+import json
+import logging
 import os
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -3106,6 +3108,52 @@ def test_auto_simulate_orders_by_game_hour_uses_game_hour_seconds(monkeypatch):
             called_tick_times[index] - called_tick_times[index - 1] == timedelta(seconds=600)
             for index in range(1, len(called_tick_times))
         )
+
+
+def test_auto_simulate_orders_by_game_hour_clamps_future_tick_and_logs_warning(monkeypatch, caplog):
+    from app.api.routes import shopee as shopee_route
+    from app.db import SessionLocal
+    from app.models import GameRun, ShopeeOrderGenerationLog
+
+    player_token = _register_or_login_player("13800138221")
+    run = _create_running_run(player_token, duration_days=7)
+
+    with SessionLocal() as db:
+        row = db.query(GameRun).filter(GameRun.id == run["id"]).first()
+        assert row is not None
+        row.created_at = datetime.utcnow() - timedelta(seconds=610)
+        db.add(
+            ShopeeOrderGenerationLog(
+                run_id=row.id,
+                user_id=run["user_id"],
+                tick_time=datetime.utcnow() + timedelta(days=365),
+                active_buyer_count=0,
+                candidate_product_count=0,
+                generated_order_count=0,
+                skip_reasons_json=json.dumps(["future_dirty_tick"], ensure_ascii=False),
+            )
+        )
+        db.commit()
+        db.refresh(row)
+
+        called_tick_times: list[datetime] = []
+        monkeypatch.setattr(
+            shopee_route,
+            "simulate_orders_for_run",
+            lambda _db, run_id, user_id, tick_time: called_tick_times.append(tick_time),
+            raising=False,
+        )
+
+        with caplog.at_level(logging.WARNING):
+            shopee_route._auto_simulate_orders_by_game_hour(
+                db,
+                run=row,
+                user_id=run["user_id"],
+                max_ticks_per_request=5,
+            )
+
+        assert called_tick_times == []
+        assert "clamp future base_tick" in caplog.text
 
 
 def test_ship_order_uses_game_day_seconds_for_eta():

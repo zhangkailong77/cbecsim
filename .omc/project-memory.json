@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "lastScanned": 1776741472523,
+  "lastScanned": 1776827951165,
   "projectRoot": "/Users/zhangkailong/workspace/code/cbec_sim",
   "techStack": {
     "languages": [],
@@ -38,7 +38,7 @@
       "path": "backend",
       "purpose": null,
       "fileCount": 4,
-      "lastAccessed": 1776741472510,
+      "lastAccessed": 1776827951153,
       "keyFiles": [
         "requirements.txt"
       ]
@@ -46,9 +46,10 @@
     "docs": {
       "path": "docs",
       "purpose": "Documentation",
-      "fileCount": 1,
-      "lastAccessed": 1776741472510,
+      "fileCount": 2,
+      "lastAccessed": 1776827951153,
       "keyFiles": [
+        "change-log.md",
         "当前进度.md"
       ]
     },
@@ -56,7 +57,7 @@
       "path": "frontend",
       "purpose": null,
       "fileCount": 9,
-      "lastAccessed": 1776741472510,
+      "lastAccessed": 1776827951153,
       "keyFiles": [
         "Dockerfile",
         "index.html",
@@ -69,28 +70,28 @@
       "path": "infra",
       "purpose": null,
       "fileCount": 1,
-      "lastAccessed": 1776741472511,
+      "lastAccessed": 1776827951154,
       "keyFiles": []
     },
     "shopee_my_sim_plan": {
       "path": "shopee_my_sim_plan",
       "purpose": null,
       "fileCount": 0,
-      "lastAccessed": 1776741472511,
+      "lastAccessed": 1776827951154,
       "keyFiles": []
     },
     "backend/tests": {
       "path": "backend/tests",
       "purpose": "Test files",
       "fileCount": 1,
-      "lastAccessed": 1776741472511,
+      "lastAccessed": 1776827951154,
       "keyFiles": []
     },
     "frontend/dist": {
       "path": "frontend/dist",
       "purpose": "Distribution/build output",
       "fileCount": 2,
-      "lastAccessed": 1776741472511,
+      "lastAccessed": 1776827951155,
       "keyFiles": [
         "index.html"
       ]
@@ -99,15 +100,15 @@
       "path": "frontend/node_modules",
       "purpose": "Dependencies",
       "fileCount": 1,
-      "lastAccessed": 1776741472512,
+      "lastAccessed": 1776827951155,
       "keyFiles": []
     }
   },
   "hotPaths": [
     {
       "path": "backend/apps/api-gateway/app/api/routes/game.py",
-      "accessCount": 307,
-      "lastAccessed": 1776824392477,
+      "accessCount": 332,
+      "lastAccessed": 1776851471948,
       "type": "file"
     },
     {
@@ -118,14 +119,14 @@
     },
     {
       "path": "backend/apps/api-gateway/app/api/routes/shopee.py",
-      "accessCount": 116,
-      "lastAccessed": 1776825096930,
+      "accessCount": 157,
+      "lastAccessed": 1776851481438,
       "type": "file"
     },
     {
       "path": "backend/apps/api-gateway/tests/test_api.py",
-      "accessCount": 95,
-      "lastAccessed": 1776822876851,
+      "accessCount": 105,
+      "lastAccessed": 1776826878284,
       "type": "file"
     },
     {
@@ -148,62 +149,68 @@
     },
     {
       "path": "docs/change-log.md",
-      "accessCount": 51,
-      "lastAccessed": 1776825121713,
+      "accessCount": 59,
+      "lastAccessed": 1776845520430,
       "type": "file"
     },
     {
       "path": "backend/apps/api-gateway/app/db.py",
-      "accessCount": 32,
-      "lastAccessed": 1776759998701,
+      "accessCount": 36,
+      "lastAccessed": 1776844467456,
       "type": "file"
     },
     {
       "path": "frontend/src/App.tsx",
-      "accessCount": 26,
-      "lastAccessed": 1776746374145,
+      "accessCount": 29,
+      "lastAccessed": 1776851462366,
       "type": "file"
-    },
-    {
-      "path": "backend/apps/api-gateway/app/services/auto_order_tick_worker.py",
-      "accessCount": 24,
-      "lastAccessed": 1776776384309,
-      "type": "file"
-    },
-    {
-      "path": "frontend/src",
-      "accessCount": 22,
-      "lastAccessed": 1776756172619,
-      "type": "directory"
     },
     {
       "path": "backend/apps/api-gateway/app/services/shopee_order_simulator.py",
-      "accessCount": 20,
-      "lastAccessed": 1776820343005,
+      "accessCount": 26,
+      "lastAccessed": 1776850524389,
       "type": "directory"
     },
     {
+      "path": "backend/apps/api-gateway/app/services/auto_order_tick_worker.py",
+      "accessCount": 25,
+      "lastAccessed": 1776840129325,
+      "type": "file"
+    },
+    {
       "path": "backend/apps/api-gateway/app",
+      "accessCount": 24,
+      "lastAccessed": 1776840157422,
+      "type": "directory"
+    },
+    {
+      "path": "frontend/src",
+      "accessCount": 23,
+      "lastAccessed": 1776851416186,
+      "type": "directory"
+    },
+    {
+      "path": "",
       "accessCount": 19,
-      "lastAccessed": 1776777257823,
+      "lastAccessed": 1776849874438,
       "type": "directory"
     },
     {
       "path": "backend/apps/api-gateway/app/models.py",
-      "accessCount": 18,
-      "lastAccessed": 1776822820118,
+      "accessCount": 19,
+      "lastAccessed": 1776849882119,
       "type": "file"
     },
     {
-      "path": "",
-      "accessCount": 16,
-      "lastAccessed": 1776778375592,
+      "path": "backend",
+      "accessCount": 12,
+      "lastAccessed": 1776849891054,
       "type": "directory"
     },
     {
-      "path": "backend",
-      "accessCount": 11,
-      "lastAccessed": 1776778759850,
+      "path": "backend/apps/api-gateway",
+      "accessCount": 10,
+      "lastAccessed": 1776841689509,
       "type": "directory"
     },
     {
@@ -217,12 +224,6 @@
       "accessCount": 8,
       "lastAccessed": 1776758612160,
       "type": "file"
-    },
-    {
-      "path": "backend/apps/api-gateway",
-      "accessCount": 8,
-      "lastAccessed": 1776825294329,
-      "type": "directory"
     },
     {
       "path": "docs/admin/ad02-已结束对局续期与追加游戏年限设计.md",
@@ -267,6 +268,12 @@
       "type": "directory"
     },
     {
+      "path": "backend/apps/api-gateway/app/api/routes",
+      "accessCount": 3,
+      "lastAccessed": 1776850490175,
+      "type": "directory"
+    },
+    {
       "path": "cbec_sim.sql",
       "accessCount": 2,
       "lastAccessed": 1776657315623,
@@ -297,6 +304,18 @@
       "type": "directory"
     },
     {
+      "path": "docs/bug/2026-04-22-订单自动模拟被未来tick卡死问题.md",
+      "accessCount": 2,
+      "lastAccessed": 1776826193736,
+      "type": "file"
+    },
+    {
+      "path": "frontend/src/modules/shopee/views/DiscountCreateView.tsx",
+      "accessCount": 2,
+      "lastAccessed": 1776849956773,
+      "type": "file"
+    },
+    {
       "path": "backend/.env",
       "accessCount": 1,
       "lastAccessed": 1776651303143,
@@ -318,12 +337,6 @@
       "path": "docs/admin",
       "accessCount": 1,
       "lastAccessed": 1776663071037,
-      "type": "directory"
-    },
-    {
-      "path": "backend/apps/api-gateway/app/api/routes",
-      "accessCount": 1,
-      "lastAccessed": 1776673391880,
       "type": "directory"
     },
     {
@@ -366,6 +379,30 @@
       "path": "backend/apps/api-gateway/logging.json",
       "accessCount": 1,
       "lastAccessed": 1776825481898,
+      "type": "file"
+    },
+    {
+      "path": "docs/bug",
+      "accessCount": 1,
+      "lastAccessed": 1776826190197,
+      "type": "directory"
+    },
+    {
+      "path": "docs/说明文档/时间变量说明.md",
+      "accessCount": 1,
+      "lastAccessed": 1776843748292,
+      "type": "file"
+    },
+    {
+      "path": "frontend/src/modules/shopee/views/MarketingCentreView.tsx",
+      "accessCount": 1,
+      "lastAccessed": 1776849882104,
+      "type": "file"
+    },
+    {
+      "path": "frontend/src/modules/shopee/views/BundleCreateView.tsx",
+      "accessCount": 1,
+      "lastAccessed": 1776849882170,
       "type": "file"
     }
   ],

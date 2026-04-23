@@ -40,7 +40,7 @@ from app.services.inventory_lot_sync import reserve_inventory_lots
 
 
 router = APIRouter(prefix="/game", tags=["game"])
-REAL_SECONDS_PER_GAME_DAY = 30 * 60
+REAL_SECONDS_PER_GAME_DAY = 604800 / 365
 REAL_SECONDS_PER_GAME_HOUR = REAL_SECONDS_PER_GAME_DAY / 24
 DEFAULT_TOTAL_GAME_DAYS = 365
 BOOKED_SECONDS = 10
@@ -1633,12 +1633,10 @@ def _resolve_game_hour_tick_by_run(run: GameRun, now: datetime | None = None) ->
     compare_now = _align_compare_time(run.created_at, now)
     elapsed_seconds = max(0, int((compare_now - run.created_at).total_seconds()))
     elapsed_game_hours = int(elapsed_seconds // REAL_SECONDS_PER_GAME_HOUR)
-    tick_time = run.created_at + timedelta(hours=elapsed_game_hours)
-    run_end_time = _resolve_run_end_time(run)
-    if not run_end_time:
-        return tick_time
-    compare_tick = _align_compare_time(run_end_time, tick_time)
-    return min(compare_tick, run_end_time)
+    total_game_days = int(run.total_game_days or DEFAULT_TOTAL_GAME_DAYS)
+    max_real_seconds = total_game_days * REAL_SECONDS_PER_GAME_DAY
+    clamped_seconds = min(elapsed_seconds, max_real_seconds)
+    return run.created_at + timedelta(seconds=clamped_seconds)
 
 
 def _mark_run_finished_if_reached(db: Session, run: GameRun, *, tick_time: datetime | None = None) -> bool:

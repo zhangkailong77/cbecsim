@@ -10,6 +10,7 @@ import MarketIntelPage from './modules/market-intel/MarketIntelPage';
 import LogisticsClearancePage from './modules/logistics-clearance/LogisticsClearancePage';
 import WarehouseInboundPage from './modules/warehouse-inbound/WarehouseInboundPage';
 import ShopeePage from './modules/shopee/ShopeePage';
+import ShopeeLoading from './modules/shopee/components/ShopeeLoading';
 import homeLogo from './assets/home/logo.png';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000';
@@ -133,6 +134,7 @@ export default function App() {
   const [schoolKeyword, setSchoolKeyword] = useState('');
   const [schoolOptions, setSchoolOptions] = useState<SchoolOption[]>([]);
   const [isSchoolLoading, setIsSchoolLoading] = useState(false);
+  const [isShopeeEntryLoading, setIsShopeeEntryLoading] = useState(false);
   const [loginForm, setLoginForm] = useState<LoginFormState>({
     username: '',
     password: '',
@@ -147,6 +149,13 @@ export default function App() {
     password: '',
     confirmPassword: '',
   });
+
+  const isShopeeRoute = (pathname: string, expectedPublicId?: string | null) => {
+    const parsed = parseStageFromPath(pathname);
+    if (!parsed || parsed.stage !== 'shopee') return false;
+    if (!expectedPublicId) return true;
+    return parsed.publicId === expectedPublicId;
+  };
 
   const fetchRunContext = async (token: string, runId: number): Promise<RunContext | null> => {
     if (!Number.isFinite(runId) || runId <= 0) return null;
@@ -187,6 +196,11 @@ export default function App() {
     }
     setAppStage(stage);
     setSetupSubView(nextSetupSubView);
+  };
+
+  const navigateToShopeeWithLoading = (options?: { replace?: boolean; runId?: number | null }) => {
+    setIsShopeeEntryLoading(true);
+    navigateToStage('shopee', options);
   };
 
   const resolveStageByCurrentRun = async (token: string, publicId: string) => {
@@ -272,6 +286,9 @@ export default function App() {
 
       setCurrentUser(me);
       setIsAuthenticated(true);
+      if (isShopeeRoute(window.location.pathname, me.public_id)) {
+        setIsShopeeEntryLoading(true);
+      }
       await resolveStageByCurrentRun(token, me.public_id);
       setIsAuthChecking(false);
     };
@@ -343,6 +360,14 @@ export default function App() {
     window.addEventListener('popstate', onPopStateSync);
     return () => window.removeEventListener('popstate', onPopStateSync);
   }, [isAuthenticated, currentUser?.public_id]);
+
+  useEffect(() => {
+    if (!isShopeeEntryLoading || appStage !== 'shopee') return;
+    const timer = window.setTimeout(() => {
+      setIsShopeeEntryLoading(false);
+    }, 1200);
+    return () => window.clearTimeout(timer);
+  }, [appStage, isShopeeEntryLoading]);
 
   const handleLoginSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -505,6 +530,7 @@ export default function App() {
     setViewRun(null);
     setAuthMode('login');
     setAppStage('loading');
+    setIsShopeeEntryLoading(false);
     window.history.replaceState(null, '', '/');
     setAuthError('');
     setSetupError('');
@@ -520,7 +546,7 @@ export default function App() {
   };
 
   const handleEnterShopeeFromSetup = () => {
-    navigateToStage('shopee');
+    navigateToShopeeWithLoading();
   };
 
   const handleEnterShopeeFromIntel = () => {
@@ -600,6 +626,10 @@ export default function App() {
 
   const handleOpenHistoryStage = (stage: Exclude<RoutedStage, 'setup'>, run: RunContext) => {
     setViewRun(run);
+    if (stage === 'shopee') {
+      navigateToShopeeWithLoading({ runId: run.id });
+      return;
+    }
     navigateToStage(stage, { runId: run.id });
   };
 
@@ -608,7 +638,9 @@ export default function App() {
 
   let mainContent = <div className="fixed inset-0 bg-[#f5f5f5]" />;
   if (isAuthenticated) {
-    if (appStage === 'shopee') {
+    if (isShopeeEntryLoading && appStage === 'shopee') {
+      mainContent = <ShopeeLoading />;
+    } else if (appStage === 'shopee') {
       mainContent = (
         <ShopeePage
           run={activeRun}

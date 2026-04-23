@@ -2787,6 +2787,16 @@ def _auto_simulate_orders_by_game_hour(
         return
 
     current_game_tick = _resolve_game_hour_tick_by_run(run)
+    if base_tick > current_game_tick:
+        logger.warning(
+            "[order-auto-sim] clamp future base_tick run_id=%s user_id=%s latest_tick_time=%s base_tick=%s current_game_tick=%s",
+            run.id,
+            user_id,
+            latest_tick_time,
+            base_tick,
+            current_game_tick,
+        )
+        base_tick = current_game_tick
     step_seconds = max(1, int(REAL_SECONDS_PER_GAME_HOUR * ORDER_SIM_TICK_GAME_HOURS))
     missing_steps = int((current_game_tick - base_tick).total_seconds() // step_seconds)
     logger.info(
@@ -3610,7 +3620,7 @@ def list_shopee_orders(
     run = _get_owned_order_readable_run_or_404(db, run_id, user_id)
     is_finished = _persist_run_finished_if_reached(db, run)
     if not is_finished:
-        _auto_simulate_orders_by_game_hour(db, run=run, user_id=user_id, max_ticks_per_request=1)
+        _auto_simulate_orders_by_game_hour(db, run=run, user_id=user_id, max_ticks_per_request=10)
     current_tick = _resolve_game_tick(db, run.id, user_id)
     if not _persist_run_finished_if_reached(db, run):
         _auto_cancel_overdue_orders_by_tick(db, run_id=run.id, user_id=user_id, current_tick=current_tick)

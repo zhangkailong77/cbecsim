@@ -1,7 +1,0 @@
-{
-  "tool_name": "Bash",
-  "tool_input_preview": "{\"command\":\"cd \\\"/Users/zhangkailong/workspace/code/cbec_sim/backend/apps/api-gateway\\\" && PYTHONPATH=. python -m pytest tests/test_api.py -k \\\"auto_simulate_orders_by_game_hour_uses_game_hour_seconds...",
-  "error": "Exit code 1\n============================= test session starts ==============================\nplatform darwin -- Python 3.13.12, pytest-9.0.2, pluggy-1.5.0\nrootdir: /Users/zhangkailong/workspace/code/cbec_sim/backend/apps/api-gateway\nplugins: anyio-4.10.0\ncollected 83 items / 81 deselected / 2 selected\n\ntests/test_api.py .F                                                     [100%]\n\n=================================== FAILURES ===================================\n________ test_auto_simulate_orders...",
-  "timestamp": "2026-04-22T01:38:55.958Z",
-  "retry_count": 3
-}
