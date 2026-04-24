@@ -263,7 +263,7 @@ def simulate_orders_for_run(
     tick_time: datetime | None = None,
 ) -> dict:
     rng = random.Random()
-    now = tick_time or datetime.utcnow()
+    now = tick_time or datetime.now()
     hour = now.hour
     weekday_idx = now.weekday()
     buyer_journeys: list[dict[str, Any]] = []

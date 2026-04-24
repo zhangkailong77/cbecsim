@@ -100,7 +100,7 @@ async def run_auto_order_tick_worker(stop_event: asyncio.Event) -> None:
         started = time.monotonic()
         db = SessionLocal()
         try:
-            run_cnt, tick_cnt = _run_one_cycle(db, datetime.utcnow())
+            run_cnt, tick_cnt = _run_one_cycle(db, datetime.now())
             if tick_cnt > 0:
                 logger.info("Auto order tick simulated: runs=%s ticks=%s", run_cnt, tick_cnt)
         except Exception:

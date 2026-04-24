@@ -50,12 +50,12 @@ def calc_eta(distance_km: float, shipping_channel: str, shipped_at: datetime) ->
 
 
 def gen_tracking_no(now: datetime | None = None) -> str:
-    at = now or datetime.utcnow()
+    at = now or datetime.now()
     return f"TRK{at.strftime('%Y%m%d%H%M%S')}{randint(100, 999)}"
 
 
 def gen_waybill_no(now: datetime | None = None) -> str:
-    at = now or datetime.utcnow()
+    at = now or datetime.now()
     return f"WB{at.strftime('%Y%m%d')}{uuid4().hex[:10].upper()}"
 
 

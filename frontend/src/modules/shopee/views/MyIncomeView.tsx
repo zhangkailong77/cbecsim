@@ -406,6 +406,15 @@ export default function MyIncomeView({ runId }: MyIncomeViewProps) {
 
   const totalRecords = activeTab === 'pending' ? pendingRows.length : filteredRows.length;
   const totalPages = Math.max(1, Math.ceil(totalRecords / pageSize));
+
+  const makePageItems = (current: number, total: number): Array<number | '...'> => {
+    if (total <= 7) return Array.from({ length: total }, (_, idx) => idx + 1);
+    if (current <= 4) return [1, 2, 3, 4, 5, '...', total];
+    if (current >= total - 3) return [1, '...', total - 4, total - 3, total - 2, total - 1, total];
+    return [1, '...', current - 1, current, current + 1, '...', total];
+  };
+  const pageItems = makePageItems(page, totalPages);
+  const goToPage = (p: number) => setPage(Math.max(1, Math.min(totalPages, p)));
   const releasedThisWeek = useMemo(() => Number(overview?.week_income ?? 0), [overview?.week_income]);
   const releasedThisMonth = useMemo(() => Number(overview?.month_income ?? 0), [overview?.month_income]);
   const releasedTotal = useMemo(() => Number(overview?.total_income ?? 0), [overview?.total_income]);
@@ -869,29 +878,43 @@ export default function MyIncomeView({ runId }: MyIncomeViewProps) {
             </table>
           </div>
 
-          <div className="mt-3 flex items-center justify-end gap-4 text-[13px] text-gray-600">
+          <div className="mt-3 flex items-center justify-end gap-1 text-[14px] text-gray-600">
             <button
               type="button"
               disabled={page <= 1}
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-              className="inline-flex h-8 items-center rounded border border-gray-200 px-3 disabled:opacity-50"
+              onClick={() => goToPage(page - 1)}
+              className="h-8 min-w-8 rounded border border-gray-300 px-2 disabled:cursor-not-allowed disabled:text-gray-300"
             >
-              <ChevronLeft size={14} />
+              ‹
             </button>
-            <span className="text-[#ee4d2d]">{page}</span>
+            {pageItems.map((item, idx) =>
+              item === '...' ? (
+                <span key={`ellipsis-${idx}`} className="px-2 text-gray-400">
+                  ...
+                </span>
+              ) : (
+                <button
+                  key={`page-${item}`}
+                  type="button"
+                  onClick={() => goToPage(item)}
+                  className={`h-8 min-w-8 rounded px-2 ${
+                    item === page
+                      ? 'bg-white text-[#ee4d2d] font-semibold'
+                      : 'text-gray-600 hover:bg-gray-100'
+                  }`}
+                >
+                  {item}
+                </button>
+              ),
+            )}
             <button
               type="button"
               disabled={page >= totalPages}
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-              className="inline-flex h-8 items-center rounded border border-gray-200 px-3 disabled:opacity-50"
+              onClick={() => goToPage(page + 1)}
+              className="h-8 min-w-8 rounded border border-gray-300 px-2 disabled:cursor-not-allowed disabled:text-gray-300"
             >
-              <ChevronRight size={14} />
+              ›
             </button>
-            <div className="inline-flex h-8 items-center gap-1 rounded border border-gray-200 px-3">
-              <span>{pageSize}</span>
-              <span>/页</span>
-              <ChevronDown size={14} />
-            </div>
           </div>
         </section>
       </div>

@@ -326,7 +326,7 @@ def test_game_create_run_auto_finishes_expired_running_run():
     with SessionLocal() as db:
         run = db.query(GameRun).filter(GameRun.id == first_run_id).first()
         assert run is not None
-        run.created_at = datetime.utcnow() - timedelta(hours=4)
+        run.created_at = datetime.now() - timedelta(hours=4)
         db.commit()
 
     second = client.post(
@@ -366,7 +366,7 @@ def test_game_current_run_returns_none_after_expiry():
     with SessionLocal() as db:
         row = db.query(GameRun).filter(GameRun.id == run_id).first()
         assert row is not None
-        row.created_at = datetime.utcnow() - timedelta(days=8)
+        row.created_at = datetime.now() - timedelta(days=8)
         db.commit()
 
     current = client.get("/game/runs/current", headers={"Authorization": f"Bearer {token}"})
@@ -390,7 +390,7 @@ def test_game_current_run_prefers_running_when_finished_and_running_both_exist()
     with SessionLocal() as db:
         first_row = db.query(GameRun).filter(GameRun.id == first["id"]).first()
         assert first_row is not None
-        first_row.created_at = datetime.utcnow() - timedelta(days=8)
+        first_row.created_at = datetime.now() - timedelta(days=8)
         db.commit()
 
     second = _create_running_run(token, duration_days=365)
@@ -413,7 +413,7 @@ def test_game_read_endpoint_allows_finished_run():
     with SessionLocal() as db:
         row = db.query(GameRun).filter(GameRun.id == run["id"]).first()
         assert row is not None
-        row.created_at = datetime.utcnow() - timedelta(days=8)
+        row.created_at = datetime.now() - timedelta(days=8)
         db.commit()
 
     resp = client.get(
@@ -435,7 +435,7 @@ def test_game_write_endpoint_rejects_finished_run():
     with SessionLocal() as db:
         row = db.query(GameRun).filter(GameRun.id == run["id"]).first()
         assert row is not None
-        row.created_at = datetime.utcnow() - timedelta(days=8)
+        row.created_at = datetime.now() - timedelta(days=8)
         db.commit()
 
     resp = client.post(
@@ -457,7 +457,7 @@ def test_game_logistics_shipments_allows_finished_run():
     with SessionLocal() as db:
         row = db.query(GameRun).filter(GameRun.id == run["id"]).first()
         assert row is not None
-        row.created_at = datetime.utcnow() - timedelta(days=8)
+        row.created_at = datetime.now() - timedelta(days=8)
         db.commit()
 
     resp = client.get(
@@ -478,7 +478,7 @@ def test_game_create_logistics_shipment_rejects_finished_run():
     with SessionLocal() as db:
         row = db.query(GameRun).filter(GameRun.id == run["id"]).first()
         assert row is not None
-        row.created_at = datetime.utcnow() - timedelta(days=8)
+        row.created_at = datetime.now() - timedelta(days=8)
         db.commit()
 
     resp = client.post(
@@ -505,7 +505,7 @@ def test_game_warehouse_summary_allows_finished_run():
         row = db.query(GameRun).filter(GameRun.id == run["id"]).first()
         assert row is not None
         row.status = "finished"
-        row.created_at = datetime.utcnow() - timedelta(days=8)
+        row.created_at = datetime.now() - timedelta(days=8)
 
         strategy = WarehouseStrategy(
             run_id=row.id,
@@ -550,7 +550,7 @@ def test_game_warehouse_summary_allows_finished_run():
                 total_quantity=4000,
                 total_value=95000,
                 status="completed",
-                completed_at=datetime.utcnow(),
+                completed_at=datetime.now(),
             )
         )
         db.commit()
@@ -578,7 +578,7 @@ def test_game_create_warehouse_strategy_rejects_finished_run():
     with SessionLocal() as db:
         row = db.query(GameRun).filter(GameRun.id == run["id"]).first()
         assert row is not None
-        row.created_at = datetime.utcnow() - timedelta(days=8)
+        row.created_at = datetime.now() - timedelta(days=8)
         db.commit()
 
     resp = client.post(
@@ -604,7 +604,7 @@ def test_game_history_options_returns_finished_only():
         row = db.query(GameRun).filter(GameRun.id == first_run["id"]).first()
         assert row is not None
         row.status = "finished"
-        row.created_at = datetime.utcnow() - timedelta(days=8)
+        row.created_at = datetime.now() - timedelta(days=8)
         db.commit()
 
     second_run = _create_running_run(token, duration_days=7)
@@ -631,7 +631,7 @@ def test_game_run_context_allows_finished_run():
         row = db.query(GameRun).filter(GameRun.id == run["id"]).first()
         assert row is not None
         row.status = "finished"
-        row.created_at = datetime.utcnow() - timedelta(days=8)
+        row.created_at = datetime.now() - timedelta(days=8)
         db.commit()
 
     resp = client.get(
@@ -661,7 +661,7 @@ def test_game_history_summary_requires_finished_and_returns_aggregate_fields():
         row = db.query(GameRun).filter(GameRun.id == run["id"]).first()
         assert row is not None
         row.status = "finished"
-        row.created_at = datetime.utcnow() - timedelta(days=8)
+        row.created_at = datetime.now() - timedelta(days=8)
         db.commit()
 
     finished_resp = client.get(
@@ -1026,7 +1026,7 @@ def test_shopee_withdraw_transfers_to_game_cash():
                 balance_after=100,
                 status="completed",
                 remark="test seed",
-                credited_at=datetime.utcnow(),
+                credited_at=datetime.now(),
             )
         )
         db.commit()
@@ -1091,7 +1091,7 @@ def test_shopee_withdraw_requires_default_bank_account():
                 balance_after=100,
                 status="completed",
                 remark="test seed",
-                credited_at=datetime.utcnow(),
+                credited_at=datetime.now(),
             )
         )
         db.commit()
@@ -1136,7 +1136,7 @@ def test_game_finance_details_tabs_return_income_and_expense():
                 balance_after=100,
                 status="completed",
                 remark="test seed",
-                credited_at=datetime.utcnow(),
+                credited_at=datetime.now(),
             )
         )
         db.commit()
@@ -1597,7 +1597,7 @@ def test_admin_active_runs_returns_running_runs_with_duration_fields():
     with SessionLocal() as db:
         expired_row = db.query(GameRun).filter(GameRun.id == expired_run["id"]).first()
         assert expired_row is not None
-        expired_row.created_at = datetime.utcnow() - timedelta(days=8)
+        expired_row.created_at = datetime.now() - timedelta(days=8)
         db.commit()
 
     admin_login = client.post("/auth/login", json={"username": "yzcube", "password": "yzcube123"})
@@ -1796,7 +1796,7 @@ def test_admin_extend_run_rejects_finished_boundary_and_marks_finished():
     with SessionLocal() as db:
         row = db.query(GameRun).filter(GameRun.id == run["id"]).first()
         assert row is not None
-        row.created_at = datetime.utcnow() - timedelta(days=8)
+        row.created_at = datetime.now() - timedelta(days=8)
         db.commit()
 
     admin_login = client.post("/auth/login", json={"username": "yzcube", "password": "yzcube123"})
@@ -1851,7 +1851,7 @@ def test_admin_renew_run_restores_finished_run_and_appends_game_days():
         row = db.query(GameRun).filter(GameRun.id == run["id"]).first()
         assert row is not None
         row.status = "finished"
-        row.created_at = datetime.utcnow() - timedelta(days=8)
+        row.created_at = datetime.now() - timedelta(days=8)
         row.total_game_days = 365
         row.manual_end_time = row.created_at + timedelta(days=7)
         db.commit()
@@ -1902,7 +1902,7 @@ def test_admin_renew_run_rejects_when_player_has_other_running_run():
         row = db.query(GameRun).filter(GameRun.id == finished_run["id"]).first()
         assert row is not None
         row.status = "finished"
-        row.created_at = datetime.utcnow() - timedelta(days=8)
+        row.created_at = datetime.now() - timedelta(days=8)
         row.manual_end_time = row.created_at + timedelta(days=7)
         db.commit()
 
@@ -2097,8 +2097,8 @@ def test_simulate_orders_use_discount_price_and_marketing_fields(monkeypatch):
             campaign_type="discount",
             campaign_name="生效折扣",
             campaign_status="ongoing",
-            start_at=datetime.utcnow() - timedelta(hours=1),
-            end_at=datetime.utcnow() + timedelta(hours=1),
+            start_at=datetime.now() - timedelta(hours=1),
+            end_at=datetime.now() + timedelta(hours=1),
             market="MY",
             currency="RM",
             rules_json="{}",
@@ -2122,7 +2122,7 @@ def test_simulate_orders_use_discount_price_and_marketing_fields(monkeypatch):
         )
         db.commit()
 
-        result = simulate_orders_for_run(db, run_id=run_row.id, user_id=run_row.user_id, tick_time=datetime.utcnow())
+        result = simulate_orders_for_run(db, run_id=run_row.id, user_id=run_row.user_id, tick_time=datetime.now())
         assert result["generated_order_count"] > 0
 
         order = db.query(ShopeeOrder).order_by(ShopeeOrder.id.desc()).first()
@@ -2270,7 +2270,7 @@ def test_cancel_order_rebalances_other_backorder_for_same_product():
             total_quantity=2,
             total_value=2000,
             status="completed",
-            completed_at=datetime.utcnow(),
+            completed_at=datetime.now(),
         )
         db.add(inbound)
         db.flush()
@@ -2335,9 +2335,9 @@ def test_cancel_order_rebalances_other_backorder_for_same_product():
             destination="吉隆坡",
             countdown_text="请在24小时内处理",
             action_text="查看详情",
-            ship_by_date=datetime.utcnow() + timedelta(days=1),
-            ship_by_at=datetime.utcnow() + timedelta(days=1),
-            must_restock_before_at=datetime.utcnow() + timedelta(hours=48),
+            ship_by_date=datetime.now() + timedelta(days=1),
+            ship_by_at=datetime.now() + timedelta(days=1),
+            must_restock_before_at=datetime.now() + timedelta(hours=48),
         )
         db.add(backorder_order)
         db.flush()
@@ -2370,8 +2370,8 @@ def test_cancel_order_rebalances_other_backorder_for_same_product():
             destination="吉隆坡",
             countdown_text="请在24小时内处理",
             action_text="查看详情",
-            ship_by_date=datetime.utcnow() + timedelta(days=1),
-            ship_by_at=datetime.utcnow() + timedelta(days=1),
+            ship_by_date=datetime.now() + timedelta(days=1),
+            ship_by_at=datetime.now() + timedelta(days=1),
         )
         db.add(to_cancel_order)
         db.flush()
@@ -2471,8 +2471,8 @@ def test_shopee_cancel_order_service_is_idempotent_for_same_order():
             destination="吉隆坡",
             countdown_text="请在24小时内处理",
             action_text="查看详情",
-            ship_by_date=datetime.utcnow() + timedelta(days=1),
-            ship_by_at=datetime.utcnow() + timedelta(days=1),
+            ship_by_date=datetime.now() + timedelta(days=1),
+            ship_by_at=datetime.now() + timedelta(days=1),
         )
         db.add(order)
         db.flush()
@@ -2488,7 +2488,7 @@ def test_shopee_cancel_order_service_is_idempotent_for_same_order():
         )
         db.flush()
 
-        cancel_time = datetime.utcnow()
+        cancel_time = datetime.now()
         service_cancel_order(
             db,
             run_id=run_row.id,
@@ -2607,7 +2607,7 @@ def test_shopee_orders_list_self_heals_legacy_backorder_when_inventory_available
             total_quantity=2,
             total_value=2000,
             status="completed",
-            completed_at=datetime.utcnow(),
+            completed_at=datetime.now(),
         )
         db.add(inbound)
         db.flush()
@@ -2672,9 +2672,9 @@ def test_shopee_orders_list_self_heals_legacy_backorder_when_inventory_available
             destination="吉隆坡",
             countdown_text="请在24小时内处理",
             action_text="查看详情",
-            ship_by_date=datetime.utcnow() + timedelta(days=1),
-            ship_by_at=datetime.utcnow() + timedelta(days=1),
-            must_restock_before_at=datetime.utcnow() + timedelta(hours=48),
+            ship_by_date=datetime.now() + timedelta(days=1),
+            ship_by_at=datetime.now() + timedelta(days=1),
+            must_restock_before_at=datetime.now() + timedelta(hours=48),
         )
         db.add(backorder_order)
         db.flush()
@@ -2778,7 +2778,7 @@ def test_finished_orders_readonly_projection_hides_backorder_without_db_write():
             total_quantity=2,
             total_value=2000,
             status="completed",
-            completed_at=datetime.utcnow(),
+            completed_at=datetime.now(),
         )
         db.add(inbound)
         db.flush()
@@ -2843,9 +2843,9 @@ def test_finished_orders_readonly_projection_hides_backorder_without_db_write():
             destination="吉隆坡",
             countdown_text="请在24小时内处理",
             action_text="查看详情",
-            ship_by_date=datetime.utcnow() + timedelta(days=1),
-            ship_by_at=datetime.utcnow() + timedelta(days=1),
-            must_restock_before_at=datetime.utcnow() + timedelta(hours=48),
+            ship_by_date=datetime.now() + timedelta(days=1),
+            ship_by_at=datetime.now() + timedelta(days=1),
+            must_restock_before_at=datetime.now() + timedelta(hours=48),
         )
         db.add(backorder_order)
         db.flush()
@@ -2949,9 +2949,9 @@ def test_finished_orders_readonly_projection_uses_listing_stock_without_product_
             destination="吉隆坡",
             countdown_text="请在24小时内处理",
             action_text="查看详情",
-            ship_by_date=datetime.utcnow() + timedelta(days=1),
-            ship_by_at=datetime.utcnow() + timedelta(days=1),
-            must_restock_before_at=datetime.utcnow() + timedelta(hours=48),
+            ship_by_date=datetime.now() + timedelta(days=1),
+            ship_by_at=datetime.now() + timedelta(days=1),
+            must_restock_before_at=datetime.now() + timedelta(hours=48),
         )
         db.add(backorder_order)
         db.flush()
@@ -2998,7 +2998,7 @@ def test_shopee_orders_list_allows_finished_run_and_skips_auto_writes(monkeypatc
     with SessionLocal() as db:
         row = db.query(GameRun).filter(GameRun.id == run["id"]).first()
         assert row is not None
-        row.created_at = datetime.utcnow() - timedelta(days=8)
+        row.created_at = datetime.now() - timedelta(days=8)
         db.commit()
 
     called: list[str] = []
@@ -3046,7 +3046,7 @@ def test_simulate_shopee_orders_rejects_finished_run():
     with SessionLocal() as db:
         row = db.query(GameRun).filter(GameRun.id == run["id"]).first()
         assert row is not None
-        row.created_at = datetime.utcnow() - timedelta(days=8)
+        row.created_at = datetime.now() - timedelta(days=8)
         db.commit()
 
     resp = client.post(
@@ -3070,7 +3070,7 @@ def test_admin_simulate_rejects_finished_run():
     with SessionLocal() as db:
         row = db.query(GameRun).filter(GameRun.id == run["id"]).first()
         assert row is not None
-        row.created_at = datetime.utcnow() - timedelta(days=8)
+        row.created_at = datetime.now() - timedelta(days=8)
         db.commit()
 
     resp = client.post(
@@ -3092,7 +3092,7 @@ def test_shopee_finance_overview_allows_finished_run_and_skips_backfill(monkeypa
     with SessionLocal() as db:
         row = db.query(GameRun).filter(GameRun.id == run["id"]).first()
         assert row is not None
-        row.created_at = datetime.utcnow() - timedelta(days=8)
+        row.created_at = datetime.now() - timedelta(days=8)
         db.commit()
 
     called: list[str] = []
@@ -3109,6 +3109,79 @@ def test_shopee_finance_overview_allows_finished_run_and_skips_backfill(monkeypa
     )
     assert resp.status_code == 200
     assert called == []
+
+
+def test_shopee_income_backfill_uses_game_day_release_delay():
+    from app.api.routes import shopee as shopee_route
+    from app.db import SessionLocal
+    from app.models import GameRun, ShopeeFinanceLedgerEntry, ShopeeOrder
+
+    player_token = _register_or_login_player("13800138135")
+    run = _create_running_run(player_token, duration_days=7)
+    delivered_at = datetime(2026, 4, 23, 9, 0, 0)
+    release_at = delivered_at + timedelta(
+        seconds=shopee_route.ORDER_INCOME_RELEASE_DELAY_GAME_DAYS * shopee_route.REAL_SECONDS_PER_GAME_DAY
+    )
+
+    with SessionLocal() as db:
+        run_row = db.query(GameRun).filter(GameRun.id == run["id"]).first()
+        assert run_row is not None
+        order = ShopeeOrder(
+            run_id=run_row.id,
+            user_id=run_row.user_id,
+            order_no="TEST-INCOME-RELEASE-001",
+            buyer_name="收入释放测试买家",
+            buyer_payment=120,
+            type_bucket="completed",
+            process_status="processed",
+            shipping_channel="SPX快递",
+            delivered_at=delivered_at,
+        )
+        db.add(order)
+        db.commit()
+        db.refresh(order)
+
+        shopee_route._upsert_order_settlement(
+            db,
+            run_id=run_row.id,
+            user_id=run_row.user_id,
+            order=order,
+            settled_at=delivered_at,
+        )
+        db.commit()
+
+        shopee_route._backfill_income_for_completed_orders(
+            db,
+            run_id=run_row.id,
+            user_id=run_row.user_id,
+            current_tick=release_at - timedelta(seconds=1),
+        )
+        early_entry = (
+            db.query(ShopeeFinanceLedgerEntry)
+            .filter(
+                ShopeeFinanceLedgerEntry.order_id == order.id,
+                ShopeeFinanceLedgerEntry.entry_type == "income_from_order",
+            )
+            .first()
+        )
+        assert early_entry is None
+
+        shopee_route._backfill_income_for_completed_orders(
+            db,
+            run_id=run_row.id,
+            user_id=run_row.user_id,
+            current_tick=release_at,
+        )
+        entry = (
+            db.query(ShopeeFinanceLedgerEntry)
+            .filter(
+                ShopeeFinanceLedgerEntry.order_id == order.id,
+                ShopeeFinanceLedgerEntry.entry_type == "income_from_order",
+            )
+            .first()
+        )
+        assert entry is not None
+        assert entry.credited_at == release_at
 
 
 def test_shopee_bank_accounts_list_allows_finished_run():
@@ -3203,7 +3276,7 @@ def test_simulate_shopee_orders_invalidates_orders_cache(monkeypatch):
         shopee_route,
         "simulate_orders_for_run",
         lambda _db, run_id, user_id, tick_time: {
-            "tick_time": tick_time or datetime.utcnow(),
+            "tick_time": tick_time or datetime.now(),
             "active_buyer_count": 0,
             "candidate_product_count": 0,
             "generated_order_count": 0,
@@ -3231,7 +3304,7 @@ def test_auto_simulate_orders_by_game_hour_uses_game_hour_seconds(monkeypatch):
     with SessionLocal() as db:
         row = db.query(GameRun).filter(GameRun.id == run["id"]).first()
         assert row is not None
-        row.created_at = datetime.utcnow() - timedelta(seconds=610)
+        row.created_at = datetime.now() - timedelta(seconds=610)
         db.commit()
         db.refresh(row)
 
@@ -3270,12 +3343,12 @@ def test_auto_simulate_orders_by_game_hour_clamps_future_tick_and_logs_warning(m
     with SessionLocal() as db:
         row = db.query(GameRun).filter(GameRun.id == run["id"]).first()
         assert row is not None
-        row.created_at = datetime.utcnow() - timedelta(seconds=610)
+        row.created_at = datetime.now() - timedelta(seconds=610)
         db.add(
             ShopeeOrderGenerationLog(
                 run_id=row.id,
                 user_id=run["user_id"],
-                tick_time=datetime.utcnow() + timedelta(days=365),
+                tick_time=datetime.now() + timedelta(days=365),
                 active_buyer_count=0,
                 candidate_product_count=0,
                 generated_order_count=0,
@@ -3317,7 +3390,7 @@ def test_ship_order_uses_game_day_seconds_for_eta():
         order = ShopeeOrder(
             run_id=run["id"],
             user_id=run["user_id"],
-            order_no=f"TEST-SHIP-{int(datetime.utcnow().timestamp() * 1000)}",
+            order_no=f"TEST-SHIP-{int(datetime.now().timestamp() * 1000)}",
             buyer_name="测试买家",
             buyer_payment=199,
             type_bucket="toship",
@@ -3369,7 +3442,7 @@ def test_shipping_metrics_use_game_day_seconds():
     from app.api.routes import shopee as shopee_route
     from app.models import ShopeeOrder
 
-    shipped_at = datetime.utcnow()
+    shipped_at = datetime.now()
     order = ShopeeOrder(
         shipped_at=shipped_at,
         eta_start_at=shipped_at + timedelta(seconds=5 * 1800),
@@ -3442,7 +3515,7 @@ def test_auto_order_tick_worker_skips_and_finishes_expired_run(monkeypatch):
     with SessionLocal() as db:
         row = db.query(GameRun).filter(GameRun.id == run["id"]).first()
         assert row is not None
-        row.created_at = datetime.utcnow() - timedelta(days=8)
+        row.created_at = datetime.now() - timedelta(days=8)
         db.commit()
 
     called_run_ids: list[int] = []
@@ -3459,7 +3532,7 @@ def test_auto_order_tick_worker_skips_and_finishes_expired_run(monkeypatch):
     monkeypatch.setattr(worker, "auto_cancel_overdue_orders_by_tick", lambda *_args, **_kwargs: [], raising=False)
 
     with SessionLocal() as db:
-        worker._run_one_cycle(db, datetime.utcnow())
+        worker._run_one_cycle(db, datetime.now())
 
     assert run["id"] not in called_run_ids
 

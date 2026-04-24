@@ -668,7 +668,7 @@ def recompute_listing_quality(
 
     listing.quality_status = quality_status
     listing.quality_total_score = total_score
-    listing.quality_scored_at = datetime.utcnow()
+    listing.quality_scored_at = datetime.now()
     listing.quality_score_version = QUALITY_SCORER_VERSION
     db.flush()
     return snapshot

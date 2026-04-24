@@ -2442,7 +2442,7 @@ def _save_shopee_image(db: Session, image: UploadFile) -> str:
     if not oss_config:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="未配置可用 OSS 存储")
 
-    object_key = f"shopee/{datetime.utcnow().strftime('%Y%m%d')}/{uuid4().hex}{suffix}"
+    object_key = f"shopee/{datetime.now().strftime('%Y%m%d')}/{uuid4().hex}{suffix}"
     client = boto3.client(
         "s3",
         endpoint_url=oss_config.endpoint,
@@ -2486,7 +2486,7 @@ def _save_shopee_video(db: Session, video: UploadFile) -> str:
     if not oss_config:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="未配置可用 OSS 存储")
 
-    object_key = f"shopee/{datetime.utcnow().strftime('%Y%m%d')}/{uuid4().hex}{suffix}"
+    object_key = f"shopee/{datetime.now().strftime('%Y%m%d')}/{uuid4().hex}{suffix}"
     client = boto3.client(
         "s3",
         endpoint_url=oss_config.endpoint,
@@ -2792,7 +2792,7 @@ def _resolve_game_tick(db: Session, run_id: int, user_id: int) -> datetime:
     run = db.query(GameRun).filter(GameRun.id == run_id, GameRun.user_id == user_id).first()
     if run is not None:
         return _resolve_game_hour_tick_by_run(run)
-    return datetime.utcnow()
+    return datetime.now()
 
 
 def _auto_simulate_orders_by_game_hour(
@@ -2956,7 +2956,7 @@ def _credit_order_income_if_needed(
     if not order.delivered_at:
         return False
 
-    release_at = order.delivered_at + timedelta(days=ORDER_INCOME_RELEASE_DELAY_GAME_DAYS)
+    release_at = order.delivered_at + timedelta(seconds=ORDER_INCOME_RELEASE_DELAY_GAME_DAYS * REAL_SECONDS_PER_GAME_DAY)
     if credited_at < release_at:
         return False
 
@@ -3223,7 +3223,7 @@ def _backfill_income_for_completed_orders(
             run_id=run_id,
             user_id=user_id,
             order=order,
-            credited_at=order.delivered_at or current_tick,
+            credited_at=current_tick,
         )
         if created:
             changed = True
@@ -3732,7 +3732,7 @@ def list_shopee_orders(
             user_id=user_id,
             orders=rows,
         )
-    recent_window_start = datetime.utcnow() - timedelta(hours=1)
+    recent_window_start = datetime.now() - timedelta(hours=1)
     simulated_recent_1h = (
         db.query(func.coalesce(func.sum(ShopeeOrderGenerationLog.generated_order_count), 0))
         .filter(
@@ -4735,7 +4735,7 @@ def update_shopee_marketing_preferences(
         )
         .first()
     )
-    now = datetime.utcnow()
+    now = datetime.now()
     if not pref:
         pref = ShopeeUserMarketingPreference(
             run_id=run.id,
@@ -4890,7 +4890,7 @@ def update_shopee_discount_preferences(
         )
         .first()
     )
-    now = datetime.utcnow()
+    now = datetime.now()
     if not pref:
         pref = ShopeeUserDiscountPreference(run_id=run.id, user_id=user_id)
         db.add(pref)
@@ -5400,7 +5400,7 @@ def simulate_shopee_orders(
         if latest_tick_time:
             effective_tick_time = latest_tick_time + timedelta(hours=1)
         else:
-            effective_tick_time = datetime.utcnow()
+            effective_tick_time = datetime.now()
     guard_tick = effective_tick_time if tick_time is not None else _resolve_game_hour_tick_by_run(run)
     _ensure_run_writable_or_400(db, run, tick_time=guard_tick)
     lock_key, lock_token = _acquire_shopee_simulate_lock_or_409(run_id=run.id, user_id=user_id)

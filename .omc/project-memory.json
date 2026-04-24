@@ -107,8 +107,14 @@
   "hotPaths": [
     {
       "path": "backend/apps/api-gateway/app/api/routes/game.py",
-      "accessCount": 344,
-      "lastAccessed": 1776930129477,
+      "accessCount": 353,
+      "lastAccessed": 1776957407794,
+      "type": "file"
+    },
+    {
+      "path": "backend/apps/api-gateway/app/api/routes/shopee.py",
+      "accessCount": 263,
+      "lastAccessed": 1776994712992,
       "type": "file"
     },
     {
@@ -118,15 +124,9 @@
       "type": "file"
     },
     {
-      "path": "backend/apps/api-gateway/app/api/routes/shopee.py",
-      "accessCount": 231,
-      "lastAccessed": 1776933540396,
-      "type": "file"
-    },
-    {
       "path": "backend/apps/api-gateway/tests/test_api.py",
-      "accessCount": 125,
-      "lastAccessed": 1776928626766,
+      "accessCount": 131,
+      "lastAccessed": 1776993452149,
       "type": "file"
     },
     {
@@ -143,44 +143,50 @@
     },
     {
       "path": "docs/当前进度.md",
-      "accessCount": 68,
-      "lastAccessed": 1776933822857,
+      "accessCount": 71,
+      "lastAccessed": 1776994981964,
       "type": "file"
     },
     {
       "path": "docs/change-log.md",
-      "accessCount": 64,
-      "lastAccessed": 1776933781394,
+      "accessCount": 70,
+      "lastAccessed": 1776994950690,
       "type": "file"
     },
     {
       "path": "backend/apps/api-gateway/app/services/shopee_order_simulator.py",
-      "accessCount": 44,
-      "lastAccessed": 1776931247864,
+      "accessCount": 50,
+      "lastAccessed": 1776957830792,
       "type": "directory"
     },
     {
-      "path": "backend/apps/api-gateway/app/db.py",
-      "accessCount": 38,
-      "lastAccessed": 1776931356102,
+      "path": "backend/apps/api-gateway/app/models.py",
+      "accessCount": 43,
+      "lastAccessed": 1776994726897,
       "type": "file"
     },
     {
-      "path": "backend/apps/api-gateway/app/models.py",
-      "accessCount": 32,
-      "lastAccessed": 1776932718720,
+      "path": "backend/apps/api-gateway/app/db.py",
+      "accessCount": 40,
+      "lastAccessed": 1776994590347,
       "type": "file"
+    },
+    {
+      "path": "backend/apps/api-gateway/app/services/auto_order_tick_worker.py",
+      "accessCount": 33,
+      "lastAccessed": 1776957816248,
+      "type": "file"
+    },
+    {
+      "path": "",
+      "accessCount": 31,
+      "lastAccessed": 1776994580394,
+      "type": "directory"
     },
     {
       "path": "frontend/src/App.tsx",
       "accessCount": 29,
       "lastAccessed": 1776851462366,
-      "type": "file"
-    },
-    {
-      "path": "backend/apps/api-gateway/app/services/auto_order_tick_worker.py",
-      "accessCount": 25,
-      "lastAccessed": 1776840129325,
       "type": "file"
     },
     {
@@ -190,34 +196,28 @@
       "type": "directory"
     },
     {
-      "path": "",
-      "accessCount": 25,
-      "lastAccessed": 1776931425846,
-      "type": "directory"
-    },
-    {
       "path": "frontend/src",
-      "accessCount": 24,
-      "lastAccessed": 1776925812640,
-      "type": "directory"
-    },
-    {
-      "path": "frontend/src/modules/shopee/views/DiscountCreateView.tsx",
-      "accessCount": 14,
-      "lastAccessed": 1776926655607,
-      "type": "file"
-    },
-    {
-      "path": "backend/apps/api-gateway",
-      "accessCount": 13,
-      "lastAccessed": 1776931330673,
+      "accessCount": 25,
+      "lastAccessed": 1776955897607,
       "type": "directory"
     },
     {
       "path": "backend",
-      "accessCount": 12,
-      "lastAccessed": 1776849891054,
+      "accessCount": 24,
+      "lastAccessed": 1776994580295,
       "type": "directory"
+    },
+    {
+      "path": "backend/apps/api-gateway",
+      "accessCount": 18,
+      "lastAccessed": 1776994580354,
+      "type": "directory"
+    },
+    {
+      "path": "frontend/src/modules/shopee/views/DiscountCreateView.tsx",
+      "accessCount": 16,
+      "lastAccessed": 1776995109680,
+      "type": "file"
     },
     {
       "path": "docs/admin/ad01-文档标题.md",
@@ -256,6 +256,12 @@
       "type": "directory"
     },
     {
+      "path": "backend/apps/api-gateway/app/services",
+      "accessCount": 4,
+      "lastAccessed": 1776957343753,
+      "type": "directory"
+    },
+    {
       "path": "frontend/src/modules",
       "accessCount": 3,
       "lastAccessed": 1776733870413,
@@ -274,16 +280,16 @@
       "type": "directory"
     },
     {
-      "path": "backend/apps/api-gateway/app/services",
-      "accessCount": 3,
-      "lastAccessed": 1776764611887,
-      "type": "directory"
-    },
-    {
       "path": "backend/apps/api-gateway/tests",
       "accessCount": 3,
       "lastAccessed": 1776924024322,
       "type": "directory"
+    },
+    {
+      "path": "frontend/src/modules/shopee/views/BundleCreateView.tsx",
+      "accessCount": 3,
+      "lastAccessed": 1776994614202,
+      "type": "file"
     },
     {
       "path": "cbec_sim.sql",
@@ -316,12 +322,6 @@
       "type": "file"
     },
     {
-      "path": "frontend/src/modules/shopee/views/BundleCreateView.tsx",
-      "accessCount": 2,
-      "lastAccessed": 1776923447627,
-      "type": "file"
-    },
-    {
       "path": "docs/设计文档",
       "accessCount": 2,
       "lastAccessed": 1776923849538,
@@ -331,6 +331,12 @@
       "path": "backend/.env",
       "accessCount": 2,
       "lastAccessed": 1776931438675,
+      "type": "file"
+    },
+    {
+      "path": "frontend/src/modules/shopee/views/MarketingCentreView.tsx",
+      "accessCount": 2,
+      "lastAccessed": 1776994590194,
       "type": "file"
     },
     {
@@ -397,12 +403,6 @@
       "path": "docs/说明文档/时间变量说明.md",
       "accessCount": 1,
       "lastAccessed": 1776843748292,
-      "type": "file"
-    },
-    {
-      "path": "frontend/src/modules/shopee/views/MarketingCentreView.tsx",
-      "accessCount": 1,
-      "lastAccessed": 1776849882104,
       "type": "file"
     }
   ],

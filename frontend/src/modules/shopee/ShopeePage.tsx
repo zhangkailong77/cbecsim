@@ -322,7 +322,7 @@ export default function ShopeePage({ run, currentUser, onBackToSetup, readOnly =
   const playerDisplayName = currentUser?.full_name?.trim() || currentUser?.username || '玩家';
 
   return (
-    <div className="fixed inset-0 overflow-hidden bg-white">
+    <div className="fixed inset-0 overflow-auto bg-white">
       <div
         ref={containerRef}
         className="bg-white shadow-2xl flex flex-col flex-shrink-0"

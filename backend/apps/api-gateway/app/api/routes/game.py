@@ -850,7 +850,7 @@ def _resolve_run_effective_duration_seconds(run: GameRun) -> int:
 def _resolve_run_elapsed_seconds(run: GameRun, *, now: datetime | None = None) -> int:
     if not run.created_at:
         return 0
-    now = now or datetime.utcnow()
+    now = now or datetime.now()
     compare_now = _align_compare_time(run.created_at, now)
     run_end_time = _resolve_run_end_time(run)
     if run_end_time is not None:
@@ -890,13 +890,13 @@ def _resolve_run_remaining_seconds(run: GameRun, *, now: datetime | None = None)
     run_end_time = _resolve_run_end_time(run)
     if not run_end_time:
         return 0
-    now = now or datetime.utcnow()
+    now = now or datetime.now()
     compare_now = _align_compare_time(run_end_time, now)
     return max(0, int((run_end_time - compare_now).total_seconds()))
 
 
 def _auto_finish_expired_running_runs(db: Session, *, now: datetime | None = None) -> int:
-    now = now or datetime.utcnow()
+    now = now or datetime.now()
     runs = db.query(GameRun).filter(GameRun.status == "running").all()
     updated = 0
     for run in runs:
@@ -1193,7 +1193,7 @@ def admin_renew_run(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="当前对局缺少有效结束时间，无法续期恢复")
 
     new_end_time = old_end_time + timedelta(days=safe_extend_days)
-    now = datetime.utcnow()
+    now = datetime.now()
     if _align_compare_time(new_end_time, now) >= new_end_time:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="续期后的结束时间必须晚于当前时间")
     run.status = "running"
@@ -1258,9 +1258,9 @@ def admin_simulate_orders(
             .scalar()
         )
         if latest_tick_time:
-            effective_tick_time = latest_tick_time + timedelta(hours=1)
+            effective_tick_time = latest_tick_time
         else:
-            effective_tick_time = datetime.utcnow()
+            effective_tick_time = datetime.now()
 
     try:
         result = simulate_orders_for_run(db, run_id=run.id, user_id=run.user_id, tick_time=effective_tick_time)
@@ -1627,7 +1627,7 @@ def _resolve_run_end_time(run: GameRun) -> datetime | None:
 
 
 def _resolve_game_hour_tick_by_run(run: GameRun, now: datetime | None = None) -> datetime:
-    now = now or datetime.utcnow()
+    now = now or datetime.now()
     if not run.created_at:
         return now
     compare_now = _align_compare_time(run.created_at, now)
@@ -1648,7 +1648,7 @@ def _mark_run_finished_if_reached(db: Session, run: GameRun, *, tick_time: datet
     run_end_time = _resolve_run_end_time(run)
     if not run_end_time:
         return False
-    compare_time = tick_time or datetime.utcnow()
+    compare_time = tick_time or datetime.now()
     compare_time = _align_compare_time(run_end_time, compare_time)
     if compare_time < run_end_time:
         return False
@@ -1668,7 +1668,7 @@ def _persist_run_finished_if_reached(db: Session, run: GameRun, *, tick_time: da
 
 
 def _auto_finish_expired_running_runs_for_user(db: Session, *, user_id: int, now: datetime | None = None) -> int:
-    now = now or datetime.utcnow()
+    now = now or datetime.now()
     runs = (
         db.query(GameRun)
         .filter(
@@ -2286,7 +2286,7 @@ def debug_accelerate_logistics_clearance(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Shipment not found")
 
     created_ref = shipment.created_at
-    now = datetime.now(tz=created_ref.tzinfo) if created_ref.tzinfo is not None else datetime.utcnow()
+    now = datetime.now(tz=created_ref.tzinfo) if created_ref.tzinfo is not None else datetime.now()
     transport_seconds = max(1, int(shipment.transport_days * REAL_SECONDS_PER_GAME_DAY))
     customs_seconds = max(1, int(shipment.customs_days * REAL_SECONDS_PER_GAME_DAY))
     total_seconds = BOOKED_SECONDS + transport_seconds + customs_seconds
@@ -2294,7 +2294,7 @@ def debug_accelerate_logistics_clearance(
 
     db.commit()
     db.refresh(shipment)
-    status_now = _calc_shipment_status(shipment, datetime.utcnow())
+    status_now = _calc_shipment_status(shipment, datetime.now())
     return LogisticsDebugAccelerateResponse(
         shipment_id=shipment.id,
         status=status_now,
@@ -2393,7 +2393,7 @@ def get_warehouse_inbound_candidates(
         .order_by(LogisticsShipment.id.desc())
         .all()
     )
-    now = datetime.utcnow()
+    now = datetime.now()
     candidates: list[WarehouseInboundCandidateItem] = []
     for shipment in shipments:
         if shipment.id in inbounded_shipment_ids:
@@ -2536,7 +2536,7 @@ def warehouse_inbound(
         .all()
     )
     shipment_map = {row.id: row for row in shipments}
-    now = datetime.utcnow()
+    now = datetime.now()
     created_inbound_count = 0
     created_lot_count = 0
     product_inbound_qty_map: dict[int, int] = {}
@@ -2819,7 +2819,7 @@ def get_warehouse_backorder_risk_overview(
             ShopeeOrderGenerationLog.user_id == current_user["id"],
         )
         .scalar()
-    ) or datetime.utcnow()
+    ) or datetime.now()
 
     orders = (
         db.query(ShopeeOrder)

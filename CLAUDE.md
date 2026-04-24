@@ -1,6 +1,73 @@
+# CLAUDE.md
+
+Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-specific instructions as needed.
+
+**Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.
+
+## 1. Think Before Coding
+
+**Don't assume. Don't hide confusion. Surface tradeoffs.**
+
+Before implementing:
+- State your assumptions explicitly. If uncertain, ask.
+- If multiple interpretations exist, present them - don't pick silently.
+- If a simpler approach exists, say so. Push back when warranted.
+- If something is unclear, stop. Name what's confusing. Ask.
+
+## 2. Simplicity First
+
+**Minimum code that solves the problem. Nothing speculative.**
+
+- No features beyond what was asked.
+- No abstractions for single-use code.
+- No "flexibility" or "configurability" that wasn't requested.
+- No error handling for impossible scenarios.
+- If you write 200 lines and it could be 50, rewrite it.
+
+Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
+
+## 3. Surgical Changes
+
+**Touch only what you must. Clean up only your own mess.**
+
+When editing existing code:
+- Don't "improve" adjacent code, comments, or formatting.
+- Don't refactor things that aren't broken.
+- Match existing style, even if you'd do it differently.
+- If you notice unrelated dead code, mention it - don't delete it.
+
+When your changes create orphans:
+- Remove imports/variables/functions that YOUR changes made unused.
+- Don't remove pre-existing dead code unless asked.
+
+The test: Every changed line should trace directly to the user's request.
+
+## 4. Goal-Driven Execution
+
+**Define success criteria. Loop until verified.**
+
+Transform tasks into verifiable goals:
+- "Add validation" → "Write tests for invalid inputs, then make them pass"
+- "Fix the bug" → "Write a test that reproduces it, then make it pass"
+- "Refactor X" → "Ensure tests pass before and after"
+
+For multi-step tasks, state a brief plan:
+```
+1. [Step] → verify: [check]
+2. [Step] → verify: [check]
+3. [Step] → verify: [check]
+```
+
+Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
+
+---
+
+**These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
+
+
 # CBEC_SIM Agent Defaults
 
-本文件用于给 Codex 提供本仓库的长期默认约束，减少每次对话重复说明。
+本文件用于给 claude code 提供本仓库的长期默认约束，减少每次对话重复说明。
 
 ## Global UI Rules
 - 所有核心业务页面统一使用：`左上角为原点 + 等比例缩放` 适配。
@@ -41,13 +108,4 @@
 - 每次开发或设计完成一个模块/子功能后，必须立即同步更新 `docs/当前进度.md`（至少更新：完成内容、当前阶段、下一步待办）。
 - 自 2026-04-21 起，凡是仓库内发生代码、文档、配置修改，必须同步更新 `docs/change-log.md`，记录修改时间、涉及文件与修改摘要；若影响业务规则、接口口径或页面行为，需写明影响范围。
 
-## Run Commands (macOS)
-- 一键启动：`./start-dev.sh`
-- 前端：`cd frontend && npm run dev`
-- 后端：`conda activate cbec-py312 && cd backend/apps/api-gateway && uvicorn app.main:app --host 0.0.0.0 --reload`
 
-## Redis Regression Check
-- Redis 订单缓存回归检查命令（本地开发）：
-  - `cd backend/apps/api-gateway/scripts && python verify_redis_orders_cache.py --username <username> --password <password> --no-flush`
-- 默认要求：
-  - 若涉及 `GET /shopee/runs/{run_id}/orders` 缓存逻辑、缓存失效逻辑、simulate 相关缓存行为变更，提交前必须至少执行一次上述回归脚本并确认通过。

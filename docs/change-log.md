@@ -1,6 +1,26 @@
 # Change Log
 
-最后更新：2026-04-23（Shopee 单品折扣游戏时间生效链路补齐）
+最后更新：2026-04-24（Shopee 单品折扣活动详情页设计）
+
+## 2026-04-24
+
+### 新增
+- 新增设计文档 `docs/设计文档/25-Shopee单品折扣活动详情页设计.md`，定义已结束/所有状态折扣活动"详情"页面。
+  - 页面覆盖：活动基础信息、表现总览（4 指标卡）、参与商品 Tab、表现趋势 Tab、归因订单 Tab。
+  - 后端接口：1 个详情主接口 + 3 个 Tab 分页子接口。
+  - 数据库：无需新增表或字段，复用现有 `shopee_discount_campaigns`、`campaign_items`、`performance_daily`、`shopee_orders(marketing_campaign_id)`。
+  - Redis：详情主接口与 3 个 Tab 子接口各设 30 秒缓存，活动变更时按 campaign_id 前缀批量失效。
+  - 影响范围：后续实现将新增 `DiscountDetailView` 前端视图与 4 个后端接口。
+
+### 修复
+- 修复 Shopee 待入账收入永远不释放的问题：回填收入时改为使用当前游戏时间 `current_tick` 判断释放条件，并将订单完成后 3 天释放改为按 3 个游戏日换算。
+  - 涉及文件：`backend/apps/api-gateway/app/api/routes/shopee.py`、`backend/apps/api-gateway/tests/test_api.py`、`docs/bug/2026-04-23-待入账收入永远不释放.md`
+  - 影响范围：已完成订单将在送达后 3 个游戏日释放待入账收入并生成 `income_from_order` 钱包流水，不再永久停留在待入账。
+
+### 优化
+- 我的收入页面底部翻页器改为与我的订单一致的页码按钮样式：支持显示所有页码、省略号、首尾页跳转，移除无功能的 pageSize 下拉。
+  - 涉及文件：`frontend/src/modules/shopee/views/MyIncomeView.tsx`
+  - 影响范围：我的收入（待入账/已入账）底部翻页器交互体验与我的订单统一。
 
 ## 2026-04-23
 
@@ -25,6 +45,11 @@
   - 已通过 3 条后端回归测试验证，并经真实对局手动联调确认折扣生效。
 
 ## 2026-04-22 (续)
+
+### 修复
+- 修复管理员买家池"推进模拟订单"导致 `latest_tick_time` 超前游戏时钟 1 小时的问题：将 `admin_simulate_orders` 中 `effective_tick_time = latest_tick_time + timedelta(hours=1)` 改为直接使用 `latest_tick_time`，使管理员推进仅凭空额外生成订单而不影响游戏时间与自动 worker 进度。
+  - 涉及文件：`backend/apps/api-gateway/app/api/routes/game.py`
+  - 影响范围：管理员在买家池页面点击"推进模拟订单"后，订单正常生成，但 `ShopeeOrderGenerationLog` 的 `MAX(tick_time)` 不再向前推进，自动 worker 不会因 `base_tick > current_game_tick` 触发 clamp warning 或暂停。
 
 ### 修复
 - 修正 `_resolve_game_hour_tick_by_run` 中 `current_game_tick` 计算逻辑：改为在真实秒数上直接 clamp（`min(elapsed_seconds, total_game_days × REAL_SECONDS_PER_GAME_DAY)`），避免游戏时间超出对局总时长后被错误截断到终点，导致模拟永久停止。
