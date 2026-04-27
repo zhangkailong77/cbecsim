@@ -493,17 +493,6 @@ export default function BundleCreateView({ runId, readOnly = false, onBackToDisc
   return (
     <div className="flex-1 overflow-y-auto bg-[#f6f6f6] px-9 py-6 custom-scrollbar">
       <div className="mx-auto max-w-[1360px] pb-10">
-        {/* Breadcrumb */}
-        <div className="mb-6 flex items-center gap-2 text-[14px] text-[#999]">
-          <span className="hover:text-[#ee4d2d] cursor-pointer">首页</span>
-          <span>&gt;</span>
-          <span className="hover:text-[#ee4d2d] cursor-pointer">营销中心</span>
-          <span>&gt;</span>
-          <span className="hover:text-[#ee4d2d] cursor-pointer">套餐优惠</span>
-          <span>&gt;</span>
-          <span className="text-[#333]">创建新套餐优惠</span>
-        </div>
-
         {readOnly ? <div className="mb-5 border border-amber-200 bg-amber-50 px-4 py-2 text-[13px] text-amber-700">当前为历史对局回溯模式：可浏览创建页，但不能提交套餐活动。</div> : null}
         {error ? <div className="mb-5 border border-red-100 bg-red-50 px-4 py-3 text-[13px] text-red-600">{error}</div> : null}
 
@@ -635,14 +624,11 @@ export default function BundleCreateView({ runId, readOnly = false, onBackToDisc
   }} 
 >
   <div className="relative">
-    {/* 手机总容器：280x560，去掉所有背景色和边框 */}
     <div className="relative mx-auto h-[560px] w-[280px]">
       
-      {/* 1. 屏幕内容层：限制截图只显示在手机屏幕开口内 */}
       <div 
         className="absolute z-10 overflow-hidden"
         style={{
-          // 根据 Shopee 原图比例精确对齐内部白色区域
           top: '38px',     
           left: '18px',    
           right: '18px',
@@ -651,7 +637,6 @@ export default function BundleCreateView({ runId, readOnly = false, onBackToDisc
           borderRadius: '22px',
         }}
       >
-        {/* 截图图片 */}
         <img 
           src={homePreviewImage} 
           alt="screenshot"
@@ -668,14 +653,11 @@ export default function BundleCreateView({ runId, readOnly = false, onBackToDisc
         />
       </div>
 
-      {/* 2. 手机外壳图：放在最上面 (z-20)，作为盖子扣在内容上 */}
-      {/* pointer-events-none 极其重要，否则你无法在手机区域内滚动图片 */}
       <img 
         src="https://deo.shopeemobile.com/shopee/shopee-seller-live-sg/mmf_portal_seller_root_dir/static/modules/bundle-deal-v2/image/phone_bg.076ca95.png" 
         className="absolute inset-0 h-full w-full object-contain z-20 pointer-events-none"
         alt="phone frame"
       />
-
     </div>
   </div>
 </div>

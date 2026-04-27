@@ -101,6 +101,7 @@ def init_database():
     _ensure_shopee_spec_templates_columns()
     _ensure_sim_buyer_profiles_columns()
     _ensure_shopee_orders_fulfillment_columns()
+    _ensure_shopee_order_items_fulfillment_columns()
     _ensure_shopee_orders_marketing_columns()
     _ensure_shopee_order_generation_log_indexes()
     _cleanup_game_runs_legacy_columns()
@@ -1293,6 +1294,50 @@ def _ensure_shopee_orders_fulfillment_columns():
                 pass
 
 
+def _ensure_shopee_order_items_fulfillment_columns():
+    inspector = inspect(engine)
+    if "shopee_order_items" not in inspector.get_table_names():
+        return
+
+    existing_columns = {col["name"] for col in inspector.get_columns("shopee_order_items")}
+    missing_sql = []
+    if "listing_id" not in existing_columns:
+        missing_sql.append("ALTER TABLE shopee_order_items ADD COLUMN listing_id INTEGER NULL")
+    if "variant_id" not in existing_columns:
+        missing_sql.append("ALTER TABLE shopee_order_items ADD COLUMN variant_id INTEGER NULL")
+    if "product_id" not in existing_columns:
+        missing_sql.append("ALTER TABLE shopee_order_items ADD COLUMN product_id INTEGER NULL")
+    if "stock_fulfillment_status" not in existing_columns:
+        missing_sql.append(
+            "ALTER TABLE shopee_order_items ADD COLUMN stock_fulfillment_status VARCHAR(24) NOT NULL DEFAULT 'in_stock'"
+        )
+    if "backorder_qty" not in existing_columns:
+        missing_sql.append("ALTER TABLE shopee_order_items ADD COLUMN backorder_qty INTEGER NOT NULL DEFAULT 0")
+
+    if not missing_sql:
+        return
+
+    with engine.begin() as conn:
+        for sql in missing_sql:
+            conn.execute(text(sql))
+        if "listing_id" not in existing_columns:
+            try:
+                conn.execute(text("CREATE INDEX ix_shopee_order_items_listing_id ON shopee_order_items (listing_id)"))
+            except Exception:
+                pass
+        if "variant_id" not in existing_columns:
+            try:
+                conn.execute(text("CREATE INDEX ix_shopee_order_items_variant_id ON shopee_order_items (variant_id)"))
+            except Exception:
+                pass
+        if "product_id" not in existing_columns:
+            try:
+                conn.execute(text("CREATE INDEX ix_shopee_order_items_product_id ON shopee_order_items (product_id)"))
+            except Exception:
+                pass
+
+
+
 def _ensure_shopee_orders_marketing_columns():
     inspector = inspect(engine)
     if "shopee_orders" not in inspector.get_table_names():
@@ -1807,11 +1852,16 @@ def _ensure_column_comments():
         "shopee_order_items": {
             "id": "主键ID",
             "order_id": "订单ID",
+            "listing_id": "订单项对应的Shopee商品ID",
+            "variant_id": "订单项对应的Shopee变体ID",
+            "product_id": "订单项对应的库存商品ID",
             "product_name": "商品名称",
             "variant_name": "规格名称",
             "quantity": "购买数量",
             "unit_price": "成交单价",
             "image_url": "商品图地址",
+            "stock_fulfillment_status": "订单项库存履约状态(in_stock/backorder/restocked)",
+            "backorder_qty": "订单项待补货数量（件）",
         },
         "shopee_order_logistics_events": {
             "id": "主键ID",

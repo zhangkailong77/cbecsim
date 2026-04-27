@@ -6,7 +6,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.models import InventoryStockMovement, ShopeeListing, ShopeeListingVariant, ShopeeOrder, ShopeeOrderLogisticsEvent
+from app.models import InventoryStockMovement, ShopeeListing, ShopeeListingVariant, ShopeeOrder, ShopeeOrderItem, ShopeeOrderLogisticsEvent
 from app.services.inventory_lot_sync import release_reserved_inventory_lots, reserve_inventory_lots
 
 
@@ -40,7 +40,18 @@ def _rollback_order_stock_and_sales(
         variant_name = (item.variant_name or "").strip()
 
         listing: ShopeeListing | None = None
-        if int(order.listing_id or 0) > 0:
+        item_listing_id = int(getattr(item, "listing_id", 0) or 0)
+        if item_listing_id > 0:
+            listing = (
+                db.query(ShopeeListing)
+                .filter(
+                    ShopeeListing.run_id == run_id,
+                    ShopeeListing.user_id == user_id,
+                    ShopeeListing.id == item_listing_id,
+                )
+                .first()
+            )
+        if not listing and int(order.listing_id or 0) > 0:
             listing = (
                 db.query(ShopeeListing)
                 .filter(
@@ -69,7 +80,17 @@ def _rollback_order_stock_and_sales(
         variants = list(listing.variants or [])
         if variants:
             matched_variant: ShopeeListingVariant | None = None
-            if int(order.variant_id or 0) > 0:
+            item_variant_id = int(getattr(item, "variant_id", 0) or 0)
+            if item_variant_id > 0:
+                matched_variant = (
+                    db.query(ShopeeListingVariant)
+                    .filter(
+                        ShopeeListingVariant.listing_id == listing.id,
+                        ShopeeListingVariant.id == item_variant_id,
+                    )
+                    .first()
+                )
+            if not matched_variant and int(order.variant_id or 0) > 0:
                 matched_variant = (
                     db.query(ShopeeListingVariant)
                     .filter(
@@ -89,7 +110,12 @@ def _rollback_order_stock_and_sales(
                     .first()
                 )
             if matched_variant:
-                backorder_from_order = max(0, int(order.backorder_qty or 0))
+                backorder_from_order = max(
+                0,
+                int(getattr(item, "backorder_qty", 0) or 0)
+                if (order.marketing_campaign_type or "") == "bundle"
+                else int(order.backorder_qty or 0),
+            )
                 oversell_release = min(qty, backorder_from_order)
                 stock_release = max(0, qty - oversell_release)
                 released_reserved = 0
@@ -122,7 +148,12 @@ def _rollback_order_stock_and_sales(
                 )
             listing.stock_available = int(sum(max(0, int(v.stock or 0)) for v in variants))
         else:
-            backorder_from_order = max(0, int(order.backorder_qty or 0))
+            backorder_from_order = max(
+                0,
+                int(getattr(item, "backorder_qty", 0) or 0)
+                if (order.marketing_campaign_type or "") == "bundle"
+                else int(order.backorder_qty or 0),
+            )
             stock_release = max(0, qty - min(qty, backorder_from_order))
             released_reserved = 0
             if product_id > 0 and stock_release > 0:
@@ -164,22 +195,22 @@ def _rebalance_backorders_from_released_inventory(
         return
 
     for product_id in sorted({int(pid) for pid in product_ids if int(pid) > 0}):
-        backlog_orders = (
-            db.query(ShopeeOrder)
-            .join(ShopeeListing, ShopeeListing.id == ShopeeOrder.listing_id)
+        backlog_items = (
+            db.query(ShopeeOrder, ShopeeOrderItem)
+            .join(ShopeeOrderItem, ShopeeOrderItem.order_id == ShopeeOrder.id)
             .filter(
                 ShopeeOrder.run_id == run_id,
                 ShopeeOrder.user_id == user_id,
                 ShopeeOrder.type_bucket == "toship",
                 ShopeeOrder.stock_fulfillment_status == "backorder",
-                ShopeeOrder.backorder_qty > 0,
-                ShopeeListing.product_id == product_id,
+                ShopeeOrderItem.product_id == product_id,
+                ShopeeOrderItem.backorder_qty > 0,
             )
-            .order_by(ShopeeOrder.created_at.asc(), ShopeeOrder.id.asc())
+            .order_by(ShopeeOrder.created_at.asc(), ShopeeOrder.id.asc(), ShopeeOrderItem.id.asc())
             .all()
         )
-        for backlog_order in backlog_orders:
-            needed = max(0, int(backlog_order.backorder_qty or 0))
+        for backlog_order, backlog_item in backlog_items:
+            needed = max(0, int(backlog_item.backorder_qty or 0))
             if needed <= 0:
                 continue
             reserved_fill_qty = reserve_inventory_lots(
@@ -190,15 +221,19 @@ def _rebalance_backorders_from_released_inventory(
             )
             if reserved_fill_qty <= 0:
                 break
-            backlog_order.backorder_qty = needed - reserved_fill_qty
+            backlog_item.backorder_qty = needed - reserved_fill_qty
+            if backlog_item.backorder_qty <= 0:
+                backlog_item.backorder_qty = 0
+                backlog_item.stock_fulfillment_status = "restocked"
+            backlog_order.backorder_qty = max(0, int(backlog_order.backorder_qty or 0) - reserved_fill_qty)
             if backlog_order.backorder_qty <= 0:
                 backlog_order.backorder_qty = 0
                 backlog_order.stock_fulfillment_status = "restocked"
                 backlog_order.must_restock_before_at = None
-            if int(backlog_order.variant_id or 0) > 0:
+            if int(backlog_item.variant_id or 0) > 0:
                 matched_variant = (
                     db.query(ShopeeListingVariant)
-                    .filter(ShopeeListingVariant.id == int(backlog_order.variant_id))
+                    .filter(ShopeeListingVariant.id == int(backlog_item.variant_id))
                     .first()
                 )
                 if matched_variant:
@@ -208,8 +243,8 @@ def _rebalance_backorders_from_released_inventory(
                     run_id=run_id,
                     user_id=user_id,
                     product_id=product_id,
-                    listing_id=int(backlog_order.listing_id or 0) or None,
-                    variant_id=int(backlog_order.variant_id or 0) or None,
+                    listing_id=int(backlog_item.listing_id or 0) or int(backlog_order.listing_id or 0) or None,
+                    variant_id=int(backlog_item.variant_id or 0) or int(backlog_order.variant_id or 0) or None,
                     biz_order_id=int(backlog_order.id),
                     movement_type="restock_fill",
                     qty_delta_on_hand=0,
@@ -231,15 +266,15 @@ def rebalance_backorders_from_current_inventory(
     product_ids = {
         int(row[0])
         for row in (
-            db.query(ShopeeListing.product_id)
-            .join(ShopeeOrder, ShopeeOrder.listing_id == ShopeeListing.id)
+            db.query(ShopeeOrderItem.product_id)
+            .join(ShopeeOrder, ShopeeOrder.id == ShopeeOrderItem.order_id)
             .filter(
                 ShopeeOrder.run_id == run_id,
                 ShopeeOrder.user_id == user_id,
                 ShopeeOrder.type_bucket == "toship",
                 ShopeeOrder.stock_fulfillment_status == "backorder",
-                ShopeeOrder.backorder_qty > 0,
-                ShopeeListing.product_id.isnot(None),
+                ShopeeOrderItem.product_id.isnot(None),
+                ShopeeOrderItem.backorder_qty > 0,
             )
             .all()
         )

@@ -1,6 +1,70 @@
 # Change Log
 
-最后更新：2026-04-26（修复 Shopee 单品折扣活动数据页趋势图月度模式买家数重复计数）
+最后更新：2026-04-27（优化 Shopee 套餐订单组合图片展示）
+
+## 2026-04-27
+
+### 修复
+- 优化 Shopee 我的订单列表中套餐优惠订单的组合图片展示。
+  - 涉及文件：`frontend/src/modules/shopee/views/MyOrdersView.tsx`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：新增订单商品图片渲染组件，普通订单继续显示单图；套餐优惠多 SKU 订单改为 2x2 组合宫格展示订单明细中的多个 SKU 图片。
+  - 影响范围：仅影响我的订单列表商品图片展示，不改变订单数据、金额、履约和营销归因逻辑。
+- 修正 Shopee 套餐优惠期间多规格商品的规格选择口径。
+  - 涉及文件：`backend/apps/api-gateway/app/services/shopee_order_simulator.py`、`docs/当前进度.md`、`docs/change-log.md`
+  - 根因：此前为提高套餐命中，在最终选规格阶段对参加 bundle 的 003/004 增加权重，导致同一商品下未促销的 YZ-C-001 在促销期被挤出，表现为 001 不再自然出单。
+  - 修复内容：最终选规格阶段恢复为自然价格/库存/随机扰动评分，不再使用 bundle 权重；只有自然选中套餐 SKU 后才进入套餐组合判断和套餐成交概率计算。
+  - 影响范围：套餐优惠不再压制同商品下其他未促销规格的自然销售；套餐组合判断仍只在自然选中套餐 SKU 时触发。
+- 修复 Shopee 套餐优惠 `purchase_limit=1` 被误当成活动全局售罄开关的问题。
+  - 涉及文件：`backend/apps/api-gateway/app/services/shopee_order_simulator.py`、`docs/设计文档/27-套餐优惠概率计算设计.md`、`docs/设计文档/28-Shopee套餐优惠组合购买改造设计.md`、`docs/当前进度.md`
+  - 根因：订单模拟器在加载 ongoing bundle 时按 campaign 累计 bundle 订单数过滤 `purchase_limit`，导致真实活动已有 1 单套餐后，后续管理员加速模拟买到 YZ-C-003/YZ-C-004 也不再加载该套餐活动，只能退回普通单品随机数量。
+  - 修复内容：`purchase_limit` 改为买家维度限购：同一买家已购买该套餐次数达到上限后不再命中该套餐，其他买家仍可继续命中；买家决策流水补充 `bundle_purchase_limit_reached` 与 `bundle_purchase_limit_used` 便于排查。
+  - 影响范围：仅套餐优惠订单模拟；普通订单和单品折扣随机购买数量逻辑不变。
+- 修复 Shopee 套餐优惠下单长期不命中套餐活动的问题。
+  - 涉及文件：`backend/apps/api-gateway/app/services/shopee_order_simulator.py`、`docs/设计文档/27-套餐优惠概率计算设计.md`、`docs/当前进度.md`
+  - 根因：多变体商品的变体选择只按价格/库存/随机扰动评分，不感知哪些变体参加了套餐优惠；同时套餐加购概率对购买力约束过强，出现“原价能买 2/3 件但优惠套餐不命中”的不合理结果。
+  - 修复内容：变体选择对参加 bundle 的变体增加营销加权；套餐加购概率提高基础兴趣、节省吸引和冲动加成，并将购买力约束下限调整为 0.60；买家决策流水补充 `variant_id` 与 `variant_name` 便于排查。
+  - 验证结果：真实库 run_id=6 / campaign_id=5 受控模拟已生成 `marketing_campaign_type="bundle"` 订单，订单号 `SIM2026042715942E726828`，数量 3，套餐单价 94。
+- 修复 Shopee 套餐优惠订单模拟中阶梯库存判断误用普通下单数量上限的问题。
+  - 涉及文件：`backend/apps/api-gateway/app/services/shopee_order_simulator.py`、`backend/apps/api-gateway/app/api/routes/shopee.py`、`docs/当前进度.md`
+  - 根因：bundle upgrade 阶梯过滤使用了普通下单 `max_qty`，该值会被限制到最多 3 件并可能被商品 `max_purchase_qty` 压到 1 件，导致套餐阶梯被提前过滤，订单无法归因到套餐活动，套餐数据页订单/销售额为 0。
+  - 同步修复：订单列表触发自动模拟后同步失效 Shopee 营销数据页缓存，避免新订单生成后数据页短时间继续读取旧的 0 指标。
+  - 影响范围：套餐优惠订单模拟会按真实 `sellable_cap` 判断可支撑阶梯；普通订单随机购买数量仍保持原有 `max_qty` 逻辑，单品折扣概率链路不变。
+
+### 新增
+- 实现 Shopee 套餐优惠多 SKU 组合购买订单链路。
+  - 涉及文件：`backend/apps/api-gateway/app/models.py`、`backend/apps/api-gateway/app/db.py`、`backend/apps/api-gateway/app/services/shopee_order_simulator.py`、`backend/apps/api-gateway/app/services/shopee_order_cancellation.py`、`backend/apps/api-gateway/app/api/routes/shopee.py`、`frontend/src/modules/shopee/views/MyOrdersView.tsx`、`frontend/src/modules/shopee/views/MyOrderDetailView.tsx`、`docs/当前进度.md`
+  - 实现内容：`shopee_order_items` 新增 item 级 SKU 与履约字段；买家选择到优惠期内的套餐组合 SKU 后自动归因为套餐优惠，按组合内 SKU 创建多条订单明细，并逐 item 预占库存、发货消耗库存、取消释放库存和补货回填；订单列表/详情响应返回 item 级字段。
+  - 前端展示：我的订单列表对多 SKU 套餐显示组合摘要，订单详情逐 SKU 展示套餐组合明细。
+  - Redis/cache 影响：继续复用订单列表与营销数据页缓存失效链路，订单模拟、发货、取消后的缓存失效口径不变。
+  - 影响范围：仅 `marketing_campaign_type="bundle"` 的套餐订单进入组合 SKU 分支；普通订单和单品折扣订单仍沿用原有随机购买数量与单 item 下单逻辑。
+- 新增设计文档 `docs/设计文档/28-Shopee套餐优惠组合购买改造设计.md`，定义 Shopee 套餐优惠从单 SKU 多件加购改为多 SKU 组合购买的改造方案。
+  - 涉及文件：`docs/设计文档/28-Shopee套餐优惠组合购买改造设计.md`、`docs/当前进度.md`
+  - 方案口径：套餐订单命中后必须包含组合内所有 SKU，不允许只买其中一个；普通订单和单品折扣继续沿用现有随机购买数量逻辑，仅 `marketing_campaign_type="bundle"` 订单进入多 SKU 分支。
+  - 影响范围：本次仅新增设计文档和进度台账，尚未改动业务代码；后续实现需补充 `shopee_order_items` item 级 SKU 字段，并改造订单生成、发货、取消、补货和订单展示链路。
+- 我的订单列表与详情页补充 Shopee 套餐优惠订单标识。
+  - 涉及文件：`backend/apps/api-gateway/app/api/routes/shopee.py`、`frontend/src/modules/shopee/views/MyOrdersView.tsx`、`frontend/src/modules/shopee/views/MyOrderDetailView.tsx`、`docs/当前进度.md`
+  - 后端订单列表/详情响应新增返回 `marketing_campaign_type`，详情响应同步补齐 `marketing_campaign_id`、`marketing_campaign_name_snapshot` 与折扣比例；前端按 `marketing_campaign_type` 区分显示“单品折扣”或“套餐优惠”。
+  - 影响范围：我的订单页中通过套餐优惠成交的订单会显示“套餐优惠：活动名”，不再被统一显示为折扣活动；单品折扣订单继续显示折扣比例。
+- 为 Shopee 单品折扣订单模拟补充概率保底机制。
+  - 涉及文件：`backend/apps/api-gateway/app/services/shopee_order_simulator.py`、`docs/当前进度.md`
+  - 方案口径：命中单品折扣时同时计算无折扣对照概率 `no_discount_order_prob` 和折扣后概率 `discount_order_prob`，最终下单概率不低于无折扣对照，避免有效折扣降低转化；买家决策流水同步记录 `no_discount_order_prob` 与 `discount_order_prob`。
+  - 影响范围：单品折扣订单模拟概率保底；套餐优惠仍使用专用 bundle 概率分支，二者互斥不叠加。
+- 按 27 号设计文档实现 Shopee 套餐优惠接入订单模拟的概率计算链路。
+  - 涉及文件：`backend/apps/api-gateway/app/services/shopee_order_simulator.py`、`docs/当前进度.md`
+  - 后端新增 `campaign_type="bundle"` 活动加载、bundle 每件折后价计算、加购阶梯概率、`max(base_order_prob, bundle_order_prob)` 概率保底和单品折扣互斥选择；订单归因支持记录套餐活动，买家决策流水记录 `bundle_applied`、`bundle_qty`、`bundle_attempts`、`base_order_prob` 与 `bundle_order_prob`。
+  - 影响范围：订单模拟中套餐优惠将影响下单概率与购买数量；单品折扣原有概率链路保持独立，二者不叠加。
+- 新增并修正设计文档 `docs/设计文档/27-套餐优惠概率计算设计.md`，定义 Shopee 套餐优惠接入订单模拟的概率计算方案。
+  - 涉及文件：`docs/设计文档/27-套餐优惠概率计算设计.md`、`docs/当前进度.md`
+  - 方案口径：三种套餐类型统一折算为每件折后价，再通过节省比例、价格敏感度、冲动系数与购买力约束计算加购概率；bundle 命中后需重算 `price_score`、`bundle_score` 与 `bundle_order_prob`，并以 `max(base_order_prob, bundle_order_prob)` 保底，确保有效优惠不降低下单概率；`purchase_limit` 按买家维度限制套餐购买次数。
+  - 影响范围：仅更新设计文档和进度台账，尚未改动订单模拟代码。
+
+### 修复
+- 修复 Shopee 单品折扣活动数据页指标卡订单数未按选中游戏年过滤的问题。原订单数使用活动关联订单总数，导致选择折扣活动时间之外的游戏年时仍显示历史订单数；现改为仅统计通过游戏时间年份过滤后的订单数。
+  - 涉及文件：`backend/apps/api-gateway/app/api/routes/shopee.py`、`docs/当前进度.md`
+  - 影响范围：单品折扣活动数据页关键指标卡订单数；销售额、售出件数、买家数、趋势图和商品排行口径不变，均按选中游戏年过滤。
+- 修复 Shopee 单品折扣活动数据页在部分游戏年份没有月度订单数据时，趋势图从 12 个月横坐标退回日维度横坐标的问题。后端按选中游戏年补齐 1-12 月 `monthly_rows`，前端按 `selected_game_year` 固定生成 12 个月横坐标，统计口径保持游戏时间而非真实时间。
+  - 涉及文件：`backend/apps/api-gateway/app/api/routes/shopee.py`、`frontend/src/modules/shopee/views/DiscountDataView.tsx`、`docs/当前进度.md`
+  - 影响范围：单品折扣活动数据页趋势图年份下拉模式；`Check Details` 日维度明细、指标卡和商品排行仍按选中游戏年过滤。
 
 ## 2026-04-26
 

@@ -244,11 +244,16 @@ def _acquire_shopee_simulate_lock_or_409(*, run_id: int, user_id: int) -> tuple[
 
 
 class ShopeeOrderItemResponse(BaseModel):
+    listing_id: int | None = None
+    variant_id: int | None = None
+    product_id: int | None = None
     product_name: str
     variant_name: str
     quantity: int
     unit_price: int
     image_url: str | None
+    stock_fulfillment_status: str = "in_stock"
+    backorder_qty: int = 0
 
 
 class ShopeeOrderResponse(BaseModel):
@@ -288,6 +293,7 @@ class ShopeeOrderResponse(BaseModel):
     transit_days_remaining: int | None = None
     created_at: datetime
     items: list[ShopeeOrderItemResponse]
+    marketing_campaign_type: str | None = None
     marketing_campaign_id: int | None = None
     marketing_campaign_name_snapshot: str | None = None
     discount_percent: float | None = None
@@ -2124,6 +2130,7 @@ def _build_discount_data_analytics(
     sold_item_ids: set[int] = set()
     total_sales_amount = 0.0
     total_units_sold = 0
+    total_orders_count = 0
 
     for order in orders:
         stat_date = _discount_data_stat_date(order, run=run, time_basis=time_basis)
@@ -2131,6 +2138,7 @@ def _build_discount_data_analytics(
             continue
         if date_to is not None and stat_date >= date_to:
             continue
+        total_orders_count += 1
         bucket = by_date.setdefault(
             stat_date,
             {"sales_amount": 0.0, "units_sold": 0, "orders_count": 0, "buyers": set(), "items": set()},
@@ -2211,8 +2219,12 @@ def _build_discount_data_analytics(
         month_bucket["items"] |= bucket["items"]
 
     monthly_rows: list[ShopeeDiscountDataTrendPointResponse] = []
-    for yr, mo in sorted(by_month.keys()):
-        mb = by_month[(yr, mo)]
+    if date_from is not None and date_to is not None and date_from.month == 1 and date_from.day == 1 and date_to == date(date_from.year + 1, 1, 1):
+        month_keys = [(date_from.year, month) for month in range(1, 13)]
+    else:
+        month_keys = sorted(by_month.keys())
+    for yr, mo in month_keys:
+        mb = by_month.get((yr, mo), {"sales_amount": 0.0, "units_sold": 0, "orders_count": 0, "buyers": set(), "items": set()})
         monthly_rows.append(
             ShopeeDiscountDataTrendPointResponse(
                 stat_date=f"{yr}/{mo:02d}/01",
@@ -2227,7 +2239,7 @@ def _build_discount_data_analytics(
     cards = ShopeeDiscountDataMetricCardsResponse(
         sales_amount=total_sales_amount,
         units_sold=total_units_sold,
-        orders_count=len(orders),
+        orders_count=total_orders_count,
         buyers_count=len(buyer_names),
         items_sold=len(sold_item_ids),
     )
@@ -4476,6 +4488,7 @@ def list_shopee_orders(
     is_finished = _persist_run_finished_if_reached(db, run)
     if not is_finished:
         _auto_simulate_orders_by_game_hour(db, run=run, user_id=user_id, max_ticks_per_request=10)
+        _invalidate_shopee_discount_cache(run_id=run.id, user_id=user_id)
     current_tick = _resolve_game_tick(db, run.id, user_id)
     if not _persist_run_finished_if_reached(db, run):
         _auto_cancel_overdue_orders_by_tick(db, run_id=run.id, user_id=user_id, current_tick=current_tick)
@@ -4622,6 +4635,7 @@ def list_shopee_orders(
                         "eta_end_at": row.eta_end_at,
                         "distance_km": row.distance_km,
                         "created_at": row.created_at,
+                        "marketing_campaign_type": row.marketing_campaign_type,
                         "marketing_campaign_id": row.marketing_campaign_id,
                         "marketing_campaign_name_snapshot": row.marketing_campaign_name_snapshot,
                         "discount_percent": (
@@ -4630,11 +4644,16 @@ def list_shopee_orders(
                         ) if row.marketing_campaign_id else None,
                         "items": [
                             ShopeeOrderItemResponse(
+                                listing_id=item.listing_id,
+                                variant_id=item.variant_id,
+                                product_id=item.product_id,
                                 product_name=item.product_name,
                                 variant_name=item.variant_name,
                                 quantity=item.quantity,
                                 unit_price=item.unit_price,
                                 image_url=item.image_url,
+                                stock_fulfillment_status=item.stock_fulfillment_status,
+                                backorder_qty=int(item.backorder_qty or 0),
                             )
                             for item in row.items
                         ],
@@ -4707,6 +4726,24 @@ def get_shopee_order_detail(
             user_id=user_id,
             orders=[row],
         )
+    discount_percent: float | None = None
+    if row.marketing_campaign_id:
+        discount_item = (
+            db.query(ShopeeDiscountCampaignItem)
+            .filter(
+                ShopeeDiscountCampaignItem.campaign_id == row.marketing_campaign_id,
+                ShopeeDiscountCampaignItem.variant_id == row.variant_id,
+            )
+            .first()
+            or db.query(ShopeeDiscountCampaignItem)
+            .filter(
+                ShopeeDiscountCampaignItem.campaign_id == row.marketing_campaign_id,
+                ShopeeDiscountCampaignItem.variant_id.is_(None),
+            )
+            .first()
+        )
+        if discount_item and (discount_item.discount_type or "") == "percent":
+            discount_percent = float(discount_item.discount_value or 0)
     return ShopeeOrderResponse(
         **{
             **{
@@ -4740,13 +4777,22 @@ def get_shopee_order_detail(
                 "eta_end_at": row.eta_end_at,
                 "distance_km": row.distance_km,
                 "created_at": row.created_at,
+                "marketing_campaign_type": row.marketing_campaign_type,
+                "marketing_campaign_id": row.marketing_campaign_id,
+                "marketing_campaign_name_snapshot": row.marketing_campaign_name_snapshot,
+                "discount_percent": discount_percent,
                 "items": [
                     ShopeeOrderItemResponse(
+                        listing_id=item.listing_id,
+                        variant_id=item.variant_id,
+                        product_id=item.product_id,
                         product_name=item.product_name,
                         variant_name=item.variant_name,
                         quantity=item.quantity,
                         unit_price=item.unit_price,
                         image_url=item.image_url,
+                        stock_fulfillment_status=item.stock_fulfillment_status,
+                        backorder_qty=int(item.backorder_qty or 0),
                     )
                     for item in row.items
                 ],
@@ -4793,39 +4839,51 @@ def ship_order(
     if shipping_channel not in allowed_channels:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="物流渠道不合法")
 
-    listing = None
-    if int(order.listing_id or 0) > 0:
-        listing = (
-            db.query(ShopeeListing)
-            .filter(
-                ShopeeListing.run_id == run.id,
-                ShopeeListing.user_id == user_id,
-                ShopeeListing.id == int(order.listing_id),
+    ship_lines: list[dict[str, int | None]] = []
+    for item in list(order.items or []):
+        item_qty = max(0, int(item.quantity or 0))
+        if item_qty <= 0:
+            continue
+        product_id = int(item.product_id or 0)
+        listing_id = int(item.listing_id or 0) or int(order.listing_id or 0) or None
+        variant_id = int(item.variant_id or 0) or int(order.variant_id or 0) or None
+        if product_id <= 0 and listing_id:
+            listing = (
+                db.query(ShopeeListing)
+                .filter(
+                    ShopeeListing.run_id == run.id,
+                    ShopeeListing.user_id == user_id,
+                    ShopeeListing.id == listing_id,
+                )
+                .first()
             )
-            .first()
-        )
-    order_ship_qty = int(sum(max(0, int(item.quantity or 0)) for item in list(order.items or [])))
-    reserved_consumed = 0
-    if listing and listing.product_id is None and order_ship_qty > 0:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="订单缺少库存商品映射，暂不可发货")
-    if listing and listing.product_id is not None and order_ship_qty > 0:
-        reserved_consumed = consume_reserved_inventory_lots(
+            product_id = int(listing.product_id or 0) if listing and listing.product_id is not None else 0
+        if product_id <= 0:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="订单缺少库存商品映射，暂不可发货")
+        consumed_qty = consume_reserved_inventory_lots(
             db,
             run_id=run.id,
-            product_id=int(listing.product_id),
-            qty=order_ship_qty,
+            product_id=product_id,
+            qty=item_qty,
         )
-        shortfall = order_ship_qty - reserved_consumed
+        shortfall = item_qty - consumed_qty
         if shortfall > 0:
-            available_consumed = consume_available_inventory_lots(
+            consumed_qty += consume_available_inventory_lots(
                 db,
                 run_id=run.id,
-                product_id=int(listing.product_id),
+                product_id=product_id,
                 qty=shortfall,
             )
-            reserved_consumed += available_consumed
-        if reserved_consumed < order_ship_qty:
+        if consumed_qty < item_qty:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="库存不足，订单暂不可发货")
+        ship_lines.append(
+            {
+                "product_id": product_id,
+                "listing_id": listing_id,
+                "variant_id": variant_id,
+                "consumed_qty": consumed_qty,
+            }
+        )
 
     now = current_tick
     warehouse_latlng = _resolve_warehouse_latlng(db, run)
@@ -4858,19 +4916,22 @@ def ship_order(
     order.process_status = "processed"
     order.countdown_text = "物流运输中"
 
-    if listing and listing.product_id is not None and reserved_consumed > 0:
+    for line in ship_lines:
+        consumed_qty = int(line["consumed_qty"] or 0)
+        if consumed_qty <= 0:
+            continue
         # 发货出库：释放预占，转为已出库消耗。
         db.add(
             InventoryStockMovement(
                 run_id=run.id,
                 user_id=user_id,
-                product_id=int(listing.product_id),
-                listing_id=int(order.listing_id) if order.listing_id is not None else None,
-                variant_id=int(order.variant_id) if order.variant_id is not None else None,
+                product_id=int(line["product_id"]) if line["product_id"] is not None else None,
+                listing_id=int(line["listing_id"]) if line["listing_id"] is not None else None,
+                variant_id=int(line["variant_id"]) if line["variant_id"] is not None else None,
                 biz_order_id=int(order.id),
                 movement_type="order_ship",
                 qty_delta_on_hand=0,
-                qty_delta_reserved=-int(reserved_consumed),
+                qty_delta_reserved=-consumed_qty,
                 qty_delta_backorder=0,
                 biz_ref=order.order_no,
                 remark="订单发货出库（释放预占）",

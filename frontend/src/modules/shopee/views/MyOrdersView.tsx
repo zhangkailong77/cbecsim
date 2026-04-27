@@ -11,11 +11,16 @@ type OrderStatus = 'all' | 'processing' | 'processed';
 type Priority = 'all' | 'overdue' | 'today' | 'tomorrow';
 
 interface OrderItem {
+  listing_id?: number | null;
+  variant_id?: number | null;
+  product_id?: number | null;
   product_name: string;
   variant_name: string;
   quantity: number;
   unit_price: number;
   image_url: string | null;
+  stock_fulfillment_status?: 'in_stock' | 'backorder' | 'restocked' | string;
+  backorder_qty?: number;
 }
 
 interface OrderRow {
@@ -54,6 +59,7 @@ interface OrderRow {
   transit_days_remaining?: number | null;
   created_at: string;
   items: OrderItem[];
+  marketing_campaign_type?: string | null;
   marketing_campaign_id?: number | null;
   marketing_campaign_name_snapshot?: string | null;
   discount_percent?: number | null;
@@ -181,6 +187,63 @@ function formatSettlementStatus(status: string) {
     settled: '已结算',
   };
   return labelMap[status] ?? status;
+}
+
+function formatMarketingCampaignLabel(row: OrderRow) {
+  if (row.marketing_campaign_type === 'bundle') return '套餐优惠';
+  return '单品折扣';
+}
+
+function getOrderItemSummary(row: OrderRow) {
+  const items = row.items ?? [];
+  const firstItem = items[0];
+  if (row.marketing_campaign_type !== 'bundle' || items.length <= 1) {
+    return {
+      imageUrl: firstItem?.image_url ?? 'https://picsum.photos/seed/shopee-fallback/80/80',
+      title: firstItem?.product_name ?? '-',
+      subtitle: `规格：${firstItem?.variant_name || '-'} · x${firstItem?.quantity ?? 0}`,
+    };
+  }
+  const totalQty = items.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0);
+  const names = items.map((item) => item.product_name).filter(Boolean);
+  return {
+    imageUrl: firstItem?.image_url ?? 'https://picsum.photos/seed/shopee-bundle/80/80',
+    title: `套餐优惠：${names.slice(0, 2).join(' + ')}${names.length > 2 ? ` 等 ${names.length} 个商品` : ''}`,
+    subtitle: `组合 SKU：共 ${items.length} 个商品 / ${totalQty} 件`,
+  };
+}
+
+function OrderItemImage({ row, summaryImageUrl }: { row: OrderRow; summaryImageUrl: string }) {
+  const items = row.items ?? [];
+  if (row.marketing_campaign_type !== 'bundle' || items.length <= 1) {
+    return (
+      <img
+        src={summaryImageUrl}
+        className="h-14 w-14 rounded border border-gray-100 object-cover"
+        referrerPolicy="no-referrer"
+      />
+    );
+  }
+
+  const images = items.slice(0, 4).map((item, index) => ({
+    key: `${item.listing_id ?? 'listing'}-${item.variant_id ?? index}-${index}`,
+    src: item.image_url ?? summaryImageUrl,
+    alt: item.variant_name || item.product_name || `套餐商品 ${index + 1}`,
+  }));
+
+  return (
+    <div className="grid h-14 w-14 grid-cols-2 gap-0.5 overflow-hidden rounded border border-orange-100 bg-orange-50 p-0.5">
+      {images.map((image) => (
+        <img
+          key={image.key}
+          src={image.src}
+          alt={image.alt}
+          className="h-full w-full rounded-[2px] object-cover"
+          referrerPolicy="no-referrer"
+        />
+      ))}
+    </div>
+  );
 }
 
 function formatBackorderDeadline(val?: string | null) {
@@ -719,7 +782,7 @@ export default function MyOrdersView({ runId, onOpenOrderDetail, readOnly = fals
 
               {!loading &&
                 (data?.orders ?? []).map((row) => {
-                  const firstItem = row.items[0];
+                  const itemSummary = getOrderItemSummary(row);
                   return (
                     <div key={row.id} className="border-b border-gray-100 p-4">
                       <div className="mb-3 -mx-1 rounded-sm border border-gray-100 bg-[#f6f6f6] px-3 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.65)]">
@@ -736,41 +799,57 @@ export default function MyOrdersView({ runId, onOpenOrderDetail, readOnly = fals
                         </div>
                       </div>
                       <div className={isShippingView || isCompletedView || isCancelView ? 'grid grid-cols-[3fr_1fr_1fr_1.4fr_1.6fr_1fr] items-start text-[14px]' : 'grid grid-cols-[3fr_1fr_2fr_1.5fr_1fr] items-start text-[14px]'}>
-                        <div className="flex items-start gap-3">
-                          {isToShipView && (
-                            <input
-                              type="checkbox"
-                              checked={selectedOrderIds.includes(row.id)}
-                              onChange={(e) => {
-                                if (e.target.checked) {
-                                  setSelectedOrderIds((prev) => Array.from(new Set([...prev, row.id])));
-                                } else {
-                                  setSelectedOrderIds((prev) => prev.filter((id) => id !== row.id));
-                                }
-                              }}
-                              className="mt-4 h-4 w-4 rounded border-gray-300 text-[#ee4d2d] focus:ring-[#ee4d2d]"
-                            />
-                          )}
-                          <img
-                            src={firstItem?.image_url ?? 'https://picsum.photos/seed/shopee-fallback/80/80'}
-                            className="w-14 h-14 rounded border border-gray-100 object-cover"
-                            referrerPolicy="no-referrer"
-                          />
-                          <div>
-                            <div className="text-gray-800">{firstItem?.product_name ?? '-'}</div>
-                            <div className="text-[12px] text-gray-500 mt-1">
-                              规格：{firstItem?.variant_name ?? '-'} · x{firstItem?.quantity ?? 0}
+                        <div className="flex flex-col gap-4">
+                          {row.items?.map((item, index) => (
+                            <div key={index} className="flex items-start gap-3">
+                              {isToShipView && index === 0 && (
+                                <input
+                                  type="checkbox"
+                                  checked={selectedOrderIds.includes(row.id)}
+                                  onChange={(e) => {
+                                    if (e.target.checked) {
+                                      setSelectedOrderIds((prev) => Array.from(new Set([...prev, row.id])));
+                                    } else {
+                                      setSelectedOrderIds((prev) => prev.filter((id) => id !== row.id));
+                                    }
+                                  }}
+                                  className="mt-1 h-4 w-4 rounded border-gray-300 text-[#ee4d2d] focus:ring-[#ee4d2d]"
+                                />
+                              )}
+                              {isToShipView && index !== 0 && <div className="w-4"></div>}
+
+                              <img
+                                src={item.image_url ?? 'https://picsum.photos/seed/shopee-fallback/80/80'}
+                                className="h-14 w-14 rounded border border-gray-100 object-cover"
+                                referrerPolicy="no-referrer"
+                                alt=""
+                              />
+                              
+                              <div className="flex-1 pr-4">
+                                <div className="flex items-start justify-between gap-4">
+                                  <div className="text-gray-800 line-clamp-2">{item.product_name || '-'}</div>
+                                  <div className="text-gray-500 whitespace-nowrap">x{item.quantity ?? 1}</div>
+                                </div>
+                                <div className="text-[12px] text-gray-500 mt-1">
+                                  规格: {item.variant_name || '-'}
+                                </div>
+                                {row.marketing_campaign_type === 'bundle' && (
+                                  <div className="mt-1 text-[10px] text-[#ee4d2d] border border-[#ee4d2d] rounded-[2px] px-1 py-[1px] inline-block">
+                                    套餐优惠
+                                  </div>
+                                )}
+                              </div>
                             </div>
-                          </div>
+                          ))}
                         </div>
                         <div>
                           <div className="text-gray-800">{formatMoney(row.buyer_payment)}</div>
                           {row.marketing_campaign_id && (
                             <div className="text-[11px] text-orange-500 mt-0.5">
-                              折扣活动：{row.marketing_campaign_name_snapshot || '折扣'}
+                              {formatMarketingCampaignLabel(row)}：{row.marketing_campaign_name_snapshot || formatMarketingCampaignLabel(row)}
                             </div>
                           )}
-                          {row.discount_percent != null && row.discount_percent > 0 && (
+                          {row.marketing_campaign_type !== 'bundle' && row.discount_percent != null && row.discount_percent > 0 && (
                             <div className="text-[11px] text-orange-400 mt-0.5">
                               折扣 {row.discount_percent}% off
                             </div>

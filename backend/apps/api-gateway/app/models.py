@@ -685,11 +685,16 @@ class ShopeeOrderItem(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     order_id: Mapped[int] = mapped_column(ForeignKey("shopee_orders.id"), nullable=False, index=True)
+    listing_id: Mapped[int | None] = mapped_column(ForeignKey("shopee_listings.id"), nullable=True, index=True)
+    variant_id: Mapped[int | None] = mapped_column(ForeignKey("shopee_listing_variants.id"), nullable=True, index=True)
+    product_id: Mapped[int | None] = mapped_column(ForeignKey("market_products.id"), nullable=True, index=True)
     product_name: Mapped[str] = mapped_column(String(255), nullable=False)
     variant_name: Mapped[str] = mapped_column(String(128), nullable=False, default="")
     quantity: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     unit_price: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     image_url: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    stock_fulfillment_status: Mapped[str] = mapped_column(String(24), nullable=False, default="in_stock")
+    backorder_qty: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     order = relationship("ShopeeOrder", back_populates="items")
 

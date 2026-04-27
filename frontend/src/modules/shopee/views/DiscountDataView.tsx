@@ -128,10 +128,12 @@ function TrendChart({
   rows,
   monthlyRows,
   selectedMetrics,
+  selectedGameYear,
 }: {
   rows: TrendPoint[];
   monthlyRows: TrendPoint[];
   selectedMetrics: MetricKey[];
+  selectedGameYear: number;
 }) {
   const selectedOptions = metricOptions.filter((metric) => selectedMetrics.includes(metric.key));
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
@@ -143,46 +145,32 @@ function TrendChart({
   const chartWidth = width - paddingX * 2;
   const chartHeight = height - paddingY * 2;
 
-  // ---------------- [核心修复：补全 12 个月的数据] ----------------
-  let displayRows: any[] = [];
+  let displayRows: Array<TrendPoint & { display_label: string }> = [];
 
-  if (monthlyRows && monthlyRows.length > 0) {
-    // 提取年份 (假设日期格式是 YYYY-MM-DD 或 YYYY-MM)
-    const year = monthlyRows[0].stat_date.replaceAll('/', '-').substring(0, 4);
+  if (selectedGameYear > 0) {
+    for (let month = 1; month <= 12; month++) {
+      const mm = String(month).padStart(2, '0');
+      const targetMonthPrefix = `${selectedGameYear}-${mm}`;
+      const foundData = monthlyRows.find((row) => row.stat_date.replaceAll('/', '-').startsWith(targetMonthPrefix));
 
-    // 强制生成 1 到 12 月
-    for (let m = 1; m <= 12; m++) {
-      const mm = String(m).padStart(2, '0');
-      const targetMonthPrefix = `${year}-${mm}`; // 比如 "2027-11"
-
-      // 去后端数据里找有没有这个月的数据
-      const foundData = monthlyRows.find((r) => r.stat_date.replaceAll('/', '-').startsWith(targetMonthPrefix));
-
-      if (foundData) {
-        // 如果有，就用后端的数据
-        displayRows.push({ ...foundData, display_label: `${mm}-${year}` });
-      } else {
-        // 如果没有，就强行塞一个数值全部为 0 的月份进去
-        displayRows.push({
-          stat_date: `${targetMonthPrefix}-01`,
-          display_label: `${mm}-${year}`,
-          sales_amount: 0,
-          units_sold: 0,
-          orders_count: 0,
-          buyers_count: 0,
-          items_sold: 0,
-        });
-      }
+      displayRows.push({
+        stat_date: `${targetMonthPrefix}-01`,
+        sales_amount: 0,
+        units_sold: 0,
+        orders_count: 0,
+        buyers_count: 0,
+        items_sold: 0,
+        ...foundData,
+        display_label: `${mm}-${selectedGameYear}`,
+      });
     }
   } else {
-    // 日常模式（几天或几周），不需要补全，直接用 rows，只处理一下底部显示的文案
-    displayRows = rows.map((r) => {
-      const parts = r.stat_date.replaceAll('/', '-').split('-');
-      const label = parts.length >= 3 ? `${parts[2]}-${parts[1]}` : r.stat_date;
-      return { ...r, display_label: label };
+    displayRows = rows.map((row) => {
+      const parts = row.stat_date.replaceAll('/', '-').split('-');
+      const label = parts.length >= 3 ? `${parts[2]}-${parts[1]}` : row.stat_date;
+      return { ...row, display_label: label };
     });
   }
-  // -------------------------------------------------------------
 
   // 防止重叠的高度系数
   const ceilingMultipliers: Record<MetricKey, number> = {
@@ -554,6 +542,7 @@ export default function DiscountDataView({ runId, campaignId, publicId, readOnly
               rows={trendRows}
               monthlyRows={monthlyTrendRows}
               selectedMetrics={selectedMetrics}
+              selectedGameYear={data?.selected_game_year ?? gameYear}
             />
             {trendRows.length > 0 ? (
               <div className="mt-3">

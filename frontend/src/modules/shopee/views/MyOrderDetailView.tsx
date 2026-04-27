@@ -4,11 +4,16 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000
 const ACCESS_TOKEN_KEY = 'cbec_access_token';
 
 interface OrderItem {
+  listing_id?: number | null;
+  variant_id?: number | null;
+  product_id?: number | null;
   product_name: string;
   variant_name: string;
   quantity: number;
   unit_price: number;
   image_url: string | null;
+  stock_fulfillment_status?: 'in_stock' | 'backorder' | 'restocked' | string;
+  backorder_qty?: number;
 }
 
 interface OrderDetailResponse {
@@ -34,6 +39,10 @@ interface OrderDetailResponse {
   cancel_reason?: string | null;
   cancel_source?: string | null;
   created_at: string;
+  marketing_campaign_type?: string | null;
+  marketing_campaign_id?: number | null;
+  marketing_campaign_name_snapshot?: string | null;
+  discount_percent?: number | null;
   items: OrderItem[];
 }
 
@@ -89,6 +98,11 @@ function formatTransitSummary(
 ) {
   if (typeof expected !== 'number') return '-';
   return `预计 ${expected} 天 · 已运输 ${Math.max(0, elapsed ?? 0)} 天 · 剩余 ${Math.max(0, remaining ?? 0)} 天`;
+}
+
+function formatMarketingCampaignLabel(order: OrderDetailResponse) {
+  if (order.marketing_campaign_type === 'bundle') return '套餐优惠';
+  return '单品折扣';
 }
 
 const HISTORY_READONLY_DETAIL = '历史对局仅支持回溯查看，不能继续经营操作。';
@@ -258,7 +272,15 @@ export default function MyOrderDetailView({ runId, orderId, onBack, readOnly = f
                       referrerPolicy="no-referrer"
                     />
                   </div>
-                  <div className="text-[26px] leading-none text-gray-700">{order.buyer_name}</div>
+                  <div>
+                    <div className="text-[26px] leading-none text-gray-700">{order.buyer_name}</div>
+                    {order.marketing_campaign_id && (
+                      <div className="mt-2 text-[12px] text-orange-500">
+                        {formatMarketingCampaignLabel(order)}：{order.marketing_campaign_name_snapshot || formatMarketingCampaignLabel(order)}
+                        {order.marketing_campaign_type !== 'bundle' && order.discount_percent != null && order.discount_percent > 0 ? ` · 折扣 ${order.discount_percent}% off` : ''}
+                      </div>
+                    )}
+                  </div>
                 </div>
                 <div className="flex items-center gap-3">
                   <button type="button" className="h-9 px-8 rounded bg-[#ee4d2d] text-white text-[15px] hover:bg-[#d73211]">Follow</button>
@@ -290,6 +312,9 @@ export default function MyOrderDetailView({ runId, orderId, onBack, readOnly = f
                       <div>
                         <div className="text-gray-800">{item.product_name}</div>
                         <div className="text-[12px] text-gray-500">{item.variant_name || '-'}</div>
+                        {order.marketing_campaign_type === 'bundle' && (
+                          <div className="mt-0.5 text-[11px] text-orange-500">套餐组合 SKU</div>
+                        )}
                       </div>
                     </div>
                     <div className="text-gray-700">{formatMoney(item.unit_price)}</div>
