@@ -7,8 +7,8 @@ interface HeaderProps {
   runId: number | null;
   onBackToSetup: () => void;
   onBackToDashboard: () => void;
-  onNavigateToView: (view: 'dashboard' | 'my-orders' | 'my-products' | 'new-product' | 'my-income' | 'my-balance' | 'bank-accounts' | 'marketing-centre' | 'marketing-discount' | 'marketing-discount-create') => void;
-  activeView: 'dashboard' | 'my-orders' | 'my-products' | 'new-product' | 'my-income' | 'my-balance' | 'bank-accounts' | 'marketing-centre' | 'marketing-discount' | 'marketing-discount-create';
+  onNavigateToView: (view: 'dashboard' | 'my-orders' | 'my-products' | 'new-product' | 'my-income' | 'my-balance' | 'bank-accounts' | 'marketing-centre' | 'marketing-discount' | 'marketing-discount-create' | 'marketing-discount-detail' | 'marketing-discount-data') => void;
+  activeView: 'dashboard' | 'my-orders' | 'my-products' | 'new-product' | 'my-income' | 'my-balance' | 'bank-accounts' | 'marketing-centre' | 'marketing-discount' | 'marketing-discount-create' | 'marketing-discount-detail' | 'marketing-discount-data';
   marketingCreateType?: 'discount' | 'bundle' | 'add_on';
   isOrderDetail?: boolean;
   isProductDetail?: boolean;
@@ -81,7 +81,7 @@ export default function Header({
         </div>
       );
     }
-    if (activeView === 'marketing-discount' || activeView === 'marketing-discount-create') {
+    if (activeView === 'marketing-discount' || activeView === 'marketing-discount-create' || activeView === 'marketing-discount-detail' || activeView === 'marketing-discount-data') {
       return (
         <div className="flex items-center gap-2 text-[14px]">
           <span className="text-gray-300">{'>'}</span>
@@ -100,11 +100,11 @@ export default function Header({
           >
             折扣
           </button>
-          {activeView === 'marketing-discount-create' && (
+          {(activeView === 'marketing-discount-create' || activeView === 'marketing-discount-detail' || activeView === 'marketing-discount-data') && (
             <>
               <span className="text-gray-300">{'>'}</span>
               <span className="text-gray-700">
-                {marketingCreateType === 'bundle' ? '创建套餐优惠' : marketingCreateType === 'add_on' ? '创建加价购' : '创建单品折扣'}
+                {activeView === 'marketing-discount-data' ? '折扣数据' : activeView === 'marketing-discount-detail' ? '活动详情' : marketingCreateType === 'bundle' ? '创建套餐优惠' : marketingCreateType === 'add_on' ? '创建加价购' : '创建单品折扣'}
               </span>
             </>
           )}

@@ -1,0 +1,7 @@
+{
+  "tool_name": "mcp__plugin_oh-my-claudecode_t__lsp_diagnostics",
+  "tool_input_preview": "{\"file\":\"/Users/zhangkailong/workspace/code/cbec_sim/backend/apps/api-gateway/app/api/routes/shopee.py\"}",
+  "error": "Language server 'ty' not found.\nInstall with: Install ty from https://github.com/astral-sh/ty",
+  "timestamp": "2026-04-24T07:53:00.855Z",
+  "retry_count": 1
+}

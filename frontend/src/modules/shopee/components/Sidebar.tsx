@@ -4,7 +4,7 @@ import {
 } from 'lucide-react';
 import { useState } from 'react';
 
-type ShopeeView = 'dashboard' | 'my-orders' | 'my-products' | 'new-product' | 'my-income' | 'my-balance' | 'bank-accounts' | 'marketing-centre' | 'marketing-discount' | 'marketing-discount-create';
+type ShopeeView = 'dashboard' | 'my-orders' | 'my-products' | 'new-product' | 'my-income' | 'my-balance' | 'bank-accounts' | 'marketing-centre' | 'marketing-discount' | 'marketing-discount-create' | 'marketing-discount-detail' | 'marketing-discount-data';
 
 const menuItems = [
   {
@@ -113,7 +113,7 @@ export default function Sidebar({ activeView, onSelectView }: SidebarProps) {
                         (child === '我的余额' && activeView === 'my-balance') ||
                         (child === '银行账户' && activeView === 'bank-accounts') ||
                         (child === '营销中心' && activeView === 'marketing-centre') ||
-                        (child === '折扣' && (activeView === 'marketing-discount' || activeView === 'marketing-discount-create')))
+                        (child === '折扣' && (activeView === 'marketing-discount' || activeView === 'marketing-discount-create' || activeView === 'marketing-discount-detail' || activeView === 'marketing-discount-data')))
                         ? 'text-[#ee4d2d] border-l-2 border-[#ee4d2d] bg-[#fff7f5]'
                         : 'text-[#333333] hover:text-[#ee4d2d]'
                     }`}

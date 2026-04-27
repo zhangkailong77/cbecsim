@@ -1,7 +1,0 @@
-{
-  "tool_name": "Read",
-  "tool_input_preview": "{\"file_path\":\"/Users/zhangkailong/workspace/code/cbec_sim/cbec_sim.sql\"}",
-  "error": "File content (512KB) exceeds maximum allowed size (256KB). Use offset and limit parameters to read specific portions of the file, or search for specific content instead of reading the whole file.",
-  "timestamp": "2026-04-24T01:36:30.243Z",
-  "retry_count": 2
-}

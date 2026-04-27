@@ -8,12 +8,17 @@
 
 ## 2. 页面结构与布局
 
-页面以独立视图 `DiscountDetailView` 承载，路由为：
+页面以独立视图 `DiscountDetailView` 承载。内部视图识别路径为：
 ```
 /shopee/marketing/discount/detail?campaign_id={id}
 ```
 
-从活动列表点击"详情"按钮时，前端 `handleActionClick` 识别 `action === '详情'`，携带 `campaign_id` 跳转。
+实际浏览器路径沿用现有 Shopee 用户前缀：
+```
+/u/{public_id}/shopee/marketing/discount/detail?campaign_id={id}
+```
+
+从活动列表点击"详情"按钮时，前端 `handleActionClick(action, row)` 识别 `action === '详情'`，携带 `row.id` 作为 `campaign_id` 跳转。
 
 ### 2.0 内容区宽度
 
@@ -93,8 +98,8 @@
 | 商品名称 | `product_name_snapshot` | 文本截断展示 |
 | SKU | `sku_snapshot` | 缺失时显示 `-` |
 | 原价 | `original_price` | RM 格式 |
-| 折扣方式 | `discount_type` | percent→"百分比折扣"，fixed→"固定价格" |
-| 折扣值 | `discount_value` | percent 时显示 `X%`，fixed 时显示 `RM X` |
+| 折扣方式 | `discount_type` | percent→"百分比折扣"，final_price→"固定折后价" |
+| 折扣值 | `discount_value` | percent 时显示 `X%`，final_price 时显示 `RM X` |
 | 折后价 | `final_price` | RM 格式，粗体强调 |
 
 支持分页（默认 `page_size=10`），无需筛选。
@@ -121,12 +126,12 @@
 
 | 列名 | 字段 | 说明 |
 |------|------|------|
-| 订单号 | `order_sn` | 可点击跳转订单详情 |
-| 买家 | `buyer_nickname` | - |
-| 商品 | 订单明细中商品名 | 多商品时换行展示 |
-| 实付金额 | `total_amount` | RM 格式 |
+| 订单号 | `order_no` | 可点击跳转订单详情；沿用现有订单详情路径 `/u/{public_id}/shopee/order/{order_id}` |
+| 买家 | `buyer_name` | - |
+| 商品 | 订单明细中 `product_name` | 多商品时换行展示 |
+| 实付金额 | `buyer_payment` | RM 格式 |
 | 折扣比例 | `discount_percent` | 如 `15%`，无折扣时显示 `-` |
-| 订单状态 | 运行时计算 | 中文映射：toship→待出货、shipping→运输中、completed→已完成、cancelled→已取消 |
+| 订单状态 | `type_bucket` | 中文映射：toship→待出货、shipping→运输中、completed→已完成、cancelled→已取消 |
 | 下单时间 | `created_at` | YYYY/MM/DD HH:mm |
 
 支持分页（默认 `page_size=10`），支持按订单状态筛选。
@@ -152,36 +157,43 @@ type ShopeeView =
   | ... // 现有视图
   | 'marketing-discount-detail';  // 新增
 
-// URL -> 视图映射
+// URL -> 视图映射：路径中包含 /shopee/marketing/discount/detail 即识别为详情页，兼容 /u/{public_id}/shopee/... 前缀
 const viewFromPath = (path: string): ShopeeView | null => {
   // ...
-  if (path.startsWith('/shopee/marketing/discount/detail')) {
+  if (/\/shopee\/marketing\/discount\/detail\/?$/.test(path)) {
     return 'marketing-discount-detail';
   }
   // ...
 };
 ```
 
+同时需要扩展 `Header`、`Sidebar` 中的 `ShopeeView` 类型，并在 `ShopeePage` 的侧栏隐藏条件中加入 `marketing-discount-detail`，使详情页与创建页一样隐藏左侧菜单栏。
+
 ### 3.3 DiscountDetailView 职责
 
 1. 从 URL query 读取 `campaign_id`
 2. 调用 `GET /shopee/runs/{run_id}/marketing/discount/campaigns/{campaign_id}/detail`
 3. 渲染：面包屑 + 返回按钮 + 基础信息卡 + 指标卡 + Tab 区
-4. Tab 切换仅前端切换，详情接口一次返回所有 Tab 数据（参与商品 + 表现趋势 + 归因订单各自带分页信息）
+4. Tab 切换仅前端切换，详情接口一次返回三个 Tab 的第 1 页数据（参与商品 + 表现趋势 + 归因订单各自带分页信息），不返回全量数据
 5. 分页切换调用独立子接口（见下文）
 6. 只读模式（历史对局）：隐藏编辑/复制等操作按钮，仅展示
 
 ### 3.4 活动列表 handleActionClick 修改
 
-将现有 `window.alert('详情 功能页将在下一阶段继续接入。')` 替换为：
+`MarketingDiscountView` 需要接收或推导 `publicId`，用于拼接现有用户前缀路由。将现有 `window.alert('详情 功能页将在下一阶段继续接入。')` 替换为：
 
 ```typescript
-if (action === '详情') {
-  window.history.pushState(null, '', `/shopee/marketing/discount/detail?campaign_id=${row.campaign_id}`);
-  window.dispatchEvent(new PopStateEvent('popstate'));
-  return;
-}
+const handleActionClick = (action: string, row: DiscountCampaignRow) => {
+  if (action === '详情') {
+    window.history.pushState(null, '', `/u/${encodeURIComponent(publicId)}/shopee/marketing/discount/detail?campaign_id=${row.id}`);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+    return;
+  }
+  // 其他 action 保持现有逻辑
+};
 ```
+
+列表行按钮调用同步改为 `onClick={() => handleActionClick(action, row)}`。
 
 ## 4. 后端接口设计
 
@@ -241,8 +253,8 @@ class ShopeeDiscountDetailItemRow(BaseModel):
     image_url: str | None
     sku: str | None
     original_price: float
-    discount_type: str           # percent / fixed
-    discount_type_label: str     # "百分比折扣" / "固定价格"
+    discount_type: str           # percent / final_price
+    discount_type_label: str     # "百分比折扣" / "固定折后价"
     discount_value: float
     final_price: float | None
 
@@ -267,13 +279,13 @@ class ShopeeDiscountDetailOrderList(BaseModel):
 
 class ShopeeDiscountDetailOrderRow(BaseModel):
     order_id: int
-    order_sn: str
-    buyer_nickname: str
+    order_no: str
+    buyer_name: str
     product_summary: str         # 商品名拼接，多商品逗号分隔
-    total_amount: float
+    buyer_payment: float
     discount_percent: float | None
-    order_status: str            # toship / shipping / completed / cancelled
-    order_status_label: str      # "待出货" 等
+    type_bucket: str             # toship / shipping / completed / cancelled
+    type_bucket_label: str       # "待出货" 等
     created_at: str              # "2027/01/15 10:30"
 
 
@@ -290,7 +302,7 @@ class PaginationMeta(BaseModel):
 2. **表现总览**：对 `ShopeeDiscountPerformanceDaily` 执行 `func.sum()` 聚合
 3. **参与商品**：查询 `ShopeeDiscountCampaignItem`，按 `sort_order` 排序，默认第 1 页
 4. **表现趋势**：查询 `ShopeeDiscountPerformanceDaily`，按 `stat_date` 排序，默认第 1 页
-5. **归因订单**：查询 `ShopeeOrder`，`filter(marketing_campaign_id == campaign_id)`，按 `created_at DESC`，默认第 1 页
+5. **归因订单**：查询 `ShopeeOrder`，`filter(run_id == run.id, user_id == user_id, marketing_campaign_id == campaign_id)`，按 `created_at DESC`，默认第 1 页；商品摘要通过 `ShopeeOrderItem.product_name` 聚合生成
 
 ### 4.2 Tab 分页子接口
 
@@ -323,6 +335,8 @@ GET /shopee/runs/{run_id}/marketing/discount/campaigns/{campaign_id}/orders?page
 
 ## 6. Redis 缓存设计
 
+MVP 阶段可优先保证接口正确性；若当前数据量较小，缓存可按现有折扣页模式轻量接入，不要求为了详情页新增复杂的单活动精确失效机制。
+
 ### 6.1 缓存键
 
 | 键模式 | TTL (秒) | 用途 |
@@ -337,7 +351,7 @@ GET /shopee/runs/{run_id}/marketing/discount/campaigns/{campaign_id}/orders?page
 详情页数据为只读查询，缓存失效策略：
 
 - **自然过期**：30 秒 TTL 自动过期
-- **主动失效**：活动创建/编辑/状态变更时，按 `campaign_id` 清除该活动所有详情相关缓存键（使用 `cache_delete_prefix` 按 `detail:*:{campaign_id}` 前缀批量清除）
+- **主动失效**：活动创建/编辑/状态变更或订单模拟写入折扣归因数据时，按 `run_id:user_id` 清除该用户该对局下所有折扣详情缓存键（例如 `cache_delete_prefix(f"{REDIS_PREFIX}:cache:shopee:discount:detail:{run_id}:{user_id}:")`），避免按 `campaign_id` 后缀匹配导致分页/筛选缓存漏删
 
 ### 6.3 限流
 

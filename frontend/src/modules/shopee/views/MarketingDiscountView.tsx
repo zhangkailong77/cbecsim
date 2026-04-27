@@ -99,6 +99,7 @@ interface DiscountBootstrapResponse {
 
 interface MarketingDiscountViewProps {
   runId: number | null;
+  publicId?: string;
   readOnly?: boolean;
 }
 
@@ -167,7 +168,7 @@ function buildPaginationItems(currentPage: number, totalPages: number): Array<nu
   return [1, 'ellipsis', currentPage - 1, currentPage, currentPage + 1, 'ellipsis', totalPages];
 }
 
-export default function MarketingDiscountView({ runId, readOnly = false }: MarketingDiscountViewProps) {
+export default function MarketingDiscountView({ runId, publicId = '', readOnly = false }: MarketingDiscountViewProps) {
   const [data, setData] = useState<DiscountBootstrapResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -359,8 +360,20 @@ export default function MarketingDiscountView({ runId, readOnly = false }: Marke
     window.dispatchEvent(new PopStateEvent('popstate'));
   };
 
-  const handleActionClick = (action: string) => {
-    if (readOnly && action !== '详情') {
+  const handleActionClick = (action: string, row: DiscountCampaignRow) => {
+    if (action === '数据' || action === '查看数据') {
+      if (!publicId) return;
+      window.history.pushState(null, '', `/u/${encodeURIComponent(publicId)}/shopee/marketing/discount/data?campaign_id=${row.id}`);
+      window.dispatchEvent(new PopStateEvent('popstate'));
+      return;
+    }
+    if (action === '详情') {
+      if (!publicId) return;
+      window.history.pushState(null, '', `/u/${encodeURIComponent(publicId)}/shopee/marketing/discount/detail?campaign_id=${row.id}`);
+      window.dispatchEvent(new PopStateEvent('popstate'));
+      return;
+    }
+    if (readOnly) {
       window.alert('历史对局回溯模式下仅可浏览，不能执行该操作。');
       return;
     }
@@ -530,7 +543,7 @@ export default function MarketingDiscountView({ runId, readOnly = false }: Marke
                     <div className="whitespace-pre-line pt-4 leading-6 text-[#555]">{row.period_text.replace(' - ', '\n-\n')}</div>
                     <div className="flex flex-col items-start gap-2 pt-1">
                       {row.actions.map((action) => (
-                        <button key={`${row.id}-${action}`} type="button" onClick={() => handleActionClick(action)} className="text-[14px] text-[#2563eb] hover:opacity-80">
+                        <button key={`${row.id}-${action}`} type="button" onClick={() => handleActionClick(action, row)} className="text-[14px] text-[#2563eb] hover:opacity-80">
                           {action}
                         </button>
                       ))}

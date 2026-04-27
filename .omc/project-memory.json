@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "lastScanned": 1776922770237,
+  "lastScanned": 1777172166721,
   "projectRoot": "/Users/zhangkailong/workspace/code/cbec_sim",
   "techStack": {
     "languages": [],
@@ -38,7 +38,7 @@
       "path": "backend",
       "purpose": null,
       "fileCount": 4,
-      "lastAccessed": 1776922770224,
+      "lastAccessed": 1777172166707,
       "keyFiles": [
         "requirements.txt"
       ]
@@ -47,7 +47,7 @@
       "path": "docs",
       "purpose": "Documentation",
       "fileCount": 2,
-      "lastAccessed": 1776922770224,
+      "lastAccessed": 1777172166708,
       "keyFiles": [
         "change-log.md",
         "当前进度.md"
@@ -57,7 +57,7 @@
       "path": "frontend",
       "purpose": null,
       "fileCount": 10,
-      "lastAccessed": 1776922770225,
+      "lastAccessed": 1777172166708,
       "keyFiles": [
         "Dockerfile",
         "index.html",
@@ -70,28 +70,28 @@
       "path": "infra",
       "purpose": null,
       "fileCount": 1,
-      "lastAccessed": 1776922770225,
+      "lastAccessed": 1777172166708,
       "keyFiles": []
     },
     "shopee_my_sim_plan": {
       "path": "shopee_my_sim_plan",
       "purpose": null,
       "fileCount": 0,
-      "lastAccessed": 1776922770225,
+      "lastAccessed": 1777172166708,
       "keyFiles": []
     },
     "backend/tests": {
       "path": "backend/tests",
       "purpose": "Test files",
       "fileCount": 1,
-      "lastAccessed": 1776922770227,
+      "lastAccessed": 1777172166709,
       "keyFiles": []
     },
     "frontend/dist": {
       "path": "frontend/dist",
       "purpose": "Distribution/build output",
       "fileCount": 2,
-      "lastAccessed": 1776922770227,
+      "lastAccessed": 1777172166709,
       "keyFiles": [
         "index.html"
       ]
@@ -100,21 +100,21 @@
       "path": "frontend/node_modules",
       "purpose": "Dependencies",
       "fileCount": 1,
-      "lastAccessed": 1776922770228,
+      "lastAccessed": 1777172166710,
       "keyFiles": []
     }
   },
   "hotPaths": [
     {
-      "path": "backend/apps/api-gateway/app/api/routes/game.py",
-      "accessCount": 353,
-      "lastAccessed": 1776957407794,
+      "path": "backend/apps/api-gateway/app/api/routes/shopee.py",
+      "accessCount": 434,
+      "lastAccessed": 1777252744160,
       "type": "file"
     },
     {
-      "path": "backend/apps/api-gateway/app/api/routes/shopee.py",
-      "accessCount": 263,
-      "lastAccessed": 1776994712992,
+      "path": "backend/apps/api-gateway/app/api/routes/game.py",
+      "accessCount": 354,
+      "lastAccessed": 1777177132927,
       "type": "file"
     },
     {
@@ -125,8 +125,20 @@
     },
     {
       "path": "backend/apps/api-gateway/tests/test_api.py",
-      "accessCount": 131,
-      "lastAccessed": 1776993452149,
+      "accessCount": 133,
+      "lastAccessed": 1777015310884,
+      "type": "file"
+    },
+    {
+      "path": "docs/change-log.md",
+      "accessCount": 102,
+      "lastAccessed": 1777252894620,
+      "type": "file"
+    },
+    {
+      "path": "docs/当前进度.md",
+      "accessCount": 94,
+      "lastAccessed": 1777252897523,
       "type": "file"
     },
     {
@@ -142,28 +154,22 @@
       "type": "file"
     },
     {
-      "path": "docs/当前进度.md",
-      "accessCount": 71,
-      "lastAccessed": 1776994981964,
-      "type": "file"
-    },
-    {
-      "path": "docs/change-log.md",
-      "accessCount": 70,
-      "lastAccessed": 1776994950690,
+      "path": "backend/apps/api-gateway/app/models.py",
+      "accessCount": 53,
+      "lastAccessed": 1777015509008,
       "type": "file"
     },
     {
       "path": "backend/apps/api-gateway/app/services/shopee_order_simulator.py",
-      "accessCount": 50,
-      "lastAccessed": 1776957830792,
+      "accessCount": 51,
+      "lastAccessed": 1777015316042,
       "type": "directory"
     },
     {
-      "path": "backend/apps/api-gateway/app/models.py",
-      "accessCount": 43,
-      "lastAccessed": 1776994726897,
-      "type": "file"
+      "path": "",
+      "accessCount": 45,
+      "lastAccessed": 1777019499854,
+      "type": "directory"
     },
     {
       "path": "backend/apps/api-gateway/app/db.py",
@@ -178,9 +184,9 @@
       "type": "file"
     },
     {
-      "path": "",
+      "path": "backend/apps/api-gateway/app",
       "accessCount": 31,
-      "lastAccessed": 1776994580394,
+      "lastAccessed": 1777015545865,
       "type": "directory"
     },
     {
@@ -190,9 +196,9 @@
       "type": "file"
     },
     {
-      "path": "backend/apps/api-gateway/app",
-      "accessCount": 25,
-      "lastAccessed": 1776923981005,
+      "path": "backend",
+      "accessCount": 26,
+      "lastAccessed": 1777177926740,
       "type": "directory"
     },
     {
@@ -202,22 +208,16 @@
       "type": "directory"
     },
     {
-      "path": "backend",
-      "accessCount": 24,
-      "lastAccessed": 1776994580295,
-      "type": "directory"
+      "path": "frontend/src/modules/shopee/views/DiscountCreateView.tsx",
+      "accessCount": 23,
+      "lastAccessed": 1776996730542,
+      "type": "file"
     },
     {
       "path": "backend/apps/api-gateway",
       "accessCount": 18,
       "lastAccessed": 1776994580354,
       "type": "directory"
-    },
-    {
-      "path": "frontend/src/modules/shopee/views/DiscountCreateView.tsx",
-      "accessCount": 16,
-      "lastAccessed": 1776995109680,
-      "type": "file"
     },
     {
       "path": "docs/admin/ad01-文档标题.md",
@@ -239,21 +239,21 @@
     },
     {
       "path": "frontend/package.json",
-      "accessCount": 5,
-      "lastAccessed": 1776754695143,
+      "accessCount": 7,
+      "lastAccessed": 1777024623860,
       "type": "file"
+    },
+    {
+      "path": "backend/apps/api-gateway/app/api/routes",
+      "accessCount": 5,
+      "lastAccessed": 1777020270323,
+      "type": "directory"
     },
     {
       "path": "backend/apps/api-gateway/app/services/inventory_lot_sync.py",
       "accessCount": 4,
       "lastAccessed": 1776773210915,
       "type": "file"
-    },
-    {
-      "path": "backend/apps/api-gateway/app/api/routes",
-      "accessCount": 4,
-      "lastAccessed": 1776923477312,
-      "type": "directory"
     },
     {
       "path": "backend/apps/api-gateway/app/services",

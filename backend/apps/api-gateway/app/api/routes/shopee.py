@@ -4,6 +4,7 @@ import json
 import logging
 import os
 from typing import Any
+from urllib.parse import quote
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
@@ -93,6 +94,7 @@ REDIS_CACHE_TTL_ORDERS_LIST_SEC = max(3, int(os.getenv("REDIS_CACHE_TTL_ORDERS_L
 REDIS_CACHE_TTL_MARKETING_BOOTSTRAP_SEC = max(10, int(os.getenv("REDIS_CACHE_TTL_MARKETING_BOOTSTRAP_SEC", "30")))
 REDIS_CACHE_TTL_DISCOUNT_BOOTSTRAP_SEC = max(10, int(os.getenv("REDIS_CACHE_TTL_DISCOUNT_BOOTSTRAP_SEC", "30")))
 REDIS_CACHE_TTL_DISCOUNT_LIST_SEC = max(10, int(os.getenv("REDIS_CACHE_TTL_DISCOUNT_LIST_SEC", "30")))
+REDIS_CACHE_TTL_DISCOUNT_DETAIL_SEC = max(10, int(os.getenv("REDIS_CACHE_TTL_DISCOUNT_DETAIL_SEC", "30")))
 REDIS_CACHE_TTL_DISCOUNT_CREATE_BOOTSTRAP_SEC = max(10, int(os.getenv("REDIS_CACHE_TTL_DISCOUNT_CREATE_BOOTSTRAP_SEC", "30")))
 REDIS_CACHE_TTL_DISCOUNT_ELIGIBLE_PRODUCTS_SEC = max(10, int(os.getenv("REDIS_CACHE_TTL_DISCOUNT_ELIGIBLE_PRODUCTS_SEC", "20")))
 REDIS_CACHE_TTL_DISCOUNT_DRAFT_SEC = max(30, int(os.getenv("REDIS_CACHE_TTL_DISCOUNT_DRAFT_SEC", "300")))
@@ -103,6 +105,9 @@ REDIS_RATE_LIMIT_ORDERS_LIST_PER_MIN = max(10, int(os.getenv("REDIS_RATE_LIMIT_O
 REDIS_RATE_LIMIT_MARKETING_BOOTSTRAP_PER_MIN = max(10, int(os.getenv("REDIS_RATE_LIMIT_MARKETING_BOOTSTRAP_PER_MIN", "60")))
 REDIS_RATE_LIMIT_DISCOUNT_BOOTSTRAP_PER_MIN = max(10, int(os.getenv("REDIS_RATE_LIMIT_DISCOUNT_BOOTSTRAP_PER_MIN", "60")))
 REDIS_RATE_LIMIT_DISCOUNT_LIST_PER_MIN = max(10, int(os.getenv("REDIS_RATE_LIMIT_DISCOUNT_LIST_PER_MIN", "120")))
+REDIS_RATE_LIMIT_DISCOUNT_DETAIL_PER_MIN = max(10, int(os.getenv("REDIS_RATE_LIMIT_DISCOUNT_DETAIL_PER_MIN", "120")))
+REDIS_RATE_LIMIT_DISCOUNT_DATA_PER_MIN = max(10, int(os.getenv("REDIS_RATE_LIMIT_DISCOUNT_DATA_PER_MIN", "120")))
+REDIS_RATE_LIMIT_DISCOUNT_DATA_EXPORT_PER_MIN = max(5, int(os.getenv("REDIS_RATE_LIMIT_DISCOUNT_DATA_EXPORT_PER_MIN", "10")))
 REDIS_RATE_LIMIT_DISCOUNT_CREATE_BOOTSTRAP_PER_MIN = max(10, int(os.getenv("REDIS_RATE_LIMIT_DISCOUNT_CREATE_BOOTSTRAP_PER_MIN", "60")))
 REDIS_RATE_LIMIT_DISCOUNT_ELIGIBLE_PRODUCTS_PER_MIN = max(10, int(os.getenv("REDIS_RATE_LIMIT_DISCOUNT_ELIGIBLE_PRODUCTS_PER_MIN", "120")))
 REDIS_RATE_LIMIT_DISCOUNT_DRAFTS_PER_MIN = max(10, int(os.getenv("REDIS_RATE_LIMIT_DISCOUNT_DRAFTS_PER_MIN", "60")))
@@ -759,6 +764,165 @@ class ShopeeDiscountCampaignCreateResponse(BaseModel):
     end_at: datetime
 
 
+class ShopeeDiscountDetailPerformanceResponse(BaseModel):
+    total_sales_amount: float = 0.0
+    total_orders_count: int = 0
+    total_units_sold: int = 0
+    total_buyers_count: int = 0
+
+
+class ShopeeDiscountDetailPaginationResponse(BaseModel):
+    page: int
+    page_size: int
+    total: int
+    total_pages: int
+
+
+class ShopeeDiscountDetailItemRowResponse(BaseModel):
+    item_id: int
+    product_name: str
+    image_url: str | None = None
+    sku: str | None = None
+    original_price: float
+    discount_type: str
+    discount_type_label: str
+    discount_value: float
+    final_price: float | None = None
+    stock: int = 0
+
+
+class ShopeeDiscountDetailItemListResponse(BaseModel):
+    rows: list[ShopeeDiscountDetailItemRowResponse] = Field(default_factory=list)
+    pagination: ShopeeDiscountDetailPaginationResponse
+
+
+class ShopeeDiscountDetailDailyRowResponse(BaseModel):
+    stat_date: str
+    sales_amount: float
+    orders_count: int
+    units_sold: int
+    buyers_count: int
+
+
+class ShopeeDiscountDetailDailyListResponse(BaseModel):
+    rows: list[ShopeeDiscountDetailDailyRowResponse] = Field(default_factory=list)
+    pagination: ShopeeDiscountDetailPaginationResponse
+
+
+class ShopeeDiscountDetailOrderRowResponse(BaseModel):
+    order_id: int
+    order_no: str
+    buyer_name: str
+    product_summary: str
+    buyer_payment: float
+    discount_percent: float | None = None
+    type_bucket: str
+    type_bucket_label: str
+    created_at: str
+
+
+class ShopeeDiscountDetailOrderListResponse(BaseModel):
+    rows: list[ShopeeDiscountDetailOrderRowResponse] = Field(default_factory=list)
+    pagination: ShopeeDiscountDetailPaginationResponse
+
+
+class ShopeeDiscountDetailResponse(BaseModel):
+    campaign_id: int
+    campaign_name: str
+    campaign_type: str
+    campaign_type_label: str
+    status: str
+    status_label: str
+    start_at: str | None = None
+    end_at: str | None = None
+    created_at: str
+    market: str
+    currency: str
+    performance: ShopeeDiscountDetailPerformanceResponse
+    items: ShopeeDiscountDetailItemListResponse
+    daily_performance: ShopeeDiscountDetailDailyListResponse
+    orders: ShopeeDiscountDetailOrderListResponse
+
+
+class ShopeeDiscountDataMetricCardsResponse(BaseModel):
+    sales_amount: float = 0.0
+    units_sold: int = 0
+    orders_count: int = 0
+    buyers_count: int = 0
+    items_sold: int = 0
+
+
+class ShopeeDiscountDataTrendPointResponse(BaseModel):
+    stat_date: str
+    sales_amount: float = 0.0
+    units_sold: int = 0
+    orders_count: int = 0
+    buyers_count: int = 0
+    items_sold: int = 0
+
+
+class ShopeeDiscountDataTrendResponse(BaseModel):
+    rows: list[ShopeeDiscountDataTrendPointResponse] = Field(default_factory=list)
+    monthly_rows: list[ShopeeDiscountDataTrendPointResponse] = Field(default_factory=list)
+
+
+class ShopeeDiscountDataRankingRowResponse(BaseModel):
+    rank: int
+    campaign_item_id: int
+    product_id: int | None = None
+    product_name: str
+    image_url: str | None = None
+    variation_name: str | None = None
+    original_price: float
+    discount_label: str
+    discounted_price: float | None = None
+    units_sold: int = 0
+    buyers_count: int = 0
+    sales_amount: float = 0.0
+
+
+class ShopeeDiscountDataRankingListResponse(BaseModel):
+    rows: list[ShopeeDiscountDataRankingRowResponse] = Field(default_factory=list)
+    pagination: ShopeeDiscountDetailPaginationResponse
+
+
+class ShopeeDiscountAvailableYear(BaseModel):
+    year: int
+    label: str
+
+class ShopeeDiscountDataResponse(BaseModel):
+    campaign_id: int
+    campaign_name: str
+    campaign_type: str
+    campaign_type_label: str
+    status: str
+    status_label: str
+    start_at: str | None = None
+    end_at: str | None = None
+    market: str
+    currency: str
+    time_basis: str
+    data_period_text: str = ""
+    available_years: list[ShopeeDiscountAvailableYear] = Field(default_factory=list)
+    selected_game_year: int = 0
+    metric_cards: ShopeeDiscountDataMetricCardsResponse
+    trend: ShopeeDiscountDataTrendResponse
+    product_ranking: ShopeeDiscountDataRankingListResponse
+    export_enabled: bool = True
+
+
+class ShopeeDiscountDataExportRequest(BaseModel):
+    time_basis: str = "order_time"
+    export_type: str = "csv"
+
+
+class ShopeeDiscountDataExportResponse(BaseModel):
+    export_id: str
+    status: str
+    download_url: str | None = None
+    expires_at: str | None = None
+
+
 class ShopeeBundleTierResponse(BaseModel):
     tier_no: int
     buy_quantity: int
@@ -1268,14 +1432,16 @@ def _discount_type_label(discount_type: str) -> str:
 
 def _discount_actions(status_value: str, read_only: bool) -> list[str]:
     if read_only:
-        return ["详情"]
-    if status_value in {"ongoing", "upcoming"}:
-        return ["编辑", "复制", "分享", "更多"]
+        return ["数据", "详情"]
+    if status_value == "ongoing":
+        return ["编辑", "数据", "详情"]
+    if status_value == "upcoming":
+        return ["编辑", "详情"]
     if status_value == "ended":
-        return ["详情", "复制", "订单"]
+        return ["数据", "详情", "复制"]
     if status_value == "draft":
-        return ["编辑", "复制", "详情"]
-    return ["详情", "复制"]
+        return ["编辑", "详情"]
+    return ["详情"]
 
 
 def _format_discount_period(start_at: datetime | None, end_at: datetime | None) -> str:
@@ -1366,6 +1532,49 @@ def _shopee_discount_list_cache_key(
 def _invalidate_shopee_discount_cache(*, run_id: int, user_id: int) -> None:
     cache_delete_prefix(f"{REDIS_PREFIX}:cache:shopee:discount:bootstrap:{run_id}:{user_id}:")
     cache_delete_prefix(f"{REDIS_PREFIX}:cache:shopee:discount:list:{run_id}:{user_id}:")
+    cache_delete_prefix(f"{REDIS_PREFIX}:cache:shopee:discount:detail:{run_id}:{user_id}:")
+    cache_delete_prefix(f"{REDIS_PREFIX}:cache:shopee:discount:data:{run_id}:{user_id}:")
+    cache_delete_prefix(f"{REDIS_PREFIX}:cache:shopee:discount:data-trend:{run_id}:{user_id}:")
+    cache_delete_prefix(f"{REDIS_PREFIX}:cache:shopee:discount:data-ranking:{run_id}:{user_id}:")
+
+
+def _shopee_discount_data_cache_key(*, run_id: int, user_id: int, campaign_id: int, time_basis: str, game_year: int = 0) -> str:
+    return f"{REDIS_PREFIX}:cache:shopee:discount:data:game-day-v3:{run_id}:{user_id}:{campaign_id}:{time_basis}:{game_year}"
+
+
+def _shopee_discount_data_trend_cache_key(*, run_id: int, user_id: int, campaign_id: int, metric: str, time_basis: str) -> str:
+    return f"{REDIS_PREFIX}:cache:shopee:discount:data-trend:game-day-v2:{run_id}:{user_id}:{campaign_id}:{metric}:{time_basis}"
+
+
+def _shopee_discount_data_ranking_cache_key(
+    *,
+    run_id: int,
+    user_id: int,
+    campaign_id: int,
+    page: int,
+    page_size: int,
+    sort: str,
+    order: str,
+    time_basis: str,
+    game_year: int = 0,
+) -> str:
+    return f"{REDIS_PREFIX}:cache:shopee:discount:data-ranking:game-year-v2:{run_id}:{user_id}:{campaign_id}:{page}:{page_size}:{sort}:{order}:{time_basis}:{game_year}"
+
+
+def _shopee_discount_detail_cache_key(
+    *,
+    run_id: int,
+    user_id: int,
+    campaign_id: int,
+    section: str,
+    page: int,
+    page_size: int,
+    status_value: str = "all",
+) -> str:
+    return (
+        f"{REDIS_PREFIX}:cache:shopee:discount:detail:{run_id}:{user_id}:"
+        f"{campaign_id}:{section}:{page}:{page_size}:{status_value or 'all'}"
+    )
 
 
 def _shopee_discount_create_bootstrap_cache_key(
@@ -1420,6 +1629,36 @@ def _enforce_shopee_discount_list_rate_limit(*, user_id: int) -> None:
     limited, _remaining, reset_at = check_rate_limit(
         key=f"{REDIS_PREFIX}:ratelimit:shopee:discount:list:user:{user_id}",
         limit=REDIS_RATE_LIMIT_DISCOUNT_LIST_PER_MIN,
+        window_sec=60,
+    )
+    if limited:
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=f"请求过于频繁，请在 {reset_at} 后重试")
+
+
+def _enforce_shopee_discount_detail_rate_limit(*, user_id: int) -> None:
+    limited, _remaining, reset_at = check_rate_limit(
+        key=f"{REDIS_PREFIX}:ratelimit:shopee:discount:detail:user:{user_id}",
+        limit=REDIS_RATE_LIMIT_DISCOUNT_DETAIL_PER_MIN,
+        window_sec=60,
+    )
+    if limited:
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=f"请求过于频繁，请在 {reset_at} 后重试")
+
+
+def _enforce_shopee_discount_data_rate_limit(*, user_id: int) -> None:
+    limited, _remaining, reset_at = check_rate_limit(
+        key=f"{REDIS_PREFIX}:ratelimit:shopee:discount:data:user:{user_id}",
+        limit=REDIS_RATE_LIMIT_DISCOUNT_DATA_PER_MIN,
+        window_sec=60,
+    )
+    if limited:
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=f"请求过于频繁，请在 {reset_at} 后重试")
+
+
+def _enforce_shopee_discount_data_export_rate_limit(*, user_id: int) -> None:
+    limited, _remaining, reset_at = check_rate_limit(
+        key=f"{REDIS_PREFIX}:ratelimit:shopee:discount:data-export:user:{user_id}",
+        limit=REDIS_RATE_LIMIT_DISCOUNT_DATA_EXPORT_PER_MIN,
         window_sec=60,
     )
     if limited:
@@ -1613,8 +1852,12 @@ def _build_discount_performance(
     date_to: date | None,
     current_tick: datetime,
 ) -> ShopeeDiscountPerformanceResponse:
-    end_date = date_to or current_tick.date()
-    start_date = date_from or (end_date - timedelta(days=7))
+    current_game_text = _format_discount_game_datetime(current_tick, run=run)
+    current_game_date = datetime.strptime(current_game_text[:10], "%Y-%m-%d").date() if current_game_text else current_tick.date()
+    week_start = current_game_date - timedelta(days=current_game_date.weekday())
+    week_end = week_start + timedelta(days=6)
+    start_date = date_from or week_start
+    end_date = date_to or week_end
 
     query = (
         db.query(ShopeeDiscountPerformanceDaily)
@@ -1674,6 +1917,590 @@ def _build_discount_performance(
             ShopeeDiscountMetricResponse(key="units_sold", label="售出件数", value=int(units_sold or 0), delta=0.0),
             ShopeeDiscountMetricResponse(key="buyers_count", label="买家数", value=int(buyers_count or 0), delta=0.0),
         ],
+    )
+
+
+def _discount_item_type_label(discount_type: str) -> str:
+    return {
+        "percent": "百分比折扣",
+        "final_price": "固定折后价",
+        "fixed_amount": "固定金额折扣",
+        "bundle_price": "套餐价",
+    }.get(discount_type, discount_type)
+
+
+def _order_type_bucket_label(type_bucket: str) -> str:
+    return {
+        "unpaid": "未付款",
+        "toship": "待出货",
+        "shipping": "运输中",
+        "completed": "已完成",
+        "cancelled": "已取消",
+    }.get(type_bucket, type_bucket)
+
+
+def _resolve_discount_order_status(raw_value: str | None) -> str:
+    value = (raw_value or "all").strip().lower()
+    if value == "return_refund_cancel":
+        return "cancelled"
+    return value if value in {"all", "unpaid", "toship", "shipping", "completed", "cancelled"} else "all"
+
+
+def _format_discount_detail_datetime(value: datetime | None) -> str | None:
+    if not value:
+        return None
+    return value.strftime("%Y/%m/%d %H:%M")
+
+
+def _build_discount_detail_pagination(*, page: int, page_size: int, total: int) -> ShopeeDiscountDetailPaginationResponse:
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    return ShopeeDiscountDetailPaginationResponse(page=page, page_size=page_size, total=total, total_pages=total_pages)
+
+
+def _load_discount_campaign_or_404(db: Session, *, run_id: int, user_id: int, campaign_id: int) -> ShopeeDiscountCampaign:
+    campaign = (
+        db.query(ShopeeDiscountCampaign)
+        .filter(
+            ShopeeDiscountCampaign.id == campaign_id,
+            ShopeeDiscountCampaign.run_id == run_id,
+            ShopeeDiscountCampaign.user_id == user_id,
+        )
+        .first()
+    )
+    if not campaign:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Discount campaign not found")
+    return campaign
+
+
+def _build_discount_detail_items_response(
+    *,
+    db: Session,
+    campaign_id: int,
+    page: int,
+    page_size: int,
+) -> ShopeeDiscountDetailItemListResponse:
+    query = db.query(ShopeeDiscountCampaignItem).filter(ShopeeDiscountCampaignItem.campaign_id == campaign_id)
+    total = query.count()
+    rows = (
+        query.order_by(ShopeeDiscountCampaignItem.sort_order.asc(), ShopeeDiscountCampaignItem.id.asc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+    listing_ids = [int(row.listing_id) for row in rows if row.listing_id]
+    variant_ids = [int(row.variant_id) for row in rows if row.variant_id]
+    listing_stock_map: dict[int, int] = {}
+    variant_stock_map: dict[int, int] = {}
+    if listing_ids:
+        listing_stock_map = {
+            int(row.id): max(0, int(row.stock_available or 0))
+            for row in db.query(ShopeeListing.id, ShopeeListing.stock_available).filter(ShopeeListing.id.in_(listing_ids)).all()
+        }
+    if variant_ids:
+        variant_stock_map = {
+            int(row.id): max(0, int(row.stock or 0))
+            for row in db.query(ShopeeListingVariant.id, ShopeeListingVariant.stock).filter(ShopeeListingVariant.id.in_(variant_ids)).all()
+        }
+
+    return ShopeeDiscountDetailItemListResponse(
+        rows=[
+            ShopeeDiscountDetailItemRowResponse(
+                item_id=row.id,
+                product_name=row.product_name_snapshot,
+                image_url=row.image_url_snapshot,
+                sku=row.sku_snapshot,
+                original_price=float(row.original_price or 0),
+                discount_type=row.discount_type,
+                discount_type_label=_discount_item_type_label(row.discount_type),
+                discount_value=float(row.discount_value or 0),
+                final_price=float(row.final_price) if row.final_price is not None else None,
+                stock=variant_stock_map.get(int(row.variant_id), 0) if row.variant_id else listing_stock_map.get(int(row.listing_id), 0) if row.listing_id else 0,
+            )
+            for row in rows
+        ],
+        pagination=_build_discount_detail_pagination(page=page, page_size=page_size, total=total),
+    )
+
+
+def _build_discount_detail_daily_response(
+    *,
+    db: Session,
+    run_id: int,
+    user_id: int,
+    campaign_id: int,
+    page: int,
+    page_size: int,
+) -> ShopeeDiscountDetailDailyListResponse:
+    query = db.query(ShopeeDiscountPerformanceDaily).filter(
+        ShopeeDiscountPerformanceDaily.run_id == run_id,
+        ShopeeDiscountPerformanceDaily.user_id == user_id,
+        ShopeeDiscountPerformanceDaily.campaign_id == campaign_id,
+    )
+    total = query.count()
+    rows = (
+        query.order_by(ShopeeDiscountPerformanceDaily.stat_date.asc(), ShopeeDiscountPerformanceDaily.id.asc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+    return ShopeeDiscountDetailDailyListResponse(
+        rows=[
+            ShopeeDiscountDetailDailyRowResponse(
+                stat_date=row.stat_date.strftime("%Y/%m/%d"),
+                sales_amount=float(row.sales_amount or 0),
+                orders_count=int(row.orders_count or 0),
+                units_sold=int(row.units_sold or 0),
+                buyers_count=int(row.buyers_count or 0),
+            )
+            for row in rows
+        ],
+        pagination=_build_discount_detail_pagination(page=page, page_size=page_size, total=total),
+    )
+
+
+def _resolve_discount_data_time_basis(value: str) -> str:
+    safe_value = (value or "order_time").strip().lower()
+    if safe_value not in {"order_time", "completed_time"}:
+        return "order_time"
+    return safe_value
+
+
+def _resolve_discount_data_sort(value: str) -> str:
+    safe_value = (value or "sales_amount").strip().lower()
+    if safe_value not in {"sales_amount", "units_sold", "buyers_count", "discounted_price"}:
+        return "sales_amount"
+    return safe_value
+
+
+def _resolve_discount_data_order(value: str) -> str:
+    return "asc" if (value or "desc").strip().lower() == "asc" else "desc"
+
+
+def _discount_data_order_query(db: Session, *, run_id: int, user_id: int, campaign_id: int, time_basis: str):
+    query = db.query(ShopeeOrder).options(selectinload(ShopeeOrder.items)).filter(
+        ShopeeOrder.run_id == run_id,
+        ShopeeOrder.user_id == user_id,
+        ShopeeOrder.marketing_campaign_id == campaign_id,
+    )
+    if time_basis == "completed_time":
+        query = query.filter(ShopeeOrder.delivered_at.isnot(None))
+    return query
+
+
+def _discount_data_stat_date(order: ShopeeOrder, *, run: GameRun, time_basis: str) -> date:
+    value = order.delivered_at if time_basis == "completed_time" else order.created_at
+    game_text = _format_discount_game_datetime(value or order.created_at, run=run)
+    if game_text:
+        return datetime.strptime(game_text[:10], "%Y-%m-%d").date()
+    return (value or order.created_at).date()
+
+
+def _discount_data_campaign_game_date_range(campaign: ShopeeDiscountCampaign, *, run: GameRun) -> tuple[date, date] | None:
+    start_text = _format_discount_game_datetime(campaign.start_at or campaign.created_at, run=run)
+    end_text = _format_discount_game_datetime(campaign.end_at or campaign.created_at, run=run)
+    if not start_text or not end_text:
+        return None
+    start_date = datetime.strptime(start_text[:10], "%Y-%m-%d").date()
+    end_date = datetime.strptime(end_text[:10], "%Y-%m-%d").date()
+    if end_date < start_date:
+        end_date = start_date
+    return start_date, end_date
+
+
+def _build_discount_data_analytics(
+    *,
+    db: Session,
+    run: GameRun,
+    user_id: int,
+    campaign_id: int,
+    time_basis: str,
+    date_from: date | None = None,
+    date_to: date | None = None,
+) -> tuple[ShopeeDiscountDataMetricCardsResponse, ShopeeDiscountDataTrendResponse, dict[int, dict[str, Any]]]:
+    orders = _discount_data_order_query(db, run_id=run.id, user_id=user_id, campaign_id=campaign_id, time_basis=time_basis).all()
+    by_date: dict[date, dict[str, Any]] = {}
+    ranking: dict[int, dict[str, Any]] = {}
+    buyer_names: set[str] = set()
+    sold_item_ids: set[int] = set()
+    total_sales_amount = 0.0
+    total_units_sold = 0
+
+    for order in orders:
+        stat_date = _discount_data_stat_date(order, run=run, time_basis=time_basis)
+        if date_from is not None and stat_date < date_from:
+            continue
+        if date_to is not None and stat_date >= date_to:
+            continue
+        bucket = by_date.setdefault(
+            stat_date,
+            {"sales_amount": 0.0, "units_sold": 0, "orders_count": 0, "buyers": set(), "items": set()},
+        )
+        bucket["orders_count"] += 1
+        bucket["buyers"].add(order.buyer_name)
+        buyer_names.add(order.buyer_name)
+        order_sales_amount = float(order.buyer_payment or 0)
+        total_sales_amount += order_sales_amount
+        bucket["sales_amount"] += order_sales_amount
+
+        item_quantity = sum(int(item.quantity or 0) for item in (order.items or []))
+        total_units_sold += item_quantity
+        bucket["units_sold"] += item_quantity
+
+        matched_items = (
+            db.query(ShopeeDiscountCampaignItem)
+            .filter(
+                ShopeeDiscountCampaignItem.campaign_id == campaign_id,
+                ShopeeDiscountCampaignItem.listing_id == order.listing_id,
+                or_(ShopeeDiscountCampaignItem.variant_id == order.variant_id, ShopeeDiscountCampaignItem.variant_id.is_(None)),
+            )
+            .order_by(ShopeeDiscountCampaignItem.variant_id.desc(), ShopeeDiscountCampaignItem.id.asc())
+            .all()
+        )
+        campaign_item = matched_items[0] if matched_items else None
+        if campaign_item:
+            sold_item_ids.add(campaign_item.id)
+            bucket["items"].add(campaign_item.id)
+            row = ranking.setdefault(
+                campaign_item.id,
+                {
+                    "units_sold": 0,
+                    "buyers": set(),
+                    "sales_amount": 0.0,
+                },
+            )
+            row["units_sold"] += item_quantity
+            row["buyers"].add(order.buyer_name)
+            row["sales_amount"] += order_sales_amount
+
+    campaign = db.query(ShopeeDiscountCampaign).filter(ShopeeDiscountCampaign.id == campaign_id).first()
+    campaign_range = _discount_data_campaign_game_date_range(campaign, run=run) if campaign else None
+    if campaign_range:
+        start_date, end_date = campaign_range
+    elif by_date:
+        start_date = min(by_date.keys())
+        end_date = max(by_date.keys())
+    else:
+        start_date = date.today()
+        end_date = start_date
+
+    trend_rows: list[ShopeeDiscountDataTrendPointResponse] = []
+    cursor = start_date
+    while cursor <= end_date:
+        bucket = by_date.get(cursor, {"sales_amount": 0.0, "units_sold": 0, "orders_count": 0, "buyers": set(), "items": set()})
+        trend_rows.append(
+            ShopeeDiscountDataTrendPointResponse(
+                stat_date=cursor.strftime("%Y/%m/%d"),
+                sales_amount=float(bucket["sales_amount"] or 0),
+                units_sold=int(bucket["units_sold"] or 0),
+                orders_count=int(bucket["orders_count"] or 0),
+                buyers_count=len(bucket["buyers"]),
+                items_sold=len(bucket["items"]),
+            )
+        )
+        cursor += timedelta(days=1)
+
+    # Compute monthly aggregates with proper deduplication for buyers and items
+    by_month: dict[tuple[int, int], dict[str, Any]] = {}
+    for d, bucket in by_date.items():
+        month_key = (d.year, d.month)
+        month_bucket = by_month.setdefault(month_key, {"sales_amount": 0.0, "units_sold": 0, "orders_count": 0, "buyers": set(), "items": set()})
+        month_bucket["sales_amount"] += bucket["sales_amount"]
+        month_bucket["units_sold"] += bucket["units_sold"]
+        month_bucket["orders_count"] += bucket["orders_count"]
+        month_bucket["buyers"] |= bucket["buyers"]
+        month_bucket["items"] |= bucket["items"]
+
+    monthly_rows: list[ShopeeDiscountDataTrendPointResponse] = []
+    for yr, mo in sorted(by_month.keys()):
+        mb = by_month[(yr, mo)]
+        monthly_rows.append(
+            ShopeeDiscountDataTrendPointResponse(
+                stat_date=f"{yr}/{mo:02d}/01",
+                sales_amount=float(mb["sales_amount"] or 0),
+                units_sold=int(mb["units_sold"] or 0),
+                orders_count=int(mb["orders_count"] or 0),
+                buyers_count=len(mb["buyers"]),
+                items_sold=len(mb["items"]),
+            )
+        )
+
+    cards = ShopeeDiscountDataMetricCardsResponse(
+        sales_amount=total_sales_amount,
+        units_sold=total_units_sold,
+        orders_count=len(orders),
+        buyers_count=len(buyer_names),
+        items_sold=len(sold_item_ids),
+    )
+    return cards, ShopeeDiscountDataTrendResponse(rows=trend_rows, monthly_rows=monthly_rows), ranking
+
+
+def _discount_data_discount_label(row: ShopeeDiscountCampaignItem) -> str:
+    if row.discount_type == "percent":
+        value = float(row.discount_value or 0)
+        return f"{int(value) if value.is_integer() else round(value, 1)}% OFF"
+    if row.final_price is not None:
+        return f"RM {float(row.final_price or 0):.2f}"
+    return _discount_item_type_label(row.discount_type)
+
+
+def _build_discount_data_ranking_response(
+    *,
+    db: Session,
+    campaign_id: int,
+    ranking_stats: dict[int, dict[str, Any]],
+    page: int,
+    page_size: int,
+    sort: str,
+    order: str,
+) -> ShopeeDiscountDataRankingListResponse:
+    items = db.query(ShopeeDiscountCampaignItem).filter(ShopeeDiscountCampaignItem.campaign_id == campaign_id).all()
+    variant_ids = [int(item.variant_id) for item in items if item.variant_id]
+    variant_name_map: dict[int, str] = {}
+    if variant_ids:
+        variant_name_map = {
+            int(row.id): (row.variant_name or row.option_value or "")
+            for row in db.query(ShopeeListingVariant.id, ShopeeListingVariant.variant_name, ShopeeListingVariant.option_value).filter(ShopeeListingVariant.id.in_(variant_ids)).all()
+        }
+    rows: list[ShopeeDiscountDataRankingRowResponse] = []
+    for item in items:
+        stats = ranking_stats.get(item.id, {"units_sold": 0, "buyers": set(), "sales_amount": 0.0})
+        rows.append(
+            ShopeeDiscountDataRankingRowResponse(
+                rank=0,
+                campaign_item_id=item.id,
+                product_id=int(item.listing_id) if item.listing_id else None,
+                product_name=item.product_name_snapshot,
+                image_url=item.image_url_snapshot,
+                variation_name=variant_name_map.get(int(item.variant_id), "") if item.variant_id else None,
+                original_price=float(item.original_price or 0),
+                discount_label=_discount_data_discount_label(item),
+                discounted_price=float(item.final_price) if item.final_price is not None else None,
+                units_sold=int(stats["units_sold"] or 0),
+                buyers_count=len(stats["buyers"]),
+                sales_amount=float(stats["sales_amount"] or 0),
+            )
+        )
+
+    def sort_value(row: ShopeeDiscountDataRankingRowResponse) -> float:
+        if sort == "units_sold":
+            return float(row.units_sold)
+        if sort == "buyers_count":
+            return float(row.buyers_count)
+        if sort == "discounted_price":
+            return float(row.discounted_price or 0)
+        return float(row.sales_amount)
+
+    rows.sort(key=sort_value, reverse=order == "desc")
+    for index, row in enumerate(rows, start=1):
+        row.rank = index
+    total = len(rows)
+    start = (page - 1) * page_size
+    end = start + page_size
+    return ShopeeDiscountDataRankingListResponse(
+        rows=rows[start:end],
+        pagination=_build_discount_detail_pagination(page=page, page_size=page_size, total=total),
+    )
+
+
+def _build_discount_data_response(
+    *,
+    db: Session,
+    run: GameRun,
+    user_id: int,
+    campaign: ShopeeDiscountCampaign,
+    current_tick: datetime,
+    time_basis: str,
+    selected_game_year: int = 0,
+) -> ShopeeDiscountDataResponse:
+    # Compute available game years from campaign's game-time range
+    campaign_range = _discount_data_campaign_game_date_range(campaign, run=run)
+    current_game_text = _format_discount_game_datetime(current_tick, run=run)
+    current_game_date = datetime.strptime(current_game_text[:10], "%Y-%m-%d").date() if current_game_text else current_tick.date()
+
+    if campaign_range:
+        first_year = campaign_range[0].year
+        last_year = max(campaign_range[1].year, current_game_date.year)
+    else:
+        first_year = run.created_at.year
+        last_year = current_game_date.year
+
+    # Build available years list
+    available_years: list[dict] = []
+    for y in range(first_year, last_year + 1):
+        start_label = datetime(y, 1, 1).strftime("%Y-%m-%d")
+        end_label = datetime(y + 1, 1, 1).strftime("%Y-%m-%d")
+        available_years.append({"year": y, "label": f"{start_label} - {end_label}"})
+    if not available_years:
+        available_years.append({"year": current_game_date.year, "label": f"{current_game_date.year}-01-01 - {current_game_date.year + 1}-01-01"})
+
+    # Determine selected year
+    year_values = [item["year"] for item in available_years]
+    if selected_game_year > 0 and selected_game_year in year_values:
+        selected_year = selected_game_year
+    else:
+        selected_year = current_game_date.year
+        if selected_year not in year_values:
+            selected_year = year_values[-1] if year_values else current_game_date.year
+
+    # Filter by selected game year
+    year_start = date(selected_year, 1, 1)
+    year_end = date(selected_year + 1, 1, 1)
+    data_period_text = f"GMT+07 {selected_year}-01-01 00:00 - {selected_year + 1}-01-01 00:00"
+
+    cards, trend, ranking_stats = _build_discount_data_analytics(
+        db=db, run=run, user_id=user_id, campaign_id=campaign.id, time_basis=time_basis,
+        date_from=year_start, date_to=year_end,
+    )
+
+    return ShopeeDiscountDataResponse(
+        campaign_id=campaign.id,
+        campaign_name=campaign.campaign_name,
+        campaign_type=campaign.campaign_type,
+        campaign_type_label=_discount_type_label(campaign.campaign_type),
+        status=_resolve_discount_campaign_status(campaign, current_tick=current_tick),
+        status_label=_discount_status_label(_resolve_discount_campaign_status(campaign, current_tick=current_tick)),
+        start_at=_format_discount_game_datetime(campaign.start_at, run=run),
+        end_at=_format_discount_game_datetime(campaign.end_at, run=run),
+        market=campaign.market,
+        currency=campaign.currency,
+        time_basis=time_basis,
+        data_period_text=data_period_text,
+        available_years=[ShopeeDiscountAvailableYear(**item) for item in available_years],
+        selected_game_year=selected_year,
+        metric_cards=cards,
+        trend=trend,
+        product_ranking=_build_discount_data_ranking_response(
+            db=db,
+            campaign_id=campaign.id,
+            ranking_stats=ranking_stats,
+            page=1,
+            page_size=10,
+            sort="sales_amount",
+            order="desc",
+        ),
+        export_enabled=True,
+    )
+
+
+def _discount_percent_lookup_for_campaign(db: Session, *, campaign_id: int) -> dict[tuple[int | None, int | None], float]:
+    rows = db.query(ShopeeDiscountCampaignItem).filter(ShopeeDiscountCampaignItem.campaign_id == campaign_id).all()
+    result: dict[tuple[int | None, int | None], float] = {}
+    for row in rows:
+        if row.final_price is None or not row.original_price or row.original_price <= 0:
+            continue
+        pct = round(max(0.0, min(99.99, (1 - float(row.final_price) / float(row.original_price)) * 100)), 2)
+        result[(int(row.listing_id) if row.listing_id else None, int(row.variant_id) if row.variant_id else None)] = pct
+    return result
+
+
+def _build_discount_detail_orders_response(
+    *,
+    db: Session,
+    run_id: int,
+    user_id: int,
+    campaign_id: int,
+    page: int,
+    page_size: int,
+    status_value: str,
+) -> ShopeeDiscountDetailOrderListResponse:
+    query = db.query(ShopeeOrder).filter(
+        ShopeeOrder.run_id == run_id,
+        ShopeeOrder.user_id == user_id,
+        ShopeeOrder.marketing_campaign_id == campaign_id,
+    )
+    if status_value != "all":
+        query = query.filter(ShopeeOrder.type_bucket == status_value)
+    total = query.count()
+    rows = (
+        query.options(selectinload(ShopeeOrder.items))
+        .order_by(desc(ShopeeOrder.created_at), desc(ShopeeOrder.id))
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+    discount_lookup = _discount_percent_lookup_for_campaign(db, campaign_id=campaign_id)
+    mapped_rows: list[ShopeeDiscountDetailOrderRowResponse] = []
+    for row in rows:
+        product_names = [item.product_name for item in (row.items or []) if item.product_name]
+        discount_percent = (
+            discount_lookup.get((int(row.listing_id) if row.listing_id else None, int(row.variant_id) if row.variant_id else None))
+            or discount_lookup.get((int(row.listing_id) if row.listing_id else None, None))
+        )
+        mapped_rows.append(
+            ShopeeDiscountDetailOrderRowResponse(
+                order_id=row.id,
+                order_no=row.order_no,
+                buyer_name=row.buyer_name,
+                product_summary="、".join(product_names) if product_names else "-",
+                buyer_payment=float(row.buyer_payment or 0),
+                discount_percent=discount_percent,
+                type_bucket=row.type_bucket,
+                type_bucket_label=_order_type_bucket_label(row.type_bucket),
+                created_at=row.created_at.strftime("%Y/%m/%d %H:%M"),
+            )
+        )
+    return ShopeeDiscountDetailOrderListResponse(
+        rows=mapped_rows,
+        pagination=_build_discount_detail_pagination(page=page, page_size=page_size, total=total),
+    )
+
+
+def _build_discount_detail_performance(
+    *,
+    db: Session,
+    run_id: int,
+    user_id: int,
+    campaign_id: int,
+) -> ShopeeDiscountDetailPerformanceResponse:
+    aggregate = (
+        db.query(
+            func.coalesce(func.sum(ShopeeDiscountPerformanceDaily.sales_amount), 0.0),
+            func.coalesce(func.sum(ShopeeDiscountPerformanceDaily.orders_count), 0),
+            func.coalesce(func.sum(ShopeeDiscountPerformanceDaily.units_sold), 0),
+            func.coalesce(func.sum(ShopeeDiscountPerformanceDaily.buyers_count), 0),
+        )
+        .filter(
+            ShopeeDiscountPerformanceDaily.run_id == run_id,
+            ShopeeDiscountPerformanceDaily.user_id == user_id,
+            ShopeeDiscountPerformanceDaily.campaign_id == campaign_id,
+        )
+        .first()
+        or (0.0, 0, 0, 0)
+    )
+    sales_amount, orders_count, units_sold, buyers_count = aggregate
+    return ShopeeDiscountDetailPerformanceResponse(
+        total_sales_amount=float(sales_amount or 0),
+        total_orders_count=int(orders_count or 0),
+        total_units_sold=int(units_sold or 0),
+        total_buyers_count=int(buyers_count or 0),
+    )
+
+
+def _build_discount_detail_response(
+    *,
+    db: Session,
+    run: GameRun,
+    user_id: int,
+    campaign: ShopeeDiscountCampaign,
+    current_tick: datetime,
+) -> ShopeeDiscountDetailResponse:
+    effective_status = _resolve_discount_campaign_status(campaign, current_tick=current_tick)
+    return ShopeeDiscountDetailResponse(
+        campaign_id=campaign.id,
+        campaign_name=campaign.campaign_name,
+        campaign_type=campaign.campaign_type,
+        campaign_type_label=_discount_type_label(campaign.campaign_type),
+        status=effective_status,
+        status_label=_discount_status_label(effective_status),
+        start_at=_format_discount_detail_datetime(campaign.start_at),
+        end_at=_format_discount_detail_datetime(campaign.end_at),
+        created_at=_format_discount_detail_datetime(campaign.created_at) or "-",
+        market=campaign.market,
+        currency=campaign.currency,
+        performance=_build_discount_detail_performance(db=db, run_id=run.id, user_id=user_id, campaign_id=campaign.id),
+        items=_build_discount_detail_items_response(db=db, campaign_id=campaign.id, page=1, page_size=10),
+        daily_performance=_build_discount_detail_daily_response(db=db, run_id=run.id, user_id=user_id, campaign_id=campaign.id, page=1, page_size=10),
+        orders=_build_discount_detail_orders_response(db=db, run_id=run.id, user_id=user_id, campaign_id=campaign.id, page=1, page_size=10, status_value="all"),
     )
 
 
@@ -4870,6 +5697,306 @@ def list_shopee_discount_campaigns(
         read_only=run.status == "finished",
     )
     cache_set_json(cache_key, payload.model_dump(mode="json"), REDIS_CACHE_TTL_DISCOUNT_LIST_SEC)
+    return payload
+
+
+@router.get("/runs/{run_id}/marketing/discount/campaigns/{campaign_id}/detail", response_model=ShopeeDiscountDetailResponse)
+def get_shopee_discount_campaign_detail(
+    run_id: int,
+    campaign_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> ShopeeDiscountDetailResponse:
+    user_id = int(current_user["id"])
+    _enforce_shopee_discount_detail_rate_limit(user_id=user_id)
+    run = _get_owned_order_readable_run_or_404(db, run_id, user_id)
+    cache_key = _shopee_discount_detail_cache_key(
+        run_id=run.id,
+        user_id=user_id,
+        campaign_id=campaign_id,
+        section="main",
+        page=1,
+        page_size=10,
+    )
+    cached_payload = cache_get_json(cache_key)
+    if isinstance(cached_payload, dict):
+        return ShopeeDiscountDetailResponse.model_validate(cached_payload)
+
+    campaign = _load_discount_campaign_or_404(db, run_id=run.id, user_id=user_id, campaign_id=campaign_id)
+    current_tick = _resolve_game_tick(db, run.id, user_id)
+    payload = _build_discount_detail_response(
+        db=db,
+        run=run,
+        user_id=user_id,
+        campaign=campaign,
+        current_tick=current_tick,
+    )
+    cache_set_json(cache_key, payload.model_dump(mode="json"), REDIS_CACHE_TTL_DISCOUNT_DETAIL_SEC)
+    return payload
+
+
+@router.get("/runs/{run_id}/marketing/discount/campaigns/{campaign_id}/data", response_model=ShopeeDiscountDataResponse)
+def get_shopee_discount_campaign_data(
+    run_id: int,
+    campaign_id: int,
+    time_basis: str = Query(default="order_time"),
+    game_year: int = Query(default=0),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> ShopeeDiscountDataResponse:
+    user_id = int(current_user["id"])
+    _enforce_shopee_discount_data_rate_limit(user_id=user_id)
+    run = _get_owned_order_readable_run_or_404(db, run_id, user_id)
+    safe_time_basis = _resolve_discount_data_time_basis(time_basis)
+    cache_key = _shopee_discount_data_cache_key(run_id=run.id, user_id=user_id, campaign_id=campaign_id, time_basis=safe_time_basis, game_year=game_year)
+    cached_payload = cache_get_json(cache_key)
+    if isinstance(cached_payload, dict):
+        return ShopeeDiscountDataResponse.model_validate(cached_payload)
+
+    campaign = _load_discount_campaign_or_404(db, run_id=run.id, user_id=user_id, campaign_id=campaign_id)
+    current_tick = _resolve_game_tick(db, run.id, user_id)
+    payload = _build_discount_data_response(db=db, run=run, user_id=user_id, campaign=campaign, current_tick=current_tick, time_basis=safe_time_basis, selected_game_year=game_year)
+    cache_set_json(cache_key, payload.model_dump(mode="json"), REDIS_CACHE_TTL_DISCOUNT_DETAIL_SEC)
+    return payload
+
+
+@router.get("/runs/{run_id}/marketing/discount/campaigns/{campaign_id}/data/trend", response_model=ShopeeDiscountDataTrendResponse)
+def get_shopee_discount_campaign_data_trend(
+    run_id: int,
+    campaign_id: int,
+    metric: str = Query(default="sales_amount"),
+    time_basis: str = Query(default="order_time"),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> ShopeeDiscountDataTrendResponse:
+    user_id = int(current_user["id"])
+    _enforce_shopee_discount_data_rate_limit(user_id=user_id)
+    run = _get_owned_order_readable_run_or_404(db, run_id, user_id)
+    safe_time_basis = _resolve_discount_data_time_basis(time_basis)
+    safe_metric = metric if metric in {"sales_amount", "units_sold", "orders_count", "buyers_count", "items_sold"} else "sales_amount"
+    cache_key = _shopee_discount_data_trend_cache_key(run_id=run.id, user_id=user_id, campaign_id=campaign_id, metric=safe_metric, time_basis=safe_time_basis)
+    cached_payload = cache_get_json(cache_key)
+    if isinstance(cached_payload, dict):
+        return ShopeeDiscountDataTrendResponse.model_validate(cached_payload)
+    _load_discount_campaign_or_404(db, run_id=run.id, user_id=user_id, campaign_id=campaign_id)
+    _cards, trend, _ranking_stats = _build_discount_data_analytics(db=db, run=run, user_id=user_id, campaign_id=campaign_id, time_basis=safe_time_basis)
+    cache_set_json(cache_key, trend.model_dump(mode="json"), REDIS_CACHE_TTL_DISCOUNT_DETAIL_SEC)
+    return trend
+
+
+@router.get("/runs/{run_id}/marketing/discount/campaigns/{campaign_id}/data/ranking", response_model=ShopeeDiscountDataRankingListResponse)
+def list_shopee_discount_campaign_data_ranking(
+    run_id: int,
+    campaign_id: int,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=10, ge=1, le=50),
+    sort: str = Query(default="sales_amount"),
+    order: str = Query(default="desc"),
+    time_basis: str = Query(default="order_time"),
+    game_year: int = Query(default=0),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> ShopeeDiscountDataRankingListResponse:
+    user_id = int(current_user["id"])
+    _enforce_shopee_discount_data_rate_limit(user_id=user_id)
+    run = _get_owned_order_readable_run_or_404(db, run_id, user_id)
+    safe_time_basis = _resolve_discount_data_time_basis(time_basis)
+    safe_sort = _resolve_discount_data_sort(sort)
+    safe_order = _resolve_discount_data_order(order)
+    cache_key = _shopee_discount_data_ranking_cache_key(
+        run_id=run.id,
+        user_id=user_id,
+        campaign_id=campaign_id,
+        page=page,
+        page_size=page_size,
+        sort=safe_sort,
+        order=safe_order,
+        time_basis=safe_time_basis,
+        game_year=game_year,
+    )
+    cached_payload = cache_get_json(cache_key)
+    if isinstance(cached_payload, dict):
+        return ShopeeDiscountDataRankingListResponse.model_validate(cached_payload)
+    campaign = _load_discount_campaign_or_404(db, run_id=run.id, user_id=user_id, campaign_id=campaign_id)
+    current_tick = _resolve_game_tick(db, run.id, user_id)
+    current_game_text = _format_discount_game_datetime(current_tick, run=run)
+    current_game_date = datetime.strptime(current_game_text[:10], "%Y-%m-%d").date() if current_game_text else current_tick.date()
+    campaign_range = _discount_data_campaign_game_date_range(campaign, run=run)
+    if campaign_range:
+        first_year = campaign_range[0].year
+        last_year = max(campaign_range[1].year, current_game_date.year)
+    else:
+        first_year = run.created_at.year
+        last_year = current_game_date.year
+    safe_game_year = game_year if first_year <= game_year <= last_year else current_game_date.year
+    if safe_game_year < first_year or safe_game_year > last_year:
+        safe_game_year = last_year
+    _cards, _trend, ranking_stats = _build_discount_data_analytics(
+        db=db,
+        run=run,
+        user_id=user_id,
+        campaign_id=campaign_id,
+        time_basis=safe_time_basis,
+        date_from=date(safe_game_year, 1, 1),
+        date_to=date(safe_game_year + 1, 1, 1),
+    )
+    payload = _build_discount_data_ranking_response(
+        db=db,
+        campaign_id=campaign_id,
+        ranking_stats=ranking_stats,
+        page=page,
+        page_size=page_size,
+        sort=safe_sort,
+        order=safe_order,
+    )
+    cache_set_json(cache_key, payload.model_dump(mode="json"), REDIS_CACHE_TTL_DISCOUNT_DETAIL_SEC)
+    return payload
+
+
+@router.post("/runs/{run_id}/marketing/discount/campaigns/{campaign_id}/data/export", response_model=ShopeeDiscountDataExportResponse)
+def export_shopee_discount_campaign_data(
+    run_id: int,
+    campaign_id: int,
+    payload: ShopeeDiscountDataExportRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> ShopeeDiscountDataExportResponse:
+    user_id = int(current_user["id"])
+    _enforce_shopee_discount_data_export_rate_limit(user_id=user_id)
+    run = _get_owned_order_readable_run_or_404(db, run_id, user_id)
+    campaign = _load_discount_campaign_or_404(db, run_id=run.id, user_id=user_id, campaign_id=campaign_id)
+    safe_time_basis = _resolve_discount_data_time_basis(payload.time_basis)
+    safe_export_type = (payload.export_type or "csv").strip().lower()
+    if safe_export_type != "csv":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="当前仅支持 CSV 导出")
+    _cards, _trend, ranking_stats = _build_discount_data_analytics(db=db, run=run, user_id=user_id, campaign_id=campaign.id, time_basis=safe_time_basis)
+    total_items = db.query(ShopeeDiscountCampaignItem).filter(ShopeeDiscountCampaignItem.campaign_id == campaign.id).count()
+    ranking = _build_discount_data_ranking_response(
+        db=db,
+        campaign_id=campaign.id,
+        ranking_stats=ranking_stats,
+        page=1,
+        page_size=max(1, total_items),
+        sort="sales_amount",
+        order="desc",
+    )
+
+    def csv_cell(value: Any) -> str:
+        text = str(value)
+        if text[:1] in {"=", "+", "-", "@"}:
+            text = f"'{text}"
+        return f'"{text.replace(chr(34), chr(34) + chr(34))}"'
+
+    csv_lines = ["rank,product_name,variation_name,original_price,discount_label,discounted_price,units_sold,buyers_count,sales_amount"]
+    for row in ranking.rows:
+        values = [
+            row.rank,
+            row.product_name,
+            row.variation_name or "",
+            f"{row.original_price:.2f}",
+            row.discount_label,
+            "" if row.discounted_price is None else f"{row.discounted_price:.2f}",
+            row.units_sold,
+            row.buyers_count,
+            f"{row.sales_amount:.2f}",
+        ]
+        csv_lines.append(",".join(csv_cell(value) for value in values))
+    csv_content = "\ufeff" + "\n".join(csv_lines)
+    return ShopeeDiscountDataExportResponse(
+        export_id=str(uuid4()),
+        status="ready",
+        download_url=f"data:text/csv;charset=utf-8,{quote(csv_content)}",
+        expires_at=None,
+    )
+
+
+@router.get("/runs/{run_id}/marketing/discount/campaigns/{campaign_id}/items", response_model=ShopeeDiscountDetailItemListResponse)
+def list_shopee_discount_campaign_detail_items(
+    run_id: int,
+    campaign_id: int,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=10, ge=1, le=50),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> ShopeeDiscountDetailItemListResponse:
+    user_id = int(current_user["id"])
+    _enforce_shopee_discount_detail_rate_limit(user_id=user_id)
+    run = _get_owned_order_readable_run_or_404(db, run_id, user_id)
+    _load_discount_campaign_or_404(db, run_id=run.id, user_id=user_id, campaign_id=campaign_id)
+    cache_key = _shopee_discount_detail_cache_key(
+        run_id=run.id,
+        user_id=user_id,
+        campaign_id=campaign_id,
+        section="items",
+        page=page,
+        page_size=page_size,
+    )
+    cached_payload = cache_get_json(cache_key)
+    if isinstance(cached_payload, dict):
+        return ShopeeDiscountDetailItemListResponse.model_validate(cached_payload)
+    payload = _build_discount_detail_items_response(db=db, campaign_id=campaign_id, page=page, page_size=page_size)
+    cache_set_json(cache_key, payload.model_dump(mode="json"), REDIS_CACHE_TTL_DISCOUNT_DETAIL_SEC)
+    return payload
+
+
+@router.get("/runs/{run_id}/marketing/discount/campaigns/{campaign_id}/daily", response_model=ShopeeDiscountDetailDailyListResponse)
+def list_shopee_discount_campaign_detail_daily(
+    run_id: int,
+    campaign_id: int,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=10, ge=1, le=50),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> ShopeeDiscountDetailDailyListResponse:
+    user_id = int(current_user["id"])
+    _enforce_shopee_discount_detail_rate_limit(user_id=user_id)
+    run = _get_owned_order_readable_run_or_404(db, run_id, user_id)
+    _load_discount_campaign_or_404(db, run_id=run.id, user_id=user_id, campaign_id=campaign_id)
+    cache_key = _shopee_discount_detail_cache_key(
+        run_id=run.id,
+        user_id=user_id,
+        campaign_id=campaign_id,
+        section="daily",
+        page=page,
+        page_size=page_size,
+    )
+    cached_payload = cache_get_json(cache_key)
+    if isinstance(cached_payload, dict):
+        return ShopeeDiscountDetailDailyListResponse.model_validate(cached_payload)
+    payload = _build_discount_detail_daily_response(db=db, run_id=run.id, user_id=user_id, campaign_id=campaign_id, page=page, page_size=page_size)
+    cache_set_json(cache_key, payload.model_dump(mode="json"), REDIS_CACHE_TTL_DISCOUNT_DETAIL_SEC)
+    return payload
+
+
+@router.get("/runs/{run_id}/marketing/discount/campaigns/{campaign_id}/orders", response_model=ShopeeDiscountDetailOrderListResponse)
+def list_shopee_discount_campaign_detail_orders(
+    run_id: int,
+    campaign_id: int,
+    status_value: str = Query(default="all", alias="status"),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=10, ge=1, le=50),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> ShopeeDiscountDetailOrderListResponse:
+    user_id = int(current_user["id"])
+    _enforce_shopee_discount_detail_rate_limit(user_id=user_id)
+    run = _get_owned_order_readable_run_or_404(db, run_id, user_id)
+    _load_discount_campaign_or_404(db, run_id=run.id, user_id=user_id, campaign_id=campaign_id)
+    safe_status = _resolve_discount_order_status(status_value)
+    cache_key = _shopee_discount_detail_cache_key(
+        run_id=run.id,
+        user_id=user_id,
+        campaign_id=campaign_id,
+        section="orders",
+        page=page,
+        page_size=page_size,
+        status_value=safe_status,
+    )
+    cached_payload = cache_get_json(cache_key)
+    if isinstance(cached_payload, dict):
+        return ShopeeDiscountDetailOrderListResponse.model_validate(cached_payload)
+    payload = _build_discount_detail_orders_response(db=db, run_id=run.id, user_id=user_id, campaign_id=campaign_id, page=page, page_size=page_size, status_value=safe_status)
+    cache_set_json(cache_key, payload.model_dump(mode="json"), REDIS_CACHE_TTL_DISCOUNT_DETAIL_SEC)
     return payload
 
 

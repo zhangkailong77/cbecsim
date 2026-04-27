@@ -1,16 +1,65 @@
 # Change Log
 
-最后更新：2026-04-24（Shopee 单品折扣活动详情页设计）
+最后更新：2026-04-26（修复 Shopee 单品折扣活动数据页趋势图月度模式买家数重复计数）
+
+## 2026-04-26
+
+### 修复
+- 修复 Shopee 单品折扣活动数据页趋势图在月度模式（坐标轴跨度 > 60 天）下买家数和售出商品数重复计数的问题。原前端月度聚合将每日去重值直接求和，导致同一买家/商品在多天出现时被重复计入。改为后端计算月度去重数据（`monthly_rows`），前端月度模式直接使用。
+  - 涉及文件：`backend/apps/api-gateway/app/api/routes/shopee.py`、`frontend/src/modules/shopee/views/DiscountDataView.tsx`
+  - 影响范围：趋势图月度模式的买家数与售出商品数数值；日度模式与指标卡片不受影响。
 
 ## 2026-04-24
 
 ### 新增
-- 新增设计文档 `docs/设计文档/25-Shopee单品折扣活动详情页设计.md`，定义已结束/所有状态折扣活动"详情"页面。
+- Shopee 单品折扣活动数据页关键指标区新增游戏年份区间下拉筛选，数据周期固定显示为单个游戏年（如 `2026-01-01 00:00 - 2027-01-01 00:00`）。
+  - 涉及文件：`backend/apps/api-gateway/app/api/routes/shopee.py`、`frontend/src/modules/shopee/views/DiscountDataView.tsx`、`docs/当前进度.md`
+  - 影响范围：活动数据页首屏指标卡、趋势图与商品排行按所选游戏年份区间聚合，排行缓存 key 已纳入 `game_year`，避免不同年份数据互相复用。
+- 调整 Shopee 单品折扣活动数据页趋势图 `Check Details` 触发器样式，改为无边框蓝色文字；未展开显示向下符号，展开后显示向上符号。
+  - 涉及文件：`frontend/src/modules/shopee/views/DiscountDataView.tsx`
+  - 影响范围：仅调整趋势明细展开按钮视觉，不改变明细数据和展开逻辑。
+- 修正 Shopee 单品折扣活动数据页趋势图与明细日期口径，活动时间、趋势折线和 `Check Details` 表格均改为游戏时间，并按游戏日补齐每日数据。
+  - 涉及文件：`backend/apps/api-gateway/app/api/routes/shopee.py`、`frontend/src/modules/shopee/views/DiscountDataView.tsx`、`docs/当前进度.md`
+  - 影响范围：数据页不再按真实订单日期聚合为单天；趋势图与明细表会展示活动覆盖的多个游戏日，缓存 key 已切到 `game-day-v2` 版本避免旧数据残留。
+- Shopee 单品折扣活动数据页趋势图新增 `Check Details` 展开明细，可在图表下方查看按日期汇总的 Sales、Units Sold、Orders、Buyers 与 Sales Per Buyer。
+  - 涉及文件：`frontend/src/modules/shopee/views/DiscountDataView.tsx`、`docs/当前进度.md`
+  - 影响范围：复用现有趋势数据渲染前端明细表，不新增后端接口，不改变导出与商品排行逻辑。
+- 调整 Shopee 单品折扣活动数据页布局，删除趋势图上方独立指标按钮栏，并将时间口径选择与导出按钮上移到活动信息卡右侧，`Promotion Details >` 入口移动到活动状态标签右侧。
+  - 涉及文件：`frontend/src/modules/shopee/views/DiscountDataView.tsx`、`docs/当前进度.md`
+  - 影响范围：仅调整数据页信息层级与操作区位置，指标卡多选、趋势图、导出逻辑和后端接口不变。
+- 已按 26 号设计文档实现 Shopee 单品折扣活动数据页首版。
+  - 涉及文件：`backend/apps/api-gateway/app/api/routes/shopee.py`、`frontend/src/modules/shopee/ShopeePage.tsx`、`frontend/src/modules/shopee/components/Header.tsx`、`frontend/src/modules/shopee/components/Sidebar.tsx`、`frontend/src/modules/shopee/views/MarketingDiscountView.tsx`、`frontend/src/modules/shopee/views/DiscountDataView.tsx`、`docs/当前进度.md`
+  - 后端新增数据页主接口、趋势子接口、商品排行子接口与 CSV 导出接口，并接入数据页缓存、排行/趋势缓存、访问限流、导出限流和折扣缓存统一失效。
+  - 前端新增 `DiscountDataView`，活动列表“数据 / 查看数据”可进入 `/u/{public_id}/shopee/marketing/discount/data?campaign_id={id}`；页面按官方数据页结构展示店铺/站点选择器、提示横幅、活动信息、5 个指标卡、轻量 SVG 趋势图、商品排行和导出按钮。
+  - 数据库首版不新增表，复用 `shopee_discount_campaigns`、`shopee_discount_campaign_items`、`shopee_orders`、`shopee_order_items`；导出首版同步生成 CSV data URL，后续数据量变大时再扩展异步导出任务表。
+  - 影响范围：Shopee 折扣活动从列表页进入经营表现复盘页的链路已具备真实数据驱动能力；进行中活动操作列新增“数据”，已结束活动操作列调整为“数据 / 详情 / 复制”。
+- 调整 Shopee 单品折扣活动数据页趋势图交互，对齐官方页面最多同时查看 4 个指标的口径。
+  - 涉及文件：`frontend/src/modules/shopee/views/DiscountDataView.tsx`
+  - 指标卡改为可多选，默认选中销售额、售出件数、订单、买家；最多同时选中 4 项，至少保留 1 项。
+  - 仅选中的指标卡显示顶部颜色条，顶部指标按钮、趋势图折线和数据点统一使用同一颜色，并在图例右侧显示 `Metrics Selected X / 4`。
+  - 影响范围：数据页趋势图从单指标切换升级为多指标对比，不影响后端接口结构。
+- 新增设计文档 `docs/设计文档/26-Shopee单品折扣活动数据页设计.md`，定义折扣活动列表点击“数据 / 查看数据”后的官方数据页复刻方案。
+  - 页面覆盖：顶部面包屑、店铺/站点选择器、官方提示横幅、活动基础信息、关键指标卡、趋势图、商品排行与导出按钮。
+  - 前端口径：新增 `DiscountDataView`，路由为 `/u/{public_id}/shopee/marketing/discount/data?campaign_id={id}`，活动列表操作列新增“数据”入口，并与详情页区分职责。
+  - 后端接口：规划活动数据主接口、趋势子接口、商品排行子接口与导出接口。
+  - 数据库：优先复用 `shopee_discount_campaigns`、`shopee_discount_campaign_items`、`shopee_discount_performance_daily`、`shopee_orders`、`shopee_order_items`，并预留异步导出任务表 `shopee_discount_data_exports`。
+  - Redis：规划数据页首屏、趋势、排行缓存，以及访问/导出限流和按 `run_id:user_id` 前缀失效策略。
+  - 视觉规范：补充主容器 `mx-auto max-w-[1360px] pb-10`，以及面包屑、标题、指标卡、图表、表格、商品信息的字号与间距规范。
+  - 影响范围：仅新增设计文档与进度/变更台账，尚未改动前后端代码或数据库结构。
+- 新增并修正设计文档 `docs/设计文档/25-Shopee单品折扣活动详情页设计.md`，定义已结束/所有状态折扣活动"详情"页面。
   - 页面覆盖：活动基础信息、表现总览（4 指标卡）、参与商品 Tab、表现趋势 Tab、归因订单 Tab。
-  - 后端接口：1 个详情主接口 + 3 个 Tab 分页子接口。
+  - 前端口径：详情页沿用 `/u/{public_id}/shopee/...` 路由前缀，活动列表点击"详情"时用 `row.id` 作为 `campaign_id`，并将详情页纳入隐藏左侧菜单栏的视图集合。
+  - 后端接口：1 个详情主接口 + 3 个 Tab 分页子接口；主接口只返回三个 Tab 的第 1 页数据，不返回全量。
+  - 字段口径：归因订单字段改为对齐现有模型的 `order_no`、`buyer_name`、`buyer_payment`、`type_bucket`，折扣方式改为 `percent/final_price`。
   - 数据库：无需新增表或字段，复用现有 `shopee_discount_campaigns`、`campaign_items`、`performance_daily`、`shopee_orders(marketing_campaign_id)`。
-  - Redis：详情主接口与 3 个 Tab 子接口各设 30 秒缓存，活动变更时按 campaign_id 前缀批量失效。
+  - Redis：MVP 优先保证接口正确性；如接入缓存，按 `run_id:user_id` 前缀清除详情缓存，避免按 `campaign_id` 后缀失效漏删。
   - 影响范围：后续实现将新增 `DiscountDetailView` 前端视图与 4 个后端接口。
+- 已按 25 号设计文档实现 Shopee 单品折扣活动详情页首版。
+  - 涉及文件：`backend/apps/api-gateway/app/api/routes/shopee.py`、`frontend/src/modules/shopee/ShopeePage.tsx`、`frontend/src/modules/shopee/views/MarketingDiscountView.tsx`、`frontend/src/modules/shopee/views/DiscountDetailView.tsx`、`frontend/src/modules/shopee/components/Header.tsx`、`frontend/src/modules/shopee/components/Sidebar.tsx`、`docs/当前进度.md`
+  - 后端新增详情主接口与参与商品/表现趋势/归因订单 3 个分页子接口，并接入详情缓存、限流与折扣缓存统一失效。
+  - 前端新增 `DiscountDetailView`，活动列表“详情”按钮可跳转详情页；详情页按 Shopee 官方详情页截图收口为中文复刻版，移除页面内重复面包屑，基本信息区采用标题 + 状态标签 + 横向三列字段布局并将字号收回到系统常用层级；折扣商品区按官方截图调整搜索框、商品总数、表头顺序与折扣标签样式，库存列改为读取后端详情接口返回值，并保留返回列表页按钮。
+  - 单品折扣 Tab 下“促销表现”的默认统计区间改为当前游戏日期所在的周一到周日自然周；手动选择 `date_from/date_to` 时仍优先使用用户筛选范围。
+  - 影响范围：Shopee 折扣活动从列表页进入详情页的复盘链路已具备真实数据驱动能力；数据库结构未新增。
 
 ### 修复
 - 修复 Shopee 待入账收入永远不释放的问题：回填收入时改为使用当前游戏时间 `current_tick` 判断释放条件，并将订单完成后 3 天释放改为按 3 个游戏日换算。
