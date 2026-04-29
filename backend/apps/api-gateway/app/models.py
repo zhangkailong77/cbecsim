@@ -1,6 +1,6 @@
-from datetime import date, datetime
+from datetime import date, datetime, time
 
-from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, String, Text, Time, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
@@ -101,6 +101,10 @@ class GameRun(Base):
     shopee_discount_preferences = relationship("ShopeeUserDiscountPreference", back_populates="run")
     shopee_discount_campaigns = relationship("ShopeeDiscountCampaign", back_populates="run")
     shopee_discount_drafts = relationship("ShopeeDiscountDraft", back_populates="run")
+    shopee_addon_campaigns = relationship("ShopeeAddonCampaign", back_populates="run")
+    shopee_addon_drafts = relationship("ShopeeAddonDraft", back_populates="run")
+    shopee_flash_sale_campaigns = relationship("ShopeeFlashSaleCampaign", back_populates="run")
+    shopee_flash_sale_drafts = relationship("ShopeeFlashSaleDraft", back_populates="run")
 
 
 class MarketProduct(Base):
@@ -695,6 +699,12 @@ class ShopeeOrderItem(Base):
     image_url: Mapped[str | None] = mapped_column(String(255), nullable=True)
     stock_fulfillment_status: Mapped[str] = mapped_column(String(24), nullable=False, default="in_stock")
     backorder_qty: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    marketing_campaign_type: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    marketing_campaign_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    marketing_campaign_name_snapshot: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    line_role: Mapped[str] = mapped_column(String(32), nullable=False, default="main", index=True)
+    original_unit_price: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    discounted_unit_price: Mapped[float] = mapped_column(Float, nullable=False, default=0)
 
     order = relationship("ShopeeOrder", back_populates="items")
 
@@ -1159,6 +1169,335 @@ class ShopeeDiscountDraftItem(Base):
     )
 
     draft = relationship("ShopeeDiscountDraft", back_populates="items")
+
+
+class ShopeeAddonCampaign(Base):
+    __tablename__ = "shopee_addon_campaigns"
+    __table_args__ = (
+        Index("ix_shopee_addon_campaigns_run_user_status", "run_id", "user_id", "campaign_status"),
+        Index("ix_shopee_addon_campaigns_run_user_type", "run_id", "user_id", "promotion_type"),
+        Index("ix_shopee_addon_campaigns_run_user_time", "run_id", "user_id", "start_at", "end_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("game_runs.id"), nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    campaign_code: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    campaign_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    promotion_type: Mapped[str] = mapped_column(String(16), nullable=False, default="add_on", index=True)
+    campaign_status: Mapped[str] = mapped_column(String(16), nullable=False, default="draft", index=True)
+    start_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    end_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    addon_purchase_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    gift_min_spend: Mapped[float | None] = mapped_column(Float, nullable=True)
+    market: Mapped[str] = mapped_column(String(16), nullable=False, default="MY")
+    currency: Mapped[str] = mapped_column(String(16), nullable=False, default="RM")
+    rules_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    source_campaign_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    run = relationship("GameRun", back_populates="shopee_addon_campaigns")
+    main_items = relationship("ShopeeAddonCampaignMainItem", back_populates="campaign", cascade="all, delete-orphan")
+    reward_items = relationship("ShopeeAddonCampaignRewardItem", back_populates="campaign", cascade="all, delete-orphan")
+
+
+class ShopeeAddonCampaignMainItem(Base):
+    __tablename__ = "shopee_addon_campaign_main_items"
+    __table_args__ = (
+        UniqueConstraint("campaign_id", "listing_id", "variant_id", name="uq_shopee_addon_main_campaign_listing_variant"),
+        Index("ix_shopee_addon_main_items_campaign_sort", "campaign_id", "sort_order"),
+        Index("ix_shopee_addon_main_items_run_listing", "run_id", "listing_id", "variant_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    campaign_id: Mapped[int] = mapped_column(ForeignKey("shopee_addon_campaigns.id"), nullable=False, index=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("game_runs.id"), nullable=False, index=True)
+    listing_id: Mapped[int] = mapped_column(ForeignKey("shopee_listings.id"), nullable=False, index=True)
+    variant_id: Mapped[int | None] = mapped_column(ForeignKey("shopee_listing_variants.id"), nullable=True, index=True)
+    product_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    product_name_snapshot: Mapped[str] = mapped_column(String(255), nullable=False)
+    variant_name_snapshot: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    sku_snapshot: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    image_url_snapshot: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    original_price_snapshot: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    stock_snapshot: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    campaign = relationship("ShopeeAddonCampaign", back_populates="main_items")
+
+
+class ShopeeAddonCampaignRewardItem(Base):
+    __tablename__ = "shopee_addon_campaign_reward_items"
+    __table_args__ = (
+        UniqueConstraint("campaign_id", "listing_id", "variant_id", name="uq_shopee_addon_reward_campaign_listing_variant"),
+        Index("ix_shopee_addon_reward_items_campaign_sort", "campaign_id", "sort_order"),
+        Index("ix_shopee_addon_reward_items_run_listing", "run_id", "listing_id", "variant_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    campaign_id: Mapped[int] = mapped_column(ForeignKey("shopee_addon_campaigns.id"), nullable=False, index=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("game_runs.id"), nullable=False, index=True)
+    listing_id: Mapped[int] = mapped_column(ForeignKey("shopee_listings.id"), nullable=False, index=True)
+    variant_id: Mapped[int | None] = mapped_column(ForeignKey("shopee_listing_variants.id"), nullable=True, index=True)
+    product_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    product_name_snapshot: Mapped[str] = mapped_column(String(255), nullable=False)
+    variant_name_snapshot: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    sku_snapshot: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    image_url_snapshot: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    original_price_snapshot: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    addon_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    reward_qty: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    stock_snapshot: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    campaign = relationship("ShopeeAddonCampaign", back_populates="reward_items")
+
+
+class ShopeeAddonDraft(Base):
+    __tablename__ = "shopee_addon_drafts"
+    __table_args__ = (
+        Index("ix_shopee_addon_drafts_run_user_type", "run_id", "user_id", "promotion_type"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("game_runs.id"), nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    promotion_type: Mapped[str] = mapped_column(String(16), nullable=False, default="add_on", index=True)
+    campaign_name: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    start_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    end_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    addon_purchase_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    gift_min_spend: Mapped[float | None] = mapped_column(Float, nullable=True)
+    draft_status: Mapped[str] = mapped_column(String(16), nullable=False, default="editing", index=True)
+    submitted_campaign_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    source_campaign_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    run = relationship("GameRun", back_populates="shopee_addon_drafts")
+    main_items = relationship("ShopeeAddonDraftMainItem", back_populates="draft", cascade="all, delete-orphan")
+    reward_items = relationship("ShopeeAddonDraftRewardItem", back_populates="draft", cascade="all, delete-orphan")
+
+
+class ShopeeAddonDraftMainItem(Base):
+    __tablename__ = "shopee_addon_draft_main_items"
+    __table_args__ = (
+        Index("ix_shopee_addon_draft_main_items_draft_sort", "draft_id", "sort_order"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    draft_id: Mapped[int] = mapped_column(ForeignKey("shopee_addon_drafts.id"), nullable=False, index=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("game_runs.id"), nullable=False, index=True)
+    listing_id: Mapped[int] = mapped_column(ForeignKey("shopee_listings.id"), nullable=False, index=True)
+    variant_id: Mapped[int | None] = mapped_column(ForeignKey("shopee_listing_variants.id"), nullable=True, index=True)
+    product_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    draft = relationship("ShopeeAddonDraft", back_populates="main_items")
+
+
+class ShopeeAddonDraftRewardItem(Base):
+    __tablename__ = "shopee_addon_draft_reward_items"
+    __table_args__ = (
+        Index("ix_shopee_addon_draft_reward_items_draft_sort", "draft_id", "sort_order"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    draft_id: Mapped[int] = mapped_column(ForeignKey("shopee_addon_drafts.id"), nullable=False, index=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("game_runs.id"), nullable=False, index=True)
+    listing_id: Mapped[int] = mapped_column(ForeignKey("shopee_listings.id"), nullable=False, index=True)
+    variant_id: Mapped[int | None] = mapped_column(ForeignKey("shopee_listing_variants.id"), nullable=True, index=True)
+    product_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    addon_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    reward_qty: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    draft = relationship("ShopeeAddonDraft", back_populates="reward_items")
+
+
+class ShopeeFlashSaleCampaign(Base):
+    __tablename__ = "shopee_flash_sale_campaigns"
+    __table_args__ = (
+        Index("idx_flash_sale_campaign_run_user", "run_id", "user_id"),
+        Index("idx_flash_sale_campaign_slot", "run_id", "user_id", "slot_date", "slot_key"),
+        Index("idx_flash_sale_campaign_time", "run_id", "start_tick", "end_tick"),
+        Index("idx_flash_sale_campaign_status", "run_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("game_runs.id"), nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    campaign_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    slot_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    slot_key: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    start_tick: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    end_tick: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active", index=True)
+    total_product_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=50)
+    reminder_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    click_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    order_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    sales_amount: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    run = relationship("GameRun", back_populates="shopee_flash_sale_campaigns")
+    items = relationship("ShopeeFlashSaleCampaignItem", back_populates="campaign", cascade="all, delete-orphan")
+
+
+class ShopeeFlashSaleCampaignItem(Base):
+    __tablename__ = "shopee_flash_sale_campaign_items"
+    __table_args__ = (
+        Index("idx_flash_sale_item_campaign", "campaign_id"),
+        Index("idx_flash_sale_item_sku", "run_id", "listing_id", "variant_id"),
+        Index("idx_flash_sale_item_user", "run_id", "user_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    campaign_id: Mapped[int] = mapped_column(ForeignKey("shopee_flash_sale_campaigns.id"), nullable=False, index=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("game_runs.id"), nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    listing_id: Mapped[int] = mapped_column(ForeignKey("shopee_listings.id"), nullable=False, index=True)
+    variant_id: Mapped[int | None] = mapped_column(ForeignKey("shopee_listing_variants.id"), nullable=True, index=True)
+    product_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    product_name_snapshot: Mapped[str] = mapped_column(String(255), nullable=False)
+    variant_name_snapshot: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    sku_snapshot: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    image_url_snapshot: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    original_price: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    flash_price: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    discount_percent: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    activity_stock_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    sold_qty: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    purchase_limit_per_buyer: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    campaign = relationship("ShopeeFlashSaleCampaign", back_populates="items")
+
+
+class ShopeeFlashSaleDraft(Base):
+    __tablename__ = "shopee_flash_sale_drafts"
+    __table_args__ = (
+        Index("idx_flash_sale_draft_run_user", "run_id", "user_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("game_runs.id"), nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    campaign_name: Mapped[str] = mapped_column(String(100), nullable=False, default="")
+    slot_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    slot_key: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    payload_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    run = relationship("GameRun", back_populates="shopee_flash_sale_drafts")
+    items = relationship("ShopeeFlashSaleDraftItem", back_populates="draft", cascade="all, delete-orphan")
+
+
+class ShopeeFlashSaleDraftItem(Base):
+    __tablename__ = "shopee_flash_sale_draft_items"
+    __table_args__ = (
+        Index("idx_flash_sale_draft_item_draft", "draft_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    draft_id: Mapped[int] = mapped_column(ForeignKey("shopee_flash_sale_drafts.id"), nullable=False, index=True)
+    listing_id: Mapped[int] = mapped_column(ForeignKey("shopee_listings.id"), nullable=False, index=True)
+    variant_id: Mapped[int | None] = mapped_column(ForeignKey("shopee_listing_variants.id"), nullable=True, index=True)
+    flash_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    activity_stock_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    purchase_limit_per_buyer: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    draft = relationship("ShopeeFlashSaleDraft", back_populates="items")
+
+
+class ShopeeFlashSaleSlot(Base):
+    __tablename__ = "shopee_flash_sale_slots"
+    __table_args__ = (
+        Index("idx_flash_sale_slot_market", "market", "is_active", "sort_order"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    market: Mapped[str] = mapped_column(String(16), nullable=False, default="MY", index=True)
+    slot_key: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    start_time: Mapped[time] = mapped_column(Time, nullable=False)
+    end_time: Mapped[time] = mapped_column(Time, nullable=False)
+    cross_day: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    product_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=50)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+
+class ShopeeFlashSaleCategoryRule(Base):
+    __tablename__ = "shopee_flash_sale_category_rules"
+    __table_args__ = (
+        Index("idx_flash_sale_category_rule_market", "market", "is_active", "sort_order"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    market: Mapped[str] = mapped_column(String(16), nullable=False, default="MY", index=True)
+    category_key: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    category_label: Mapped[str] = mapped_column(String(100), nullable=False)
+    min_activity_stock: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
+    max_activity_stock: Mapped[int] = mapped_column(Integer, nullable=False, default=10000)
+    min_discount_percent: Mapped[float] = mapped_column(Float, nullable=False, default=5)
+    max_discount_percent: Mapped[float] = mapped_column(Float, nullable=False, default=99)
+    min_rating: Mapped[float | None] = mapped_column(Float, nullable=True)
+    min_likes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    min_30d_orders: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    max_ship_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    allow_preorder: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    repeat_control_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 
 
 class SimBuyerProfile(Base):

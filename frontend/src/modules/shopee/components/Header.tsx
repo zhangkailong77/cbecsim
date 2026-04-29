@@ -7,8 +7,8 @@ interface HeaderProps {
   runId: number | null;
   onBackToSetup: () => void;
   onBackToDashboard: () => void;
-  onNavigateToView: (view: 'dashboard' | 'my-orders' | 'my-products' | 'new-product' | 'my-income' | 'my-balance' | 'bank-accounts' | 'marketing-centre' | 'marketing-discount' | 'marketing-discount-create' | 'marketing-discount-detail' | 'marketing-discount-data') => void;
-  activeView: 'dashboard' | 'my-orders' | 'my-products' | 'new-product' | 'my-income' | 'my-balance' | 'bank-accounts' | 'marketing-centre' | 'marketing-discount' | 'marketing-discount-create' | 'marketing-discount-detail' | 'marketing-discount-data';
+  onNavigateToView: (view: 'dashboard' | 'my-orders' | 'my-products' | 'new-product' | 'my-income' | 'my-balance' | 'bank-accounts' | 'marketing-centre' | 'marketing-discount' | 'marketing-discount-create' | 'marketing-discount-detail' | 'marketing-discount-data' | 'marketing-addon-orders' | 'marketing-bundle-orders' | 'marketing-shop-flash-sale' | 'marketing-shop-flash-sale-create') => void;
+  activeView: 'dashboard' | 'my-orders' | 'my-products' | 'new-product' | 'my-income' | 'my-balance' | 'bank-accounts' | 'marketing-centre' | 'marketing-discount' | 'marketing-discount-create' | 'marketing-discount-detail' | 'marketing-discount-data' | 'marketing-addon-orders' | 'marketing-bundle-orders' | 'marketing-shop-flash-sale' | 'marketing-shop-flash-sale-create';
   marketingCreateType?: 'discount' | 'bundle' | 'add_on';
   isOrderDetail?: boolean;
   isProductDetail?: boolean;
@@ -81,7 +81,35 @@ export default function Header({
         </div>
       );
     }
-    if (activeView === 'marketing-discount' || activeView === 'marketing-discount-create' || activeView === 'marketing-discount-detail' || activeView === 'marketing-discount-data') {
+    if (activeView === 'marketing-shop-flash-sale' || activeView === 'marketing-shop-flash-sale-create') {
+      return (
+        <div className="flex items-center gap-2 text-[14px]">
+          <span className="text-gray-300">{'>'}</span>
+          <button
+            type="button"
+            onClick={() => onNavigateToView('marketing-centre')}
+            className="text-gray-700 hover:text-[#ee4d2d]"
+          >
+            营销中心
+          </button>
+          <span className="text-gray-300">{'>'}</span>
+          <button
+            type="button"
+            onClick={() => onNavigateToView('marketing-shop-flash-sale')}
+            className="text-gray-700 hover:text-[#ee4d2d]"
+          >
+            我的店铺限时抢购
+          </button>
+          {activeView === 'marketing-shop-flash-sale-create' ? (
+            <>
+              <span className="text-gray-300">{'>'}</span>
+              <span className="text-gray-700">创建限时抢购</span>
+            </>
+          ) : null}
+        </div>
+      );
+    }
+    if (activeView === 'marketing-discount' || activeView === 'marketing-discount-create' || activeView === 'marketing-discount-detail' || activeView === 'marketing-discount-data' || activeView === 'marketing-addon-orders' || activeView === 'marketing-bundle-orders') {
       return (
         <div className="flex items-center gap-2 text-[14px]">
           <span className="text-gray-300">{'>'}</span>
@@ -100,11 +128,11 @@ export default function Header({
           >
             折扣
           </button>
-          {(activeView === 'marketing-discount-create' || activeView === 'marketing-discount-detail' || activeView === 'marketing-discount-data') && (
+          {(activeView === 'marketing-discount-create' || activeView === 'marketing-discount-detail' || activeView === 'marketing-discount-data' || activeView === 'marketing-addon-orders' || activeView === 'marketing-bundle-orders') && (
             <>
               <span className="text-gray-300">{'>'}</span>
               <span className="text-gray-700">
-                {activeView === 'marketing-discount-data' ? '折扣数据' : activeView === 'marketing-discount-detail' ? '活动详情' : marketingCreateType === 'bundle' ? '创建套餐优惠' : marketingCreateType === 'add_on' ? '创建加价购' : '创建单品折扣'}
+                {activeView === 'marketing-addon-orders' || activeView === 'marketing-bundle-orders' ? '活动订单' : activeView === 'marketing-discount-data' ? '折扣数据' : activeView === 'marketing-discount-detail' ? '活动详情' : marketingCreateType === 'bundle' ? '创建套餐优惠' : marketingCreateType === 'add_on' ? '创建加价购' : '创建单品折扣'}
               </span>
             </>
           )}

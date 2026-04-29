@@ -1,5 +1,6 @@
 import json
 import os
+from datetime import time
 from random import Random
 from urllib.parse import urlparse
 from uuid import uuid4
@@ -70,11 +71,19 @@ def init_database():
         OssStorageConfig,
         School,
         SimBuyerProfile,
+        ShopeeAddonCampaign,
+        ShopeeAddonCampaignMainItem,
+        ShopeeAddonCampaignRewardItem,
+        ShopeeAddonDraft,
+        ShopeeAddonDraftMainItem,
+        ShopeeAddonDraftRewardItem,
         ShopeeDiscountCampaign,
         ShopeeDiscountCampaignItem,
         ShopeeDiscountDraft,
         ShopeeDiscountDraftItem,
         ShopeeDiscountPerformanceDaily,
+        ShopeeFlashSaleCategoryRule,
+        ShopeeFlashSaleSlot,
         ShopeeMarketingAnnouncement,
         ShopeeMarketingEvent,
         ShopeeMarketingTool,
@@ -872,6 +881,50 @@ def init_database():
             if item["title"] in existing_event_titles:
                 continue
             db.add(ShopeeMarketingEvent(**item))
+
+        flash_sale_slot_seed = [
+            ("00_12", time(0, 0), time(12, 0), False, 50, 1),
+            ("12_18", time(12, 0), time(18, 0), False, 50, 2),
+            ("18_21", time(18, 0), time(21, 0), False, 50, 3),
+            ("21_00", time(21, 0), time(0, 0), True, 50, 4),
+        ]
+        existing_flash_sale_slots = {(row.market, row.slot_key): row for row in db.query(ShopeeFlashSaleSlot).filter(ShopeeFlashSaleSlot.market == "MY").all()}
+        for slot_key, start_time, end_time, cross_day, product_limit, sort_order in flash_sale_slot_seed:
+            row = existing_flash_sale_slots.get(("MY", slot_key))
+            if row:
+                row.start_time = start_time
+                row.end_time = end_time
+                row.cross_day = cross_day
+                row.product_limit = product_limit
+                row.is_active = True
+                row.sort_order = sort_order
+            else:
+                db.add(ShopeeFlashSaleSlot(market="MY", slot_key=slot_key, start_time=start_time, end_time=end_time, cross_day=cross_day, product_limit=product_limit, is_active=True, sort_order=sort_order))
+
+        flash_sale_rule_seed = [
+            ("baby", "母婴", 1),
+            ("tools_home", "工具与家装", 2),
+            ("kitchen", "厨房用品", 3),
+            ("storage", "收纳整理", 4),
+            ("tv_accessories", "电视及配件", 5),
+            ("beauty", "美容护肤", 6),
+            ("furniture", "家具", 7),
+            ("all", "全部", 8),
+        ]
+        existing_flash_sale_rules = {(row.market, row.category_key): row for row in db.query(ShopeeFlashSaleCategoryRule).filter(ShopeeFlashSaleCategoryRule.market == "MY").all()}
+        for category_key, category_label, sort_order in flash_sale_rule_seed:
+            row = existing_flash_sale_rules.get(("MY", category_key))
+            if row:
+                row.category_label = category_label
+                row.min_activity_stock = 5
+                row.max_activity_stock = 10000
+                row.min_discount_percent = 5
+                row.max_discount_percent = 99
+                row.allow_preorder = True
+                row.is_active = True
+                row.sort_order = sort_order
+            else:
+                db.add(ShopeeFlashSaleCategoryRule(market="MY", category_key=category_key, category_label=category_label, min_activity_stock=5, max_activity_stock=10000, min_discount_percent=5, max_discount_percent=99, allow_preorder=True, is_active=True, sort_order=sort_order))
         db.commit()
 
 
@@ -1313,6 +1366,18 @@ def _ensure_shopee_order_items_fulfillment_columns():
         )
     if "backorder_qty" not in existing_columns:
         missing_sql.append("ALTER TABLE shopee_order_items ADD COLUMN backorder_qty INTEGER NOT NULL DEFAULT 0")
+    if "marketing_campaign_type" not in existing_columns:
+        missing_sql.append("ALTER TABLE shopee_order_items ADD COLUMN marketing_campaign_type VARCHAR(32) NULL")
+    if "marketing_campaign_id" not in existing_columns:
+        missing_sql.append("ALTER TABLE shopee_order_items ADD COLUMN marketing_campaign_id INTEGER NULL")
+    if "marketing_campaign_name_snapshot" not in existing_columns:
+        missing_sql.append("ALTER TABLE shopee_order_items ADD COLUMN marketing_campaign_name_snapshot VARCHAR(255) NULL")
+    if "line_role" not in existing_columns:
+        missing_sql.append("ALTER TABLE shopee_order_items ADD COLUMN line_role VARCHAR(32) NOT NULL DEFAULT 'main'")
+    if "original_unit_price" not in existing_columns:
+        missing_sql.append("ALTER TABLE shopee_order_items ADD COLUMN original_unit_price FLOAT NOT NULL DEFAULT 0")
+    if "discounted_unit_price" not in existing_columns:
+        missing_sql.append("ALTER TABLE shopee_order_items ADD COLUMN discounted_unit_price FLOAT NOT NULL DEFAULT 0")
 
     if not missing_sql:
         return
@@ -1333,6 +1398,21 @@ def _ensure_shopee_order_items_fulfillment_columns():
         if "product_id" not in existing_columns:
             try:
                 conn.execute(text("CREATE INDEX ix_shopee_order_items_product_id ON shopee_order_items (product_id)"))
+            except Exception:
+                pass
+        if "marketing_campaign_type" not in existing_columns:
+            try:
+                conn.execute(text("CREATE INDEX ix_shopee_order_items_marketing_campaign_type ON shopee_order_items (marketing_campaign_type)"))
+            except Exception:
+                pass
+        if "marketing_campaign_id" not in existing_columns:
+            try:
+                conn.execute(text("CREATE INDEX ix_shopee_order_items_marketing_campaign_id ON shopee_order_items (marketing_campaign_id)"))
+            except Exception:
+                pass
+        if "line_role" not in existing_columns:
+            try:
+                conn.execute(text("CREATE INDEX ix_shopee_order_items_line_role ON shopee_order_items (line_role)"))
             except Exception:
                 pass
 
@@ -1451,6 +1531,18 @@ def _ensure_table_comments():
         "shopee_discount_draft_items": "Shopee 折扣创建页草稿商品明细表",
         "shopee_discount_performance_daily": "Shopee 折扣活动日表现快照表",
         "shopee_user_discount_preferences": "Shopee 折扣页用户筛选偏好表",
+        "shopee_addon_campaigns": "Shopee 加价购/满额赠活动主表",
+        "shopee_addon_campaign_main_items": "Shopee 加价购/满额赠主商品明细表",
+        "shopee_addon_campaign_reward_items": "Shopee 加价购商品/满额赠赠品明细表",
+        "shopee_addon_drafts": "Shopee 加价购/满额赠创建页草稿主表",
+        "shopee_addon_draft_main_items": "Shopee 加价购/满额赠草稿主商品明细表",
+        "shopee_addon_draft_reward_items": "Shopee 加价购/满额赠草稿加购商品/赠品明细表",
+        "shopee_flash_sale_campaigns": "Shopee 我的店铺限时抢购活动主表",
+        "shopee_flash_sale_campaign_items": "Shopee 我的店铺限时抢购活动商品表",
+        "shopee_flash_sale_drafts": "Shopee 我的店铺限时抢购草稿主表",
+        "shopee_flash_sale_draft_items": "Shopee 我的店铺限时抢购草稿商品表",
+        "shopee_flash_sale_slots": "Shopee 我的店铺限时抢购时间段配置表",
+        "shopee_flash_sale_category_rules": "Shopee 我的店铺限时抢购类目商品条件配置表",
         "shopee_order_generation_logs": "Shopee 订单模拟生成日志表",
         "warehouse_landmarks": "海外仓地标点位表",
         "sim_buyer_profiles": "买家画像池表（模拟订单买家）",
@@ -1844,7 +1936,7 @@ def _ensure_column_comments():
             "cancelled_at": "取消时间",
             "cancel_reason": "取消原因",
             "cancel_source": "取消来源",
-            "marketing_campaign_type": "命中的营销活动类型(discount/bundle/add_on)",
+            "marketing_campaign_type": "命中的营销活动类型(discount/bundle/add_on/gift)",
             "marketing_campaign_id": "命中的营销活动ID",
             "marketing_campaign_name_snapshot": "下单时命中的营销活动名称快照",
             "created_at": "创建时间",
@@ -1862,6 +1954,12 @@ def _ensure_column_comments():
             "image_url": "商品图地址",
             "stock_fulfillment_status": "订单项库存履约状态(in_stock/backorder/restocked)",
             "backorder_qty": "订单项待补货数量（件）",
+            "marketing_campaign_type": "订单明细命中的营销活动类型(discount/bundle/add_on/gift)",
+            "marketing_campaign_id": "订单明细命中的营销活动ID",
+            "marketing_campaign_name_snapshot": "订单明细命中的营销活动名称快照",
+            "line_role": "订单明细角色(main/add_on/gift/bundle_component)",
+            "original_unit_price": "订单明细原始单价",
+            "discounted_unit_price": "订单明细实际成交单价，赠品为0",
         },
         "shopee_order_logistics_events": {
             "id": "主键ID",
@@ -2066,6 +2164,192 @@ def _ensure_column_comments():
             "date_from": "最近选择的开始时间",
             "date_to": "最近选择的结束时间",
             "last_viewed_at": "最近查看时间",
+            "created_at": "创建时间",
+            "updated_at": "更新时间",
+        },
+        "shopee_addon_campaigns": {
+            "id": "主键ID",
+            "run_id": "对局ID",
+            "user_id": "用户ID",
+            "campaign_code": "活动编码",
+            "campaign_name": "活动名称",
+            "promotion_type": "促销类型(add_on/gift)",
+            "campaign_status": "活动状态(draft/upcoming/ongoing/ended/disabled)",
+            "start_at": "活动真实开始时间",
+            "end_at": "活动真实结束时间",
+            "addon_purchase_limit": "加价购每笔订单限购数量",
+            "gift_min_spend": "满额赠最低消费门槛",
+            "market": "市场",
+            "currency": "币种",
+            "rules_json": "活动规则JSON",
+            "source_campaign_id": "来源活动ID(复制场景)",
+            "created_at": "创建时间",
+            "updated_at": "更新时间",
+        },
+        "shopee_addon_campaign_main_items": {
+            "id": "主键ID",
+            "campaign_id": "加价购/满额赠活动ID",
+            "run_id": "对局ID",
+            "listing_id": "Shopee主商品ID",
+            "variant_id": "Shopee主商品变体ID",
+            "product_id": "源商品ID",
+            "product_name_snapshot": "主商品名称快照",
+            "variant_name_snapshot": "主商品规格名称快照",
+            "sku_snapshot": "主商品SKU快照",
+            "image_url_snapshot": "主商品图片快照",
+            "original_price_snapshot": "主商品原价快照",
+            "stock_snapshot": "主商品可售库存快照",
+            "sort_order": "排序号",
+            "created_at": "创建时间",
+        },
+        "shopee_addon_campaign_reward_items": {
+            "id": "主键ID",
+            "campaign_id": "加价购/满额赠活动ID",
+            "run_id": "对局ID",
+            "listing_id": "加购商品或赠品ID",
+            "variant_id": "加购商品或赠品变体ID",
+            "product_id": "源商品ID",
+            "product_name_snapshot": "商品名称快照",
+            "variant_name_snapshot": "商品规格名称快照",
+            "sku_snapshot": "商品SKU快照",
+            "image_url_snapshot": "商品图片快照",
+            "original_price_snapshot": "商品原价快照",
+            "addon_price": "加价购成交价",
+            "reward_qty": "加购或赠送数量",
+            "stock_snapshot": "商品可售库存快照",
+            "sort_order": "排序号",
+            "created_at": "创建时间",
+        },
+        "shopee_addon_drafts": {
+            "id": "主键ID",
+            "run_id": "对局ID",
+            "user_id": "用户ID",
+            "promotion_type": "促销类型(add_on/gift)",
+            "campaign_name": "草稿活动名称",
+            "start_at": "草稿活动真实开始时间",
+            "end_at": "草稿活动真实结束时间",
+            "addon_purchase_limit": "草稿加价购限购数量",
+            "gift_min_spend": "草稿满额赠最低消费门槛",
+            "draft_status": "草稿状态(editing/abandoned/submitted)",
+            "submitted_campaign_id": "提交后生成的正式活动ID",
+            "source_campaign_id": "来源活动ID(复制场景)",
+            "created_at": "创建时间",
+            "updated_at": "更新时间",
+        },
+        "shopee_addon_draft_main_items": {
+            "id": "主键ID",
+            "draft_id": "加价购/满额赠草稿ID",
+            "run_id": "对局ID",
+            "listing_id": "草稿主商品ID",
+            "variant_id": "草稿主商品变体ID",
+            "product_id": "源商品ID",
+            "sort_order": "排序号",
+            "created_at": "创建时间",
+        },
+        "shopee_addon_draft_reward_items": {
+            "id": "主键ID",
+            "draft_id": "加价购/满额赠草稿ID",
+            "run_id": "对局ID",
+            "listing_id": "草稿加购商品或赠品ID",
+            "variant_id": "草稿加购商品或赠品变体ID",
+            "product_id": "源商品ID",
+            "addon_price": "草稿加价购成交价",
+            "reward_qty": "草稿加购或赠送数量",
+            "sort_order": "排序号",
+            "created_at": "创建时间",
+        },
+        "shopee_flash_sale_campaigns": {
+            "id": "活动ID",
+            "run_id": "对局ID",
+            "user_id": "用户ID",
+            "campaign_name": "限时抢购活动名称",
+            "slot_date": "活动日期（游戏时间日期）",
+            "slot_key": "时间段键",
+            "start_tick": "活动开始游戏时间",
+            "end_tick": "活动结束游戏时间",
+            "status": "存储状态(active/disabled)",
+            "total_product_limit": "该时间段商品上限",
+            "reminder_count": "提醒设置数",
+            "click_count": "商品点击数",
+            "order_count": "活动订单数",
+            "sales_amount": "活动销售额",
+            "created_at": "创建时间",
+            "updated_at": "更新时间",
+        },
+        "shopee_flash_sale_campaign_items": {
+            "id": "明细ID",
+            "campaign_id": "限时抢购活动ID",
+            "run_id": "对局ID",
+            "user_id": "用户ID",
+            "listing_id": "Shopee商品ID",
+            "variant_id": "Shopee变体ID",
+            "product_id": "源商品ID",
+            "product_name_snapshot": "商品名称快照",
+            "variant_name_snapshot": "规格名称快照",
+            "sku_snapshot": "SKU快照",
+            "image_url_snapshot": "商品图片快照",
+            "original_price": "创建时原价快照",
+            "flash_price": "限时抢购成交价",
+            "discount_percent": "折扣比例快照",
+            "activity_stock_limit": "活动库存上限",
+            "sold_qty": "已售数量",
+            "purchase_limit_per_buyer": "每位买家限购数量",
+            "status": "商品活动状态(active/disabled/sold_out)",
+            "created_at": "创建时间",
+            "updated_at": "更新时间",
+        },
+        "shopee_flash_sale_drafts": {
+            "id": "草稿ID",
+            "run_id": "对局ID",
+            "user_id": "用户ID",
+            "campaign_name": "草稿活动名称",
+            "slot_date": "草稿选择的活动日期",
+            "slot_key": "草稿选择的时间段键",
+            "payload_json": "前端表单快照JSON",
+            "created_at": "创建时间",
+            "updated_at": "更新时间",
+        },
+        "shopee_flash_sale_draft_items": {
+            "id": "草稿商品ID",
+            "draft_id": "限时抢购草稿ID",
+            "listing_id": "Shopee商品ID",
+            "variant_id": "Shopee变体ID",
+            "flash_price": "草稿限时抢购价",
+            "activity_stock_limit": "草稿活动库存",
+            "purchase_limit_per_buyer": "草稿限购数量",
+            "created_at": "创建时间",
+            "updated_at": "更新时间",
+        },
+        "shopee_flash_sale_slots": {
+            "id": "时间段配置ID",
+            "market": "站点",
+            "slot_key": "时间段键",
+            "start_time": "每日开始时间",
+            "end_time": "每日结束时间",
+            "cross_day": "是否跨天",
+            "product_limit": "该时间段商品总可用数量",
+            "is_active": "是否启用",
+            "sort_order": "排序号",
+            "created_at": "创建时间",
+            "updated_at": "更新时间",
+        },
+        "shopee_flash_sale_category_rules": {
+            "id": "条件配置ID",
+            "market": "站点",
+            "category_key": "类目键",
+            "category_label": "类目显示名称",
+            "min_activity_stock": "最小活动库存",
+            "max_activity_stock": "最大活动库存",
+            "min_discount_percent": "最小折扣百分比",
+            "max_discount_percent": "最大折扣百分比",
+            "min_rating": "最低商品评分",
+            "min_likes": "最低点赞数",
+            "min_30d_orders": "过去30天最低订单量",
+            "max_ship_days": "最大发货天数",
+            "allow_preorder": "是否允许预购商品",
+            "repeat_control_days": "重复参加控制天数",
+            "is_active": "是否启用",
+            "sort_order": "排序号",
             "created_at": "创建时间",
             "updated_at": "更新时间",
         },

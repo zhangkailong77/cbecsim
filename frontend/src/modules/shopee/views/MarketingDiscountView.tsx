@@ -367,6 +367,13 @@ export default function MarketingDiscountView({ runId, publicId = '', readOnly =
       window.dispatchEvent(new PopStateEvent('popstate'));
       return;
     }
+    if (action === '订单') {
+      if (!publicId) return;
+      const orderPath = row.campaign_type === 'bundle' ? 'bundle' : 'add-on';
+      window.history.pushState(null, '', `/u/${encodeURIComponent(publicId)}/shopee/marketing/${orderPath}/orders?campaign_id=${row.id}`);
+      window.dispatchEvent(new PopStateEvent('popstate'));
+      return;
+    }
     if (action === '详情') {
       if (!publicId) return;
       window.history.pushState(null, '', `/u/${encodeURIComponent(publicId)}/shopee/marketing/discount/detail?campaign_id=${row.id}`);
@@ -523,21 +530,27 @@ export default function MarketingDiscountView({ runId, publicId = '', readOnly =
                     </div>
                     <div className="pt-7 text-[#555]">{row.campaign_type_label}</div>
                     <div className="pt-5">
-                      <div className="flex items-center gap-2">
-                        {row.products.map((product, index) => (
-                          <div
-                            key={`${row.id}-${index}`}
-                            className="flex h-9 w-9 items-center justify-center overflow-hidden border border-[#e8e8e8] bg-[#f6f6f6] text-[10px] text-[#999]"
-                            style={product.image_url ? { backgroundImage: `url(${product.image_url})`, backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
-                          >
-                            {!product.image_url ? '图' : ''}
-                          </div>
-                        ))}
-                        {row.products_overflow_count > 0 ? (
-                          <div className="flex h-9 w-9 items-center justify-center border border-[#d6d6d6] bg-[#4b5563] text-[11px] text-white">
-                            +{row.products_overflow_count}
-                          </div>
-                        ) : null}
+                      <div className="flex flex-wrap items-center gap-2">
+                        {row.products.map((product, index) => {
+                          const isLast = index === row.products.length - 1;
+                          const showOverlay = isLast && row.products_overflow_count > 0;
+
+                          return (
+                            <div
+                              key={`${row.id}-${index}`}
+                              className="relative flex h-10 w-10 items-center justify-center overflow-hidden border border-[#e8e8e8] bg-[#f6f6f6] text-[10px] text-[#999]"
+                              style={product.image_url ? { backgroundImage: `url(${product.image_url})`, backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
+                            >
+                              {!product.image_url ? '图' : ''}
+                              
+                              {showOverlay && (
+                                <div className="absolute inset-0 flex items-center justify-center bg-black/60 text-[12px] font-medium text-white">
+                                  +{row.products_overflow_count}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
                     <div className="whitespace-pre-line pt-4 leading-6 text-[#555]">{row.period_text.replace(' - ', '\n-\n')}</div>

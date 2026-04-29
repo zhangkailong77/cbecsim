@@ -222,6 +222,9 @@ export default function DiscountDetailView({ runId, campaignId, readOnly = false
     if (!keyword) return rows;
     return rows.filter((row) => `${row.product_name} ${row.sku || ''}`.toLowerCase().includes(keyword));
   }, [items?.rows, productKeyword]);
+  const isAddonCampaign = detail?.campaign_type === 'add_on' || detail?.campaign_type === 'gift';
+  const priceColumnLabel = detail?.campaign_type === 'gift' ? '赠品价' : detail?.campaign_type === 'add_on' ? '加购价' : '折后价';
+  const discountColumnLabel = isAddonCampaign ? '商品类型' : '折扣';
 
   return (
     <div className="flex-1 overflow-y-auto bg-[#f5f5f5] px-10 py-7 custom-scrollbar">
@@ -242,15 +245,15 @@ export default function DiscountDetailView({ runId, campaignId, readOnly = false
 
             <div className="mt-8 grid grid-cols-[1fr_1.1fr_1.35fr] gap-10 text-[16px] leading-6">
               <div className="min-w-0 whitespace-nowrap">
-                <span className="text-[#888]">折扣促销类型：</span>
+                <span className="text-[#888]">促销活动类型：</span>
                 <span className="font-semibold text-[#333]">{detail?.campaign_type_label || '-'}</span>
               </div>
               <div className="min-w-0 whitespace-nowrap">
-                <span className="text-[#888]">折扣促销名称：</span>
+                <span className="text-[#888]">促销活动名称：</span>
                 <span className="font-semibold text-[#333]">{loading ? '加载中...' : detail?.campaign_name || '-'}</span>
               </div>
               <div className="min-w-0 whitespace-nowrap">
-                <span className="text-[#888]">折扣促销时间：</span>
+                <span className="text-[#888]">促销活动时间：</span>
                 <span className="font-semibold text-[#333]">{periodText}</span>
               </div>
             </div>
@@ -259,7 +262,7 @@ export default function DiscountDetailView({ runId, campaignId, readOnly = false
 
         <section className="mt-5 rounded-[4px] border border-[#e5e5e5] bg-white">
           <div className="px-7 pb-3 pt-5">
-            <h2 className="text-[18px] font-semibold text-[#333]">折扣商品</h2>
+            <h2 className="text-[18px] font-semibold text-[#333]">{isAddonCampaign ? '活动商品' : '折扣商品'}</h2>
             <div className="mt-4 flex h-8 w-[330px] items-center border border-[#d9d9d9] bg-white">
               <button type="button" className="flex h-full w-[130px] items-center justify-between border-r border-[#d9d9d9] px-3 text-[13px] text-[#333]">
                 商品名称
@@ -285,8 +288,8 @@ export default function DiscountDetailView({ runId, campaignId, readOnly = false
             <div className="grid grid-cols-[minmax(360px,1.45fr)_160px_170px_150px_140px_170px_150px] bg-[#f7f7f7] px-5 py-3 text-[13px] font-normal text-[#555]">
               <div>商品名称</div>
               <div>原价</div>
-              <div>折后价</div>
-              <div>折扣</div>
+              <div>{priceColumnLabel}</div>
+              <div>{discountColumnLabel}</div>
               <div>库存 <span className="text-[#999]">ⓘ</span></div>
               <div>活动库存 <span className="text-[#999]">ⓘ</span></div>
               <div>购买限制 <span className="text-[#999]">ⓘ</span></div>

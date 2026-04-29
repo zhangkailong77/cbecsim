@@ -256,7 +256,7 @@ function TrendChart({
           return (
             <g key={`${metric.key}-${animationKey}`} className="animate-chart-wipe pointer-events-none">
               <path d={path} fill="none" stroke={metric.color} strokeWidth="2" />
-              {displayRows.map((row, index) => {
+              {displayRows.map((_row, index) => {
                 const value = metric.points[index] || 0;
                 const x = getXByIndex(index);
                 const y = paddingY + chartHeight - (value / metric.chartMaxValue) * chartHeight;
@@ -476,9 +476,9 @@ export default function DiscountDataView({ runId, campaignId, publicId, readOnly
           <div className="flex items-start justify-between gap-6">
             <div>
               <div className="flex items-center gap-3">
-                <h1 className="text-[18px] font-semibold text-gray-900">{loading ? '加载中...' : data?.campaign_name || '折扣数据'}</h1>
+                <h1 className="text-[18px] font-semibold text-gray-900">{loading ? '加载中...' : data?.campaign_name || '促销数据'}</h1>
                 {data ? <span className="rounded-[2px] bg-[#f4f4f4] px-2 py-1 text-[12px] text-[#777]">{data.status_label}</span> : null}
-                <button type="button" onClick={handleOpenDetail} className="text-[12px] font-medium text-[#2673dd] hover:underline">Promotion Details &gt;</button>
+                <button type="button" onClick={handleOpenDetail} className="text-[12px] font-medium text-[#2673dd] hover:underline">活动详情 &gt;</button>
                 {readOnly ? <span className="border border-amber-200 bg-amber-50 px-2 py-1 text-[12px] text-amber-700">历史回溯只读</span> : null}
               </div>
               <div className="mt-2 text-[12px] text-gray-500">活动时间：{periodText}</div>
@@ -603,18 +603,18 @@ export default function DiscountDataView({ runId, campaignId, publicId, readOnly
 
         <section className="mt-4 bg-white">
           <div className="flex items-center justify-between border-b border-[#eeeeee] px-4 py-3">
-            <h2 className="text-[13px] font-medium text-gray-700">Product Ranking</h2>
+            <h2 className="text-[13px] font-medium text-gray-700">商品排行</h2>
             {rankingLoading ? <span className="text-[12px] text-[#999]">加载中...</span> : null}
           </div>
           <div className="grid grid-cols-[72px_minmax(320px,1.6fr)_130px_130px_120px_120px_120px_130px] bg-[#f7f7f7] px-4 py-3 text-[12px] font-medium text-gray-500">
-            <div>Ranking</div>
-            <div>Product</div>
-            <div>Variation</div>
-            <div>Original Price</div>
-            <div>Discount</div>
-            <div>Units Sold</div>
-            <div>Buyers</div>
-            <div>Sales</div>
+            <div>排名</div>
+            <div>商品</div>
+            <div>规格</div>
+            <div>原价</div>
+            <div>优惠</div>
+            <div>售出件数</div>
+            <div>买家</div>
+            <div>销售额</div>
           </div>
           {(ranking?.rows ?? []).length > 0 ? ranking?.rows.map((row) => (
             <div key={row.campaign_item_id} className="grid grid-cols-[72px_minmax(320px,1.6fr)_130px_130px_120px_120px_120px_130px] border-t border-[#eeeeee] px-4 py-2.5 text-[12px] text-gray-700">

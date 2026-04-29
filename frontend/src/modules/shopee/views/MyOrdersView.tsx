@@ -126,7 +126,6 @@ function buildBaseParamsByType(type: TabType) {
   if (type === 'toship') {
     params.set('type', 'toship');
     params.set('source', 'to_process');
-    params.set('sort_by', 'ship_by_date_asc');
   }
   return params;
 }
@@ -191,6 +190,8 @@ function formatSettlementStatus(status: string) {
 
 function formatMarketingCampaignLabel(row: OrderRow) {
   if (row.marketing_campaign_type === 'bundle') return '套餐优惠';
+  if (row.marketing_campaign_type === 'add_on') return '加价购';
+  if (row.marketing_campaign_type === 'gift') return '满额赠';
   return '单品折扣';
 }
 
@@ -596,7 +597,7 @@ export default function MyOrdersView({ runId, onOpenOrderDetail, readOnly = fals
                 <div className="w-[94px] text-[14px] text-gray-500">订单类型</div>
                 <div className="flex items-center gap-2">
                   <FilterChip label="全部" active={query.orderType === 'all'} onClick={() => applyQueryPatch({ orderType: 'all' })} />
-                  <FilterChip label="命令" active={query.orderType === 'command'} onClick={() => applyQueryPatch({ orderType: 'command' })} />
+                  <FilterChip label="订单" active={query.orderType === 'command'} onClick={() => applyQueryPatch({ orderType: 'command' })} />
                   <FilterChip label="提前履行" active={query.orderType === 'advance'} onClick={() => applyQueryPatch({ orderType: 'advance' })} />
                 </div>
               </div>

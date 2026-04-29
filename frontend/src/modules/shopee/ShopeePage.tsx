@@ -15,8 +15,13 @@ import MarketingCentreView from './views/MarketingCentreView';
 import MarketingDiscountView from './views/MarketingDiscountView';
 import DiscountCreateView from './views/DiscountCreateView';
 import BundleCreateView from './views/BundleCreateView';
+import AddOnDealCreateView from './views/AddOnDealCreateView';
 import DiscountDetailView from './views/DiscountDetailView';
 import DiscountDataView from './views/DiscountDataView';
+import AddOnDealOrdersView from './views/AddOnDealOrdersView';
+import BundleOrdersView from './views/BundleOrdersView';
+import ShopFlashSaleView from './views/ShopFlashSaleView';
+import ShopFlashSaleCreateView from './views/ShopFlashSaleCreateView';
 
 interface ShopeePageProps {
   run: {
@@ -66,7 +71,11 @@ type ShopeeView =
   | 'marketing-discount'
   | 'marketing-discount-create'
   | 'marketing-discount-detail'
-  | 'marketing-discount-data';
+  | 'marketing-discount-data'
+  | 'marketing-addon-orders'
+  | 'marketing-bundle-orders'
+  | 'marketing-shop-flash-sale'
+  | 'marketing-shop-flash-sale-create';
 
 type MarketingCreateType = 'discount' | 'bundle' | 'add_on';
 
@@ -87,6 +96,10 @@ export default function ShopeePage({ run, currentUser, onBackToSetup, readOnly =
     if (/\/shopee\/marketing\/discount\/create\/?$/.test(path)) return 'marketing-discount-create';
     if (/\/shopee\/marketing\/discount\/detail\/?$/.test(path)) return 'marketing-discount-detail';
     if (/\/shopee\/marketing\/discount\/data\/?$/.test(path)) return 'marketing-discount-data';
+    if (/\/shopee\/marketing\/add-on\/orders\/?$/.test(path)) return 'marketing-addon-orders';
+    if (/\/shopee\/marketing\/bundle\/orders\/?$/.test(path)) return 'marketing-bundle-orders';
+    if (/\/shopee\/marketing\/flash-sale\/create\/?$/.test(path)) return 'marketing-shop-flash-sale-create';
+    if (/\/shopee\/marketing\/flash-sale\/?$/.test(path)) return 'marketing-shop-flash-sale';
     if (/\/shopee\/marketing\/discount\/?$/.test(path)) return 'marketing-discount';
     if (/\/shopee\/finance\/income\/?$/.test(path)) return 'my-income';
     if (/\/shopee\/finance\/balance\/?$/.test(path)) return 'my-balance';
@@ -131,6 +144,10 @@ export default function ShopeePage({ run, currentUser, onBackToSetup, readOnly =
     if (/\/shopee\/marketing\/discount\/create\/?$/.test(path)) return 'marketing-discount-create';
     if (/\/shopee\/marketing\/discount\/detail\/?$/.test(path)) return 'marketing-discount-detail';
     if (/\/shopee\/marketing\/discount\/data\/?$/.test(path)) return 'marketing-discount-data';
+    if (/\/shopee\/marketing\/add-on\/orders\/?$/.test(path)) return 'marketing-addon-orders';
+    if (/\/shopee\/marketing\/bundle\/orders\/?$/.test(path)) return 'marketing-bundle-orders';
+    if (/\/shopee\/marketing\/flash-sale\/create\/?$/.test(path)) return 'marketing-shop-flash-sale-create';
+    if (/\/shopee\/marketing\/flash-sale\/?$/.test(path)) return 'marketing-shop-flash-sale';
     if (/\/shopee\/marketing\/discount\/?$/.test(path)) return 'marketing-discount';
     if (/\/shopee\/finance\/income\/?$/.test(path)) return 'my-income';
     if (/\/shopee\/finance\/balance\/?$/.test(path)) return 'my-balance';
@@ -155,6 +172,10 @@ export default function ShopeePage({ run, currentUser, onBackToSetup, readOnly =
     if (view === 'marketing-discount-create') return `${base}/marketing/discount/create?type=discount`;
     if (view === 'marketing-discount-detail') return `${base}/marketing/discount/detail`;
     if (view === 'marketing-discount-data') return `${base}/marketing/discount/data`;
+    if (view === 'marketing-addon-orders') return `${base}/marketing/add-on/orders`;
+    if (view === 'marketing-bundle-orders') return `${base}/marketing/bundle/orders`;
+    if (view === 'marketing-shop-flash-sale') return `${base}/marketing/flash-sale`;
+    if (view === 'marketing-shop-flash-sale-create') return `${base}/marketing/flash-sale/create`;
     if (view === 'my-income') return `${base}/finance/income`;
     if (view === 'my-balance') return `${base}/finance/balance`;
     if (view === 'bank-accounts') return `${base}/finance/bank-accounts`;
@@ -195,7 +216,7 @@ export default function ShopeePage({ run, currentUser, onBackToSetup, readOnly =
 
   useEffect(() => {
     if (!readOnly) return;
-    const allowed = new Set(['dashboard', 'my-orders', 'my-products', 'new-product', 'my-income', 'my-balance', 'bank-accounts', 'marketing-centre', 'marketing-discount', 'marketing-discount-create', 'marketing-discount-detail', 'marketing-discount-data']);
+    const allowed = new Set(['dashboard', 'my-orders', 'my-products', 'new-product', 'my-income', 'my-balance', 'bank-accounts', 'marketing-centre', 'marketing-discount', 'marketing-discount-create', 'marketing-discount-detail', 'marketing-discount-data', 'marketing-addon-orders', 'marketing-bundle-orders', 'marketing-shop-flash-sale', 'marketing-shop-flash-sale-create']);
     if (!allowed.has(activeView)) {
       setActiveView('my-orders');
       const nextPath = withHistoryRunId(buildShopeePath('my-orders'));
@@ -268,7 +289,7 @@ export default function ShopeePage({ run, currentUser, onBackToSetup, readOnly =
 
   const handleSelectView = (view: ShopeeView, listingId?: number | null) => {
     if (readOnly) {
-      const allowed = new Set(['dashboard', 'my-orders', 'my-products', 'new-product', 'my-income', 'my-balance', 'bank-accounts', 'marketing-centre', 'marketing-discount', 'marketing-discount-create', 'marketing-discount-detail', 'marketing-discount-data']);
+      const allowed = new Set(['dashboard', 'my-orders', 'my-products', 'new-product', 'my-income', 'my-balance', 'bank-accounts', 'marketing-centre', 'marketing-discount', 'marketing-discount-create', 'marketing-discount-detail', 'marketing-discount-data', 'marketing-addon-orders', 'marketing-bundle-orders', 'marketing-shop-flash-sale', 'marketing-shop-flash-sale-create']);
       if (!allowed.has(view)) {
         alert(HISTORY_READONLY_DETAIL);
         return;
@@ -383,7 +404,7 @@ export default function ShopeePage({ run, currentUser, onBackToSetup, readOnly =
             </div>
           )}
           <div className="flex min-w-0 flex-1 overflow-hidden">
-            {activeView !== 'new-product' && activeView !== 'marketing-discount-create' && activeView !== 'marketing-discount-detail' && activeView !== 'marketing-discount-data' && !activeOrderId && (
+            {activeView !== 'new-product' && activeView !== 'marketing-discount-create' && activeView !== 'marketing-discount-detail' && activeView !== 'marketing-discount-data' && activeView !== 'marketing-addon-orders' && activeView !== 'marketing-bundle-orders' && activeView !== 'marketing-shop-flash-sale-create' && !activeOrderId && (
               <Sidebar activeView={activeView} onSelectView={handleSelectView} />
             )}
             {activeView === 'my-orders' ? (
@@ -419,6 +440,8 @@ export default function ShopeePage({ run, currentUser, onBackToSetup, readOnly =
             ) : activeView === 'marketing-discount-create' ? (
               marketingCreateType === 'bundle' ? (
                 <BundleCreateView runId={run?.id ?? null} readOnly={readOnly} onBackToDiscount={() => handleSelectView('marketing-discount')} />
+              ) : marketingCreateType === 'add_on' ? (
+                <AddOnDealCreateView runId={run?.id ?? null} readOnly={readOnly} onBackToDiscount={() => handleSelectView('marketing-discount')} />
               ) : (
                 <DiscountCreateView runId={run?.id ?? null} readOnly={readOnly} onBackToDiscount={() => handleSelectView('marketing-discount')} />
               )
@@ -438,6 +461,21 @@ export default function ShopeePage({ run, currentUser, onBackToSetup, readOnly =
                 readOnly={readOnly}
                 onBackToDiscount={() => handleSelectView('marketing-discount')}
               />
+            ) : activeView === 'marketing-addon-orders' ? (
+              <AddOnDealOrdersView
+                runId={run?.id ?? null}
+                campaignId={activeDiscountCampaignId}
+                onBackToDiscount={() => handleSelectView('marketing-discount')}
+              />
+            ) : activeView === 'marketing-bundle-orders' ? (
+              <BundleOrdersView
+                runId={run?.id ?? null}
+                campaignId={activeDiscountCampaignId}
+              />
+            ) : activeView === 'marketing-shop-flash-sale-create' ? (
+              <ShopFlashSaleCreateView runId={run?.id ?? null} readOnly={readOnly} onBackToFlashSale={() => handleSelectView('marketing-shop-flash-sale')} />
+            ) : activeView === 'marketing-shop-flash-sale' ? (
+              <ShopFlashSaleView runId={run?.id ?? null} readOnly={readOnly} onCreate={() => handleSelectView('marketing-shop-flash-sale-create')} />
             ) : activeView === 'marketing-discount' ? (
               <MarketingDiscountView runId={run?.id ?? null} publicId={currentUser?.public_id ?? ''} readOnly={readOnly} />
             ) : activeView === 'marketing-centre' ? (

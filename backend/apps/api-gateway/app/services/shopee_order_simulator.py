@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.models import (
     InventoryStockMovement,
+    ShopeeAddonCampaign,
     ShopeeDiscountCampaign,
     ShopeeListing,
     ShopeeListingVariant,
@@ -184,6 +185,59 @@ def _safe_bundle_tiers(raw: Any) -> list[dict[str, Any]]:
     return sorted(tiers, key=lambda row: row["buy_quantity"])
 
 
+def _load_ongoing_addon_map(db: Session, *, run_id: int, user_id: int, tick_time: datetime) -> dict[tuple[int, int | None], list[dict[str, Any]]]:
+    campaigns = (
+        db.query(ShopeeAddonCampaign)
+        .options(selectinload(ShopeeAddonCampaign.main_items), selectinload(ShopeeAddonCampaign.reward_items))
+        .filter(
+            ShopeeAddonCampaign.run_id == run_id,
+            ShopeeAddonCampaign.user_id == user_id,
+            ShopeeAddonCampaign.campaign_status.in_(("ongoing", "upcoming")),
+            ShopeeAddonCampaign.start_at <= tick_time,
+            ShopeeAddonCampaign.end_at >= tick_time,
+        )
+        .all()
+    )
+    addon_map: dict[tuple[int, int | None], list[dict[str, Any]]] = {}
+    for campaign in campaigns:
+        reward_items = [
+            {
+                "listing_id": int(item.listing_id or 0),
+                "variant_id": int(item.variant_id) if item.variant_id is not None else None,
+                "product_id": int(item.product_id) if item.product_id is not None else None,
+                "product_name": item.product_name_snapshot,
+                "variant_name": item.variant_name_snapshot or "",
+                "image_url": item.image_url_snapshot,
+                "original_price": max(1.0, float(item.original_price_snapshot or 0)),
+                "addon_price": float(item.addon_price) if item.addon_price is not None else None,
+                "reward_qty": max(1, int(item.reward_qty or 1)),
+                "stock_snapshot": max(0, int(item.stock_snapshot or 0)),
+                "sort_order": int(item.sort_order or 0),
+            }
+            for item in sorted(campaign.reward_items or [], key=lambda row: (row.sort_order, row.id))
+            if int(item.listing_id or 0) > 0 and max(0, int(item.stock_snapshot or 0)) > 0
+        ]
+        if not reward_items:
+            continue
+        campaign_payload = {
+            "campaign_id": int(campaign.id),
+            "campaign_name": campaign.campaign_name,
+            "campaign_type": campaign.promotion_type,
+            "promotion_type": campaign.promotion_type,
+            "addon_purchase_limit": int(campaign.addon_purchase_limit or 1),
+            "gift_min_spend": float(campaign.gift_min_spend or 0),
+            "reward_items": reward_items,
+        }
+        for main_item in sorted(campaign.main_items or [], key=lambda row: (row.sort_order, row.id)):
+            listing_id = int(main_item.listing_id or 0)
+            if listing_id <= 0:
+                continue
+            key = (listing_id, int(main_item.variant_id) if main_item.variant_id is not None else None)
+            addon_map.setdefault(key, []).append(campaign_payload)
+    return addon_map
+
+
+
 def _load_ongoing_bundle_map(db: Session, *, run_id: int, user_id: int, tick_time: datetime) -> dict[tuple[int, int | None], dict[str, Any]]:
     campaigns = (
         db.query(ShopeeDiscountCampaign)
@@ -270,6 +324,174 @@ def _resolve_effective_price(
     if not discount:
         return base_price, None
     return max(1, int(discount["final_price"])), discount
+
+
+def _matching_addon_campaigns(
+    addon_map: dict[tuple[int, int | None], list[dict[str, Any]]],
+    *,
+    listing_id: int,
+    variant_id: int | None,
+    promotion_type: str,
+) -> list[dict[str, Any]]:
+    return [
+        campaign
+        for campaign in (
+            list(addon_map.get((listing_id, variant_id), []))
+            + ([] if variant_id is None else list(addon_map.get((listing_id, None), [])))
+        )
+        if str(campaign.get("promotion_type") or "") == promotion_type
+    ]
+
+
+
+def _resolve_addon_attractiveness(
+    campaign: dict[str, Any],
+    *,
+    main_unit_price: float,
+    base_order_amount: float,
+    buyer_budget: float,
+    buyer_price_sensitivity: float,
+    buyer_impulse_level: float,
+) -> dict[str, Any] | None:
+    best: dict[str, Any] | None = None
+    best_score = -1.0
+    for item in list(campaign.get("reward_items") or []):
+        addon_price = item.get("addon_price")
+        if addon_price is None or float(addon_price) <= 0:
+            continue
+        original_price = max(1.0, float(item.get("original_price") or 0))
+        addon_price = float(addon_price)
+        if addon_price >= original_price:
+            continue
+        savings_rate = _clamp((original_price - addon_price) / original_price, 0.0, 0.95)
+        stock_score = _clamp(float(item.get("stock_snapshot") or 0) / 30.0, 0.0, 1.0)
+        item_score = (
+            savings_rate * 0.45
+            + stock_score * 0.15
+            + buyer_price_sensitivity * savings_rate * 0.20
+            + buyer_impulse_level * 0.20
+        )
+        if item_score > best_score:
+            best_score = item_score
+            best = {**item, "savings_rate": savings_rate, "item_score": item_score}
+    if not best:
+        return None
+
+    addon_price = float(best["addon_price"])
+    relative_price_factor = _clamp(float(main_unit_price) / max(addon_price, 0.01), 0.40, 1.60)
+    budget_factor = _clamp(float(buyer_budget) / max(float(base_order_amount) + addon_price, 1.0), 0.45, 1.0)
+    savings_rate = float(best["savings_rate"])
+    attractiveness = _clamp(
+        0.08
+        + savings_rate * (0.45 + buyer_price_sensitivity * 0.35)
+        + buyer_impulse_level * 0.10
+        + (relative_price_factor - 1.0) * 0.04,
+        0.0,
+        0.55,
+    ) * budget_factor
+    return {
+        "campaign": campaign,
+        "reward_item": best,
+        "addon_attractiveness": attractiveness,
+        "addon_order_bonus": _clamp(attractiveness * 0.08, 0.0, 0.04),
+        "addon_attach_prob": attractiveness,
+        "savings_rate": savings_rate,
+    }
+
+
+
+def _resolve_gift_bonus(
+    campaign: dict[str, Any],
+    *,
+    base_order_amount: float,
+    buyer_budget: float,
+    buyer_price_sensitivity: float,
+    buyer_impulse_level: float,
+) -> dict[str, Any] | None:
+    threshold = float(campaign.get("gift_min_spend") or 0)
+    if threshold <= 0:
+        return None
+    reward_items = list(campaign.get("reward_items") or [])
+    gift_item = max(reward_items, key=lambda item: float(item.get("original_price") or 0), default=None)
+    if not gift_item:
+        return None
+    shortfall = max(threshold - float(base_order_amount), 0.0)
+    threshold_factor = 1.0 if shortfall <= 0 else _clamp(1.0 - shortfall / max(threshold, 0.01), 0.0, 1.0)
+    gift_value_rate = _clamp(float(gift_item.get("original_price") or 0) / max(float(base_order_amount), 1.0), 0.0, 0.50)
+    budget_factor = _clamp(float(buyer_budget) / max(threshold, float(base_order_amount), 1.0), 0.45, 1.0)
+    gift_order_bonus = _clamp(
+        threshold_factor * 0.04
+        + gift_value_rate * (0.08 + buyer_price_sensitivity * 0.04)
+        + buyer_impulse_level * 0.03,
+        0.0,
+        0.08,
+    ) * budget_factor
+    return {
+        "campaign": campaign,
+        "gift_item": gift_item,
+        "gift_order_bonus": gift_order_bonus,
+        "gift_threshold_shortfall": shortfall,
+        "gift_value_rate": gift_value_rate,
+    }
+
+
+
+def _resolve_listing_line(
+    db: Session,
+    *,
+    run_id: int,
+    user_id: int,
+    item: dict[str, Any],
+    quantity: int,
+    unit_price: int,
+    line_role: str,
+    campaign: dict[str, Any],
+) -> dict[str, Any] | None:
+    listing = (
+        db.query(ShopeeListing)
+        .options(selectinload(ShopeeListing.variants))
+        .filter(
+            ShopeeListing.run_id == run_id,
+            ShopeeListing.user_id == user_id,
+            ShopeeListing.id == int(item.get("listing_id") or 0),
+            ShopeeListing.status == "live",
+        )
+        .first()
+    )
+    if not listing:
+        return None
+    variant: ShopeeListingVariant | None = None
+    item_variant_id = int(item["variant_id"]) if item.get("variant_id") is not None else None
+    if item_variant_id is not None:
+        variant = next((row for row in list(listing.variants or []) if int(row.id) == item_variant_id), None)
+        if not variant:
+            return None
+    else:
+        variant = _pick_variant(listing)
+    product_id = int(listing.product_id or item.get("product_id") or 0)
+    available_stock = get_lot_available_qty(db, run_id=run_id, product_id=product_id) if product_id > 0 else (
+        max(0, int(variant.stock or 0)) if variant else max(0, int(listing.stock_available or 0))
+    )
+    quantity = max(1, int(quantity or 1))
+    if available_stock < quantity:
+        return None
+    return {
+        "listing": listing,
+        "variant": variant,
+        "product_id": product_id if product_id > 0 else None,
+        "quantity": quantity,
+        "unit_price": max(0, int(unit_price)),
+        "shortfall_qty": 0,
+        "stock_consumed_planned": quantity,
+        "image_url": item.get("image_url") or (variant.image_url if variant and (variant.image_url or "").strip() else listing.cover_url),
+        "line_role": line_role,
+        "marketing_campaign_type": campaign.get("campaign_type"),
+        "marketing_campaign_id": campaign.get("campaign_id"),
+        "marketing_campaign_name_snapshot": campaign.get("campaign_name"),
+        "original_unit_price": float(item.get("original_price") or (variant.price if variant else listing.price) or 0),
+        "discounted_unit_price": float(unit_price),
+    }
+
 
 
 def _resolve_bundle_unit_price(*, bundle_type: str, original_price: float, tier: dict[str, Any]) -> float:
@@ -551,6 +773,7 @@ def simulate_orders_for_run(
     )
 
     discount_map = _load_ongoing_discount_map(db, run_id=run_id, user_id=user_id, tick_time=now)
+    addon_map = _load_ongoing_addon_map(db, run_id=run_id, user_id=user_id, tick_time=now)
     bundle_map = _load_ongoing_bundle_map(db, run_id=run_id, user_id=user_id, tick_time=now)
 
     skip_reasons: dict[str, int] = {}
@@ -878,6 +1101,57 @@ def simulate_orders_for_run(
             applied_campaign = bundle_hit
             bundle_applied = True
         order_prob = max(discount_order_prob, bundle_order_prob) if bundle_order_prob is not None and bundle_applied else discount_order_prob
+        buyer_budget = 30 + _clamp(float(buyer.purchase_power or 0.5), 0.0, 1.0) * 300
+        projected_quantity = max(1, int(quantity or min_qty))
+        projected_order_amount = float(unit_price * projected_quantity)
+        addon_decision: dict[str, Any] | None = None
+        gift_decision: dict[str, Any] | None = None
+        matching_gifts = _matching_addon_campaigns(
+            addon_map,
+            listing_id=int(best_listing.id),
+            variant_id=int(variant.id) if variant else None,
+            promotion_type="gift",
+        )
+        for gift_campaign in matching_gifts:
+            candidate_gift = _resolve_gift_bonus(
+                gift_campaign,
+                base_order_amount=projected_order_amount,
+                buyer_budget=buyer_budget,
+                buyer_price_sensitivity=float(buyer.price_sensitivity or 0.5),
+                buyer_impulse_level=impulse,
+            )
+            if candidate_gift and (
+                gift_decision is None
+                or float(candidate_gift["gift_order_bonus"]) > float(gift_decision["gift_order_bonus"])
+            ):
+                gift_decision = candidate_gift
+        if gift_decision and not bundle_applied:
+            order_prob = _clamp(order_prob + float(gift_decision["gift_order_bonus"]), order_prob, 0.92)
+
+        if not bundle_applied:
+            matching_addons = _matching_addon_campaigns(
+                addon_map,
+                listing_id=int(best_listing.id),
+                variant_id=int(variant.id) if variant else None,
+                promotion_type="add_on",
+            )
+            for addon_campaign in matching_addons:
+                candidate_addon = _resolve_addon_attractiveness(
+                    addon_campaign,
+                    main_unit_price=float(unit_price),
+                    base_order_amount=projected_order_amount,
+                    buyer_budget=buyer_budget,
+                    buyer_price_sensitivity=float(buyer.price_sensitivity or 0.5),
+                    buyer_impulse_level=impulse,
+                )
+                if candidate_addon and (
+                    addon_decision is None
+                    or float(candidate_addon["addon_attractiveness"]) > float(addon_decision["addon_attractiveness"])
+                ):
+                    addon_decision = candidate_addon
+            if addon_decision:
+                order_prob = _clamp(order_prob + float(addon_decision["addon_order_bonus"]), order_prob, 0.92)
+
         order_roll = rng.random()
         journey["selected_candidate"] = {
             "listing_id": best_listing.id,
@@ -904,6 +1178,13 @@ def simulate_orders_for_run(
             "no_discount_order_prob": round(no_discount_order_prob, 4),
             "discount_order_prob": round(discount_order_prob, 4),
             "bundle_order_prob": round(bundle_order_prob, 4) if bundle_order_prob is not None else None,
+            "addon_campaign_id": addon_decision["campaign"]["campaign_id"] if addon_decision else None,
+            "addon_order_bonus": round(float(addon_decision["addon_order_bonus"]), 4) if addon_decision else 0.0,
+            "addon_attach_prob": round(float(addon_decision["addon_attach_prob"]), 4) if addon_decision else 0.0,
+            "addon_savings_rate": round(float(addon_decision["savings_rate"]), 4) if addon_decision else 0.0,
+            "gift_campaign_id": gift_decision["campaign"]["campaign_id"] if gift_decision else None,
+            "gift_order_bonus": round(float(gift_decision["gift_order_bonus"]), 4) if gift_decision else 0.0,
+            "gift_threshold_shortfall": round(float(gift_decision["gift_threshold_shortfall"]), 2) if gift_decision else None,
             "score": round(bundle_score if bundle_applied and bundle_score is not None else best_score, 4),
         }
         journey["order_prob"] = round(order_prob, 4)
@@ -958,8 +1239,81 @@ def simulate_orders_for_run(
                     "shortfall_qty": shortfall_qty,
                     "stock_consumed_planned": max(0, quantity - shortfall_qty),
                     "image_url": variant.image_url if variant and (variant.image_url or "").strip() else best_listing.cover_url,
+                    "line_role": "main",
+                    "marketing_campaign_type": hit_discount["campaign_type"] if hit_discount else None,
+                    "marketing_campaign_id": hit_discount["campaign_id"] if hit_discount else None,
+                    "marketing_campaign_name_snapshot": hit_discount["campaign_name"] if hit_discount else None,
+                    "original_unit_price": float(original_unit_price),
+                    "discounted_unit_price": float(unit_price),
                 }
             ]
+
+        addon_applied = False
+        gift_applied = False
+        if addon_decision and not bundle_applied:
+            addon_roll = rng.random()
+            addon_decision["addon_roll"] = addon_roll
+            if addon_roll <= float(addon_decision["addon_attach_prob"]):
+                reward_item = dict(addon_decision["reward_item"])
+                addon_price = max(1, int(round(float(reward_item.get("addon_price") or 0))))
+                addon_budget = 30 + _clamp(float(buyer.purchase_power or 0.5), 0.0, 1.0) * 1000
+                max_addon_qty = min(
+                    max(1, int(addon_decision["campaign"].get("addon_purchase_limit") or 1)),
+                    max(0, int(reward_item.get("stock_snapshot") or 0)),
+                    int(max(0, addon_budget - sum(int(line["unit_price"]) * int(line["quantity"]) for line in order_lines)) // addon_price),
+                )
+                addon_qty = 1 if max_addon_qty >= 1 else 0
+                if addon_qty > 0 and max_addon_qty >= 2:
+                    extra_qty_prob = _clamp(float(addon_decision["addon_attach_prob"]) * 0.35, 0.0, 0.25)
+                    while addon_qty < max_addon_qty and rng.random() < extra_qty_prob:
+                        addon_qty += 1
+                        extra_qty_prob *= 0.55
+                if addon_qty > 0:
+                    addon_line = _resolve_listing_line(
+                        db,
+                        run_id=run_id,
+                        user_id=user_id,
+                        item=reward_item,
+                        quantity=addon_qty,
+                        unit_price=addon_price,
+                        line_role="add_on",
+                        campaign=addon_decision["campaign"],
+                    )
+                    if addon_line:
+                        order_lines.append(addon_line)
+                        addon_applied = True
+        if gift_decision:
+            order_amount_after_addon = int(sum(int(line["unit_price"]) * int(line["quantity"]) for line in order_lines))
+            if order_amount_after_addon >= float(gift_decision["campaign"].get("gift_min_spend") or 0):
+                gift_item = dict(gift_decision["gift_item"])
+                gift_line = _resolve_listing_line(
+                    db,
+                    run_id=run_id,
+                    user_id=user_id,
+                    item=gift_item,
+                    quantity=max(1, int(gift_item.get("reward_qty") or 1)),
+                    unit_price=0,
+                    line_role="gift",
+                    campaign=gift_decision["campaign"],
+                )
+                if gift_line:
+                    order_lines.append(gift_line)
+                    gift_applied = True
+
+        if bundle_applied and bundle_hit:
+            for line in order_lines:
+                line.setdefault("line_role", "bundle_component")
+                line.setdefault("marketing_campaign_type", bundle_hit["campaign_type"])
+                line.setdefault("marketing_campaign_id", bundle_hit["campaign_id"])
+                line.setdefault("marketing_campaign_name_snapshot", bundle_hit["campaign_name"])
+                line.setdefault("original_unit_price", float(line["unit_price"]))
+                line.setdefault("discounted_unit_price", float(line["unit_price"]))
+
+        if not applied_campaign:
+            if addon_applied and addon_decision:
+                applied_campaign = addon_decision["campaign"]
+            elif gift_applied and gift_decision:
+                applied_campaign = gift_decision["campaign"]
 
         payment = int(sum(int(line["unit_price"]) * int(line["quantity"]) for line in order_lines))
         total_shortfall_qty = int(sum(max(0, int(line["shortfall_qty"])) for line in order_lines))
@@ -1032,6 +1386,12 @@ def simulate_orders_for_run(
                     image_url=line["image_url"],
                     stock_fulfillment_status="backorder" if int(line["shortfall_qty"]) > 0 else "in_stock",
                     backorder_qty=int(line["shortfall_qty"]),
+                    marketing_campaign_type=line.get("marketing_campaign_type"),
+                    marketing_campaign_id=int(line["marketing_campaign_id"]) if line.get("marketing_campaign_id") is not None else None,
+                    marketing_campaign_name_snapshot=line.get("marketing_campaign_name_snapshot"),
+                    line_role=str(line.get("line_role") or "main"),
+                    original_unit_price=float(line.get("original_unit_price") or line["unit_price"] or 0),
+                    discounted_unit_price=float(line.get("discounted_unit_price") or line["unit_price"] or 0),
                 )
             )
             db.add(
@@ -1093,6 +1453,28 @@ def simulate_orders_for_run(
             "no_discount_order_prob": round(no_discount_order_prob, 4),
             "discount_order_prob": round(discount_order_prob, 4),
             "bundle_order_prob": round(bundle_order_prob, 4) if bundle_order_prob is not None else None,
+            "addon_campaign_id": addon_decision["campaign"]["campaign_id"] if addon_decision else None,
+            "addon_applied": addon_applied,
+            "addon_attach_prob": round(float(addon_decision["addon_attach_prob"]), 4) if addon_decision else 0.0,
+            "addon_savings_rate": round(float(addon_decision["savings_rate"]), 4) if addon_decision else 0.0,
+            "gift_campaign_id": gift_decision["campaign"]["campaign_id"] if gift_decision else None,
+            "gift_applied": gift_applied,
+            "gift_order_bonus": round(float(gift_decision["gift_order_bonus"]), 4) if gift_decision else 0.0,
+            "gift_threshold_shortfall": round(float(gift_decision["gift_threshold_shortfall"]), 2) if gift_decision else None,
+            "addon_gift_items": [
+                {
+                    "listing_id": int(line["listing"].id),
+                    "variant_id": int(line["variant"].id) if line["variant"] else None,
+                    "product_title": line["listing"].title,
+                    "variant_name": line["variant"].option_value if line["variant"] else "",
+                    "quantity": int(line["quantity"]),
+                    "unit_price": int(line["unit_price"]),
+                    "line_role": str(line.get("line_role") or "main"),
+                    "marketing_campaign_id": line.get("marketing_campaign_id"),
+                }
+                for line in order_lines
+                if str(line.get("line_role") or "") in {"add_on", "gift"}
+            ],
             "stock_fulfillment_status": "backorder" if total_shortfall_qty > 0 else "in_stock",
             "backorder_qty": total_shortfall_qty,
         }

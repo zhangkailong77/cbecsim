@@ -261,6 +261,7 @@ export default function MarketingCentreView({ runId, readOnly = false }: Marketi
     const implementedRoutePatterns = [
       /\/shopee\/marketing-centre\/?$/,
       /\/shopee\/marketing\/discount\/?$/,
+      /\/shopee\/marketing\/flash-sale\/?$/,
     ];
     if (!implementedRoutePatterns.some((pattern) => pattern.test(targetRoute))) {
       window.alert('该营销工具主页已预留，具体功能页将在后续阶段继续接入。');

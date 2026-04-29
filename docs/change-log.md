@@ -1,6 +1,159 @@
 # Change Log
 
-最后更新：2026-04-27（优化 Shopee 套餐订单组合图片展示）
+最后更新：2026-04-29（限时抢购已选商品变体编辑）
+
+## 2026-04-29
+
+### 修复
+- 完善 Shopee 限时抢购已选商品变体编辑。
+  - 涉及文件：`frontend/src/modules/shopee/views/ShopFlashSaleCreateView.tsx`、`backend/apps/api-gateway/app/api/routes/shopee.py`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：添加主商品后按后端返回的 `variations` 展开全部变体到已选商品区域；在保留现有布局样式的前提下，将折后价和活动库存改为受控可编辑输入，折扣标签随折后价自动重算；启用/停用开关写入变体状态，正式创建仅提交启用变体。
+  - 验证结果：`python -m py_compile backend/apps/api-gateway/app/api/routes/shopee.py` 通过；`npm run build --prefix frontend` 通过（Vite 仅提示既有 chunk 体积 warning）。
+  - 影响范围：仅影响 `/shopee/marketing/flash-sale/create` 已选商品配置区的变体展示、编辑与提交口径；不改变添加商品弹窗布局、商品条件类目和时间段选择逻辑。
+
+- 修正 Shopee 限时抢购添加商品弹窗价格区间展示。
+  - 涉及文件：`frontend/src/modules/shopee/views/ShopFlashSaleCreateView.tsx`、`backend/apps/api-gateway/app/api/routes/shopee.py`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：限时抢购添加商品弹窗价格列改为优先展示后端返回的 `price_range_label`；后端主商品候选行按所有可售变体价格计算 `RM 最低价 - RM 最高价`，同价时显示单个价格。
+  - 影响范围：仅影响 `/shopee/marketing/flash-sale/create` 添加商品弹窗价格列展示；不改变活动价格默认值、库存、商品选择和创建提交逻辑。
+
+- 修正 Shopee 限时抢购添加商品弹窗商品 ID 展示。
+  - 涉及文件：`frontend/src/modules/shopee/views/ShopFlashSaleCreateView.tsx`、`backend/apps/api-gateway/app/api/routes/shopee.py`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：添加商品弹窗商品名称下方副标题从“单规格商品 / SKU”改为 `ID: {listing_id}`；后端主商品候选行不再回填首个变体 SKU，避免主商品行继续展示变体编码。
+  - 影响范围：仅影响 `/shopee/marketing/flash-sale/create` 添加商品弹窗商品副标题展示；不改变候选商品筛选、主图、价格、库存和创建提交逻辑。
+
+- 修正 Shopee 限时抢购添加商品弹窗商品展示口径。
+  - 涉及文件：`backend/apps/api-gateway/app/api/routes/shopee.py`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：限时抢购添加商品弹窗候选接口不再按每个变体展开多行，改为每个上架商品只返回一行主商品；商品图片固定使用 `shopee_listings.cover_url` 主图，库存汇总可售变体库存，价格取可售变体最低价。
+  - 影响范围：仅影响 `/shopee/marketing/flash-sale/create` 添加商品弹窗候选商品展示；不改变已选商品区域、时间段、商品条件和正式创建接口。
+
+- 修正 Shopee 限时抢购创建页商品条件类目来源。
+  - 涉及文件：`backend/apps/api-gateway/app/api/routes/shopee.py`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：`/shopee/marketing/flash-sale/create` 商品条件 Tab 改为按当前对局库存 `inventory_lots` 关联选品表 `market_products.category` 生成；候选商品筛选与商品行类目同步使用选品表类目，避免继续显示限时抢购默认规则类目或 Shopee 叶子类目。
+  - 本地数据复核：最新对局 `run_id=5` 库存商品对应选品类目为 `美妆个护`，因此创建页商品条件应展示 `美妆个护`。
+  - 影响范围：仅影响限时抢购创建页商品条件类目和添加商品弹窗按类目筛选口径；不改变限时抢购活动时间段、创建提交和订单模拟逻辑。
+
+### 新增
+- 调整 Shopee 限时抢购创建页活动时间段日期选择。
+  - 涉及文件：`frontend/src/modules/shopee/views/ShopFlashSaleCreateView.tsx`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：将活动时间段弹窗左侧日历从固定 2026 年 4 月 29/30 日改为按后端返回的游戏内日期当天初始化展示，不使用真实世界系统日期兜底；日期格子可点击选择，选择后重新加载对应日期的限时抢购时间段；选择完成后主按钮展示“年月日 + 时间段”，并保持原有弹窗视觉样式；商品条件类目改为只返回当前对局 live 且有库存/价格的商品命中类目。
+  - 影响范围：影响 `/shopee/marketing/flash-sale/create` 活动时间段日期选择、按钮展示与商品条件类目展示；后端限时抢购 slots 将前端日期按游戏日期解析为真实 tick 后判断可选状态和创建活动。
+
+- 调整 Shopee 限时抢购创建页添加商品弹窗。
+  - 涉及文件：`frontend/src/modules/shopee/views/ShopFlashSaleCreateView.tsx`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：将限时抢购创建页“添加商品”从直接加入首个候选商品改为参考 `/shopee/marketing/discount/create?type=discount` 的选择商品弹窗；接入分类下拉、搜索字段、关键字搜索、重置、仅显示可参与商品、多选、全选、加载态、空状态和上传商品列表占位，确认后批量加入已选限时抢购商品。
+  - 验证结果：`ShopFlashSaleCreateView.tsx` LSP diagnostics 无报错；`npm run build --prefix frontend` 通过（Vite 仅提示既有 chunk 体积 warning）。
+  - 影响范围：仅影响 `/shopee/marketing/flash-sale/create` 添加商品交互；后端接口和已创建活动列表口径不变。
+
+- 打通 Shopee 我的店铺限时抢购前后端数据库 Redis。
+  - 涉及文件：`backend/apps/api-gateway/app/models.py`、`backend/apps/api-gateway/app/db.py`、`backend/apps/api-gateway/app/api/routes/shopee.py`、`frontend/src/modules/shopee/ShopeePage.tsx`、`frontend/src/modules/shopee/views/ShopFlashSaleView.tsx`、`frontend/src/modules/shopee/views/ShopFlashSaleCreateView.tsx`、`cbec_sim.sql`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：新增限时抢购活动/商品、草稿/草稿商品、时间段配置、类目规则配置表模型与注释；初始化默认 4 个时间段和 8 个类目条件；新增 bootstrap、slots、category-rules、eligible-products、drafts、campaigns、detail、toggle 接口；接入 Redis 缓存、缓存失效与限流；列表页和创建页在保留现有样式的前提下接入真实接口数据与正式创建提交。
+  - 验证结果：`python -m py_compile backend/apps/api-gateway/app/models.py backend/apps/api-gateway/app/db.py backend/apps/api-gateway/app/api/routes/shopee.py` 通过；`npm run build --prefix frontend` 通过（Vite 仅提示既有 chunk 体积 warning）。
+  - 影响范围：`/shopee/marketing/flash-sale` 可读取真实限时抢购活动列表；`/shopee/marketing/flash-sale/create` 可读取游戏时间、时间段、商品条件、候选商品并创建正式活动；历史回溯模式保持只读。
+
+- 新增 Shopee 我的店铺限时抢购前后端数据库 Redis 打通设计文档。
+  - 涉及文件：`docs/设计文档/32-Shopee我的店铺限时抢购前后端数据库Redis打通设计.md`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：设计 `/shopee/marketing/flash-sale/create` 创建页与 `/shopee/marketing/flash-sale` 列表页的数据链路，覆盖后端接口、数据库表、Redis Key、缓存失效、商品准入、时间段规则、订单模拟预留口径和验收标准。
+  - 影响范围：仅新增设计文档与进度记录；尚未改动后端、数据库、Redis 或前端接口接入代码。
+
+- 新增 Shopee 我的店铺限时抢购创建空白页。
+  - 涉及文件：`frontend/src/modules/shopee/views/ShopFlashSaleCreateView.tsx`、`frontend/src/modules/shopee/views/ShopFlashSaleView.tsx`、`frontend/src/modules/shopee/ShopeePage.tsx`、`frontend/src/modules/shopee/components/Header.tsx`、`frontend/src/modules/shopee/components/Sidebar.tsx`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：新增 `/shopee/marketing/flash-sale/create` 前端页面，布局参考创建单品折扣页面，预留基础信息、活动时间、商品配置、保存草稿与确认按钮；限时抢购列表页“创建”按钮已跳转到该页面，面包屑显示“营销中心 / 我的店铺限时抢购 / 创建限时抢购”，并与单品折扣创建页一致隐藏左侧菜单栏。
+  - 影响范围：仅新增限时抢购创建空白页面与前端导航入口；暂不改变后端接口、订单模拟、营销活动数据或现有折扣创建流程。
+
+- 新增 Shopee 我的店铺限时抢购空白页。
+  - 涉及文件：`frontend/src/modules/shopee/views/ShopFlashSaleView.tsx`、`frontend/src/modules/shopee/ShopeePage.tsx`、`frontend/src/modules/shopee/views/MarketingCentreView.tsx`、`frontend/src/modules/shopee/components/Header.tsx`、`frontend/src/modules/shopee/components/Sidebar.tsx`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：新增 `/shopee/marketing/flash-sale` 前端页面，布局参考营销中心折扣页，预留创建卡片、状态 Tab、表现指标、搜索区与活动列表空状态；营销中心卡片、侧边栏入口和顶部面包屑均已接入。
+  - 影响范围：仅新增我的店铺限时抢购空白页面与导航入口；暂不改变后端接口、订单模拟、营销活动数据或现有折扣页面行为。
+
+### 修复
+- 调整 Shopee 我的订单各 Tab 默认按最新订单优先展示。
+  - 涉及文件：`backend/apps/api-gateway/app/api/routes/shopee.py`、`frontend/src/modules/shopee/views/MyOrdersView.tsx`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：订单列表接口默认排序从创建时间升序改为降序；待出货 Tab 不再默认追加 `ship_by_date_asc`，避免切换 Tab 时仍按最早发货时间优先。
+  - 影响范围：仅影响 Shopee 我的订单页面默认展示顺序；不改变订单状态、订单金额、筛选条件、分页大小或订单生成逻辑。
+- 修复 Shopee 加价购/满额赠活动订单页显示无关订单明细的问题。
+  - 涉及文件：`backend/apps/api-gateway/app/api/routes/shopee.py`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：活动订单响应在已按活动筛选订单的基础上，进一步将订单明细限制为当前活动的主商品与对应加价购/赠品商品，过滤同订单内无关普通商品、其他加价购活动或其他营销活动明细。
+  - 影响范围：仅影响 `/shopee/marketing/add-on/orders?campaign_id=...` 页面展示的订单明细与小计口径；不改变订单模拟、订单落库和活动匹配逻辑。
+- 修正 Shopee 我的订单买家实付列加价购/满额赠活动标签。
+  - 涉及文件：`frontend/src/modules/shopee/views/MyOrdersView.tsx`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：我的订单买家实付列营销活动名称前缀按 `marketing_campaign_type` 区分展示，`add_on` 显示“加价购”，`gift` 显示“满额赠”，`bundle` 继续显示“套餐优惠”，默认单品折扣仍显示“单品折扣”。
+  - 影响范围：仅影响 Shopee 我的订单列表中营销活动标签文案，不改变订单金额、归因和后端数据。
+- 修复 Shopee 加价购订单模拟中加购商品长期不落单的问题。
+  - 涉及文件：`backend/apps/api-gateway/app/services/shopee_order_simulator.py`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：仅在加价购附加商品数量判断中使用专项预算 `30 + purchase_power * 1000`，保留普通订单、套餐优惠、单品折扣与满额赠的全局买家预算口径不变，避免主订单金额占用原预算后加购商品始终无法通过预算校验。
+  - 验证结果：本地 Docker MySQL `run_id=6` / 活动“加价购功能测试0429”用正确 `user_id=3` 连续受控模拟后生成 `line_role='add_on'` 订单明细，`marketing_campaign_type='add_on'`、`marketing_campaign_id=3`。
+  - 影响范围：仅影响 Shopee 加价购订单模拟中附加加购商品能否落单；不改变活动匹配、加价购吸引力概率、普通订单下单概率、满额赠与套餐优惠逻辑。
+
+## 2026-04-28
+
+### 修复
+- 修复 Shopee 套餐优惠活动订单页分页器点击无反应的问题。
+  - 涉及文件：`frontend/src/modules/shopee/views/BundleOrdersView.tsx`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：在保留现有分页器样式与布局的前提下，绑定页码状态、上一页/下一页、页码点击、输入页码确认与 Enter 跳转；订单概览和数据详情按当前页本地切片展示。
+  - 影响范围：仅影响 `/shopee/marketing/bundle/orders?campaign_id=...` 页面分页交互，不改变后端接口与数据统计口径。
+- 修复 Shopee 套餐优惠活动订单页不同活动显示相同订单的问题。
+  - 涉及文件：`backend/apps/api-gateway/app/api/routes/shopee.py`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：套餐优惠订单查询条件收紧为订单头 `marketing_campaign_type=bundle` 且 `marketing_campaign_id` 等于当前活动 ID，或订单明细中存在相同套餐活动归因；避免仅按 `marketing_campaign_type=bundle` 查出同一对局下全部套餐订单。
+  - 影响范围：`/shopee/marketing/bundle/orders?campaign_id=...` 会按当前套餐优惠活动隔离订单、指标卡和数据详情；不改变前端样式、布局。
+- 修复 Shopee 套餐优惠活动订单页接口 500。
+  - 涉及文件：`backend/apps/api-gateway/app/api/routes/shopee.py`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：套餐优惠订单响应构建改为调用现有 `_resolve_discount_campaign_status(campaign, current_tick=current_tick)` 状态解析函数，避免引用不存在的 `_discount_campaign_effective_status` 导致接口报错。
+  - 影响范围：修复 `/shopee/runs/{run_id}/marketing/bundle/campaigns/{campaign_id}/orders` 订单页数据接口加载失败；不改变前端样式、布局和统计口径。
+
+### 新增
+- 打通 Shopee 套餐优惠活动订单页数据链路。
+  - 涉及文件：`frontend/src/modules/shopee/views/BundleOrdersView.tsx`、`frontend/src/modules/shopee/ShopeePage.tsx`、`frontend/src/modules/shopee/views/MarketingDiscountView.tsx`、`frontend/src/modules/shopee/components/Header.tsx`、`frontend/src/modules/shopee/components/Sidebar.tsx`、`backend/apps/api-gateway/app/api/routes/shopee.py`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：新增 `BundleOrdersView` 与 `/shopee/marketing/bundle/orders?campaign_id=...` 前端路由；套餐优惠活动列表操作列按官方口径显示“编辑 / 复制 / 详情 / 订单”；订单页保留现有前端样式，改为调用后端活动订单接口加载基础信息、订单概览和数据详情；后端按 `marketing_campaign_type=bundle` 与活动 ID 从 `shopee_orders`、`shopee_order_items` 查询套餐订单，并接入 Redis 订单页缓存和订单缓存失效联动。
+  - 影响范围：套餐优惠活动列表进入独立活动订单页并展示真实订单与数据详情；加价购/满额赠订单页和单品折扣数据页保持原有入口。
+
+### 新增
+- 打通 Shopee 加价购/满额赠活动订单页数据链路。
+  - 涉及文件：`frontend/src/modules/shopee/views/AddOnDealOrdersView.tsx`、`frontend/src/modules/shopee/ShopeePage.tsx`、`frontend/src/modules/shopee/views/MarketingDiscountView.tsx`、`frontend/src/modules/shopee/components/Header.tsx`、`frontend/src/modules/shopee/components/Sidebar.tsx`、`backend/apps/api-gateway/app/api/routes/shopee.py`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：新增 `AddOnDealOrdersView` 与 `/shopee/marketing/add-on/orders?campaign_id=...` 前端路由；营销活动列表中 `add_on/gift` 兼容活动的操作列由“数据/查看数据”改为“订单”；订单页保留现有前端样式，改为调用后端活动订单接口加载基础信息与订单明细；后端按加价购正式活动与 item 级营销归因从 `shopee_orders`、`shopee_order_items` 查询订单，并接入 Redis 订单页缓存和订单缓存失效联动。
+  - 影响范围：加价购/满额赠活动列表进入独立活动订单页并展示真实订单数据；单品折扣数据页继续使用原 `DiscountDataView`。
+
+### 新增
+- 新增 Shopee 营销活动列表操作列官方口径修正设计文档。
+  - 涉及文件：`docs/设计文档/31-Shopee营销活动列表操作列官方口径修正设计.md`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：根据官方截图整理 Bundle Deal 与 Add-on Deal Tab 的操作列差异：套餐优惠显示“编辑 / 复制 / 详情 / 订单”，加价购/满额赠显示“详情 / 复制 / 订单”；明确这两个 Tab 不展示“数据 / 查看数据”，Add-on Deal 不展示“编辑”，All Tab 按活动真实类型决定操作项。
+  - 影响范围：仅新增设计文档与进度台账，尚未改动前端列表操作列代码。
+
+### 修复
+- 修正 Shopee 满额赠数据页销售额统计口径。
+  - 涉及文件：`backend/apps/api-gateway/app/api/routes/shopee.py`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：满额赠数据页继续通过赠品明细识别命中订单，但指标卡销售额、趋势销售额和商品排行改为统计触发满额赠的主商品成交额；加价购仍按加购商品明细统计。
+  - 验证结果：本地库 `campaign_id=8` 复核结果为赠品明细销售额 0、主商品销售额 1880、数据页 analytics 销售额 1880；`python -m py_compile backend/apps/api-gateway/app/api/routes/shopee.py` 通过。
+  - 影响范围：仅影响满额赠活动数据页与导出统计口径；单品折扣、套餐优惠和加价购口径不变。
+
+### 新增
+- 实现 Shopee 加价购/满额赠详情页与数据页接入。
+  - 涉及文件：`backend/apps/api-gateway/app/api/routes/shopee.py`、`frontend/src/modules/shopee/views/DiscountDetailView.tsx`、`frontend/src/modules/shopee/views/DiscountDataView.tsx`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：折扣详情/数据接口在 `campaign_type=add_on` 时加载正式加价购/满额赠活动，详情页返回主商品与加购/赠品商品，数据页指标、趋势、排行与导出按 item 级加购/赠品归因统计；前端详情页和数据页改为兼容加价购/满额赠的中性促销文案与表头。
+  - 影响范围：折扣活动列表中加价购/满额赠的“详情”和“数据/查看数据”入口可进入真实页面；单品折扣与套餐优惠原有详情/数据口径保持不变。
+- 实现 Shopee 加价购/满额赠接入订单模拟首版。
+  - 涉及文件：`backend/apps/api-gateway/app/services/shopee_order_simulator.py`、`backend/apps/api-gateway/app/models.py`、`backend/apps/api-gateway/app/db.py`、`backend/apps/api-gateway/app/api/routes/shopee.py`、`cbec_sim.sql`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：订单模拟器新增有效加价购/满额赠活动加载、主商品匹配、加价购轻量下单概率加成、下单后加购商品追加、满额赠轻量概率加成与达标赠品追加；`shopee_order_items` 新增明细级营销归因、明细角色、原始单价与成交单价字段，并同步初始化补列、字段注释、索引和 SQL 快照；订单列表/详情响应返回 item 级营销字段。
+  - 影响范围：Shopee 自动订单模拟会在有效加价购/满额赠活动下生成加购商品或 0 元赠品明细，并预占对应库存；单品折扣和套餐优惠原有概率链路保持独立，套餐优惠默认不叠加加价购。
+- 新增 Shopee 加价购/满额赠接入订单模拟概率设计文档。
+  - 涉及文件：`docs/设计文档/30-Shopee加价购满额赠接入订单模拟概率设计.md`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：定义加价购与满额赠接入订单模拟的触发流程、活动加载、概率公式、营销叠加优先级、订单明细归因、库存处理、缓存失效与验收标准。
+  - 影响范围：仅新增设计文档与进度台账，尚未改动订单模拟业务代码。
+- 优化 Shopee 折扣活动列表中加价购/满额赠展示口径。
+  - 涉及文件：`backend/apps/api-gateway/app/api/routes/shopee.py`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：折扣列表接口对 `campaign_type=add_on` 的活动改为读取加价购正式活动的主商品与加购/赠品商品图片，返回给前端 `products` 多图展示，并保留超过 5 张时的 overflow 计数；活动类型标签改为按正式活动 `promotion_type` 显示，加价购显示“加价购”，满额赠显示“满额赠”。
+  - 影响范围：仅影响 `/shopee/marketing/discount` 活动列表中加价购/满额赠活动的商品图片与类型标签展示；单品折扣与套餐优惠列表仍沿用原有折扣活动商品图片来源。
+- 调整 Shopee 加价购创建页活动时间为可点击选择的日期时间选择器。
+  - 涉及文件：`frontend/src/modules/shopee/views/AddOnDealCreateView.tsx`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：活动时间开始/结束字段复用单品折扣创建页同款 `DateTimePicker`，支持点击弹出日期时间选择面板。
+  - 影响范围：仅影响加价购/满额赠创建页活动时间输入方式，其余页面结构、商品选择与提交流程不变。
+- 新增 Shopee 加价购后端与数据设计文档，并接入 Phase 1 后端、数据库与 Redis 实现。
+  - 涉及文件：`docs/设计文档/29-Shopee加价购后端与数据设计.md`、`backend/apps/api-gateway/app/models.py`、`backend/apps/api-gateway/app/db.py`、`backend/apps/api-gateway/app/api/routes/shopee.py`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：新增 `add_on/gift` 活动主表、主商品表、加购/赠品表、草稿表与字段注释；新增创建页 bootstrap、商品候选、草稿保存/详情、正式创建、活动详情接口；接入 Redis 缓存 key、TTL、失效与限流；正式创建时同步写入折扣活动兼容记录，便于折扣首页 Tab 和列表展示；前端创建页接入 bootstrap、基础字段状态、主商品候选、加购/赠品候选、已选商品状态、保存草稿与确认创建接口；主商品与加购/赠品添加商品入口复用单品折扣创建页同款居中弹窗样式。
+  - 影响范围：完成加价购/满额赠后端、数据库、Redis Phase 1 与前端商品选择/提交接口接线；不接入订单模拟和下单概率影响，保持当前加价购前端页面整体视觉风格不漂移。
+- 新增 Shopee 加价购创建空白页，并接入折扣页创建入口的 `type=add_on` 路由分支。
+  - 涉及文件：`frontend/src/modules/shopee/ShopeePage.tsx`、`frontend/src/modules/shopee/views/AddOnDealCreateView.tsx`、`docs/change-log.md`
+  - 修改内容：新增 `AddOnDealCreateView` 空白页面，保留返回折扣页入口与历史回溯只读提示；`ShopeePage` 在 `/shopee/marketing/discount/create?type=add_on` 下渲染该页面。
+  - 影响范围：仅影响加价购创建页前端占位展示；不新增后端接口、数据库字段或提交流程。
 
 ## 2026-04-27
 

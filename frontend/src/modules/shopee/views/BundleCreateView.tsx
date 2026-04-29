@@ -615,52 +615,42 @@ export default function BundleCreateView({ runId, readOnly = false, onBackToDisc
               </div>
             </div>
 
-{/* Phone Preview Column */}
-<div 
-  className="w-[280px] flex-shrink-0" 
-  style={{ 
-    marginTop: '-120px',
-    marginLeft: '100px' 
-  }} 
->
-  <div className="relative">
-    <div className="relative mx-auto h-[560px] w-[280px]">
-      
-      <div 
-        className="absolute z-10 overflow-hidden"
-        style={{
-          top: '38px',     
-          left: '18px',    
-          right: '18px',
-          bottom: '42px',
-          backgroundColor: '#fff',
-          borderRadius: '22px',
-        }}
-      >
-        <img 
-          src={homePreviewImage} 
-          alt="screenshot"
-          style={{ 
-            position: 'absolute',
-            top: '110px',
-            left: '16px',
-            width: '212px', 
-            height: '212px',
-            aspectRatio: '1/1', 
-            objectFit: 'cover', 
-            display: 'block'
-          }}
-        />
-      </div>
+            {/* Phone Preview Column */}
+            <div 
+              className="w-[280px] flex-shrink-0" 
+              style={{ 
+                marginTop: '-120px',
+                marginLeft: '100px' 
+              }} 
+            >
+              <div className="relative mx-auto h-[560px] w-[280px]">
+                
+                <div 
+                  className="absolute z-30"
+                  style={{
+                    top: '38px',     
+                    left: '18px',    
+                    right: '18px',
+                    bottom: '42px',
+                    borderRadius: '22px', 
+                  }}
+                >               
+                  <img 
+                    src="https://deo.shopeemobile.com/shopee/shopee-seller-live-sg/src/assets/preview/base_info_th.svg" 
+                    alt="ui-overlay"
+                    className="absolute bottom-25 left-0 w-full"
+                    style={{ height: 'auto' }}
+                  />
+                </div>
 
-      <img 
-        src="https://deo.shopeemobile.com/shopee/shopee-seller-live-sg/mmf_portal_seller_root_dir/static/modules/bundle-deal-v2/image/phone_bg.076ca95.png" 
-        className="absolute inset-0 h-full w-full object-contain z-20 pointer-events-none"
-        alt="phone frame"
-      />
-    </div>
-  </div>
-</div>
+                <img 
+                  src="https://deo.shopeemobile.com/shopee/shopee-seller-live-sg/mmf_portal_seller_root_dir/static/modules/bundle-deal-v2/image/phone_bg.076ca95.png" 
+                  className="absolute inset-0 z-20 h-full w-full object-contain pointer-events-none"
+                  alt="phone frame"
+                />
+
+              </div>
+            </div>
           </div>
         </section>
 
