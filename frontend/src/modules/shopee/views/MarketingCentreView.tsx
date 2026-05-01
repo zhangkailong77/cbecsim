@@ -6,11 +6,6 @@ import {
   Globe,
   MessageSquareHeart,
   Radio,
-  Store,
-  Ticket,
-  Truck,
-  UsersRound,
-  Video,
   ChevronUp,
   ExternalLink,
   Megaphone,
@@ -122,12 +117,12 @@ const eventStatusMap: Record<string, string> = {
 
 const iconMap: Record<string, ComponentType<{ size?: number; className?: string }>> = {
   'badge-percent': BadgePercent,
-  store: Store,
-  ticket: Ticket,
+  store: Megaphone,
+  ticket: Megaphone,
   'badge-dollar-sign': BadgeDollarSign,
-  'users-round': UsersRound,
-  truck: Truck,
-  video: Video,
+  'users-round': Megaphone,
+  truck: Megaphone,
+  video: Megaphone,
   globe: Globe,
   'message-square-heart': MessageSquareHeart,
   earth: Globe,
@@ -262,6 +257,8 @@ export default function MarketingCentreView({ runId, readOnly = false }: Marketi
       /\/shopee\/marketing-centre\/?$/,
       /\/shopee\/marketing\/discount\/?$/,
       /\/shopee\/marketing\/flash-sale\/?$/,
+      /\/shopee\/marketing\/shopee-ads\/?$/,
+      /\/shopee\/marketing\/vouchers\/?$/,
     ];
     if (!implementedRoutePatterns.some((pattern) => pattern.test(targetRoute))) {
       window.alert('该营销工具主页已预留，具体功能页将在后续阶段继续接入。');

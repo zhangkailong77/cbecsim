@@ -22,6 +22,10 @@ import AddOnDealOrdersView from './views/AddOnDealOrdersView';
 import BundleOrdersView from './views/BundleOrdersView';
 import ShopFlashSaleView from './views/ShopFlashSaleView';
 import ShopFlashSaleCreateView from './views/ShopFlashSaleCreateView';
+import ShopFlashSaleDetailView from './views/ShopFlashSaleDetailView';
+import ShopFlashSaleDataView from './views/ShopFlashSaleDataView';
+import ShopeeAdsView from './views/ShopeeAdsView';
+import ShopVoucherView from './views/ShopVoucherView';
 
 interface ShopeePageProps {
   run: {
@@ -75,7 +79,11 @@ type ShopeeView =
   | 'marketing-addon-orders'
   | 'marketing-bundle-orders'
   | 'marketing-shop-flash-sale'
-  | 'marketing-shop-flash-sale-create';
+  | 'marketing-shop-flash-sale-create'
+  | 'marketing-shop-flash-sale-detail'
+  | 'marketing-shop-flash-sale-data'
+  | 'marketing-shopee-ads'
+  | 'marketing-vouchers';
 
 type MarketingCreateType = 'discount' | 'bundle' | 'add_on';
 
@@ -99,7 +107,11 @@ export default function ShopeePage({ run, currentUser, onBackToSetup, readOnly =
     if (/\/shopee\/marketing\/add-on\/orders\/?$/.test(path)) return 'marketing-addon-orders';
     if (/\/shopee\/marketing\/bundle\/orders\/?$/.test(path)) return 'marketing-bundle-orders';
     if (/\/shopee\/marketing\/flash-sale\/create\/?$/.test(path)) return 'marketing-shop-flash-sale-create';
+    if (/\/shopee\/marketing\/flash-sale\/detail\/?$/.test(path)) return 'marketing-shop-flash-sale-detail';
+    if (/\/shopee\/marketing\/flash-sale\/data\/?$/.test(path)) return 'marketing-shop-flash-sale-data';
     if (/\/shopee\/marketing\/flash-sale\/?$/.test(path)) return 'marketing-shop-flash-sale';
+    if (/\/shopee\/marketing\/shopee-ads\/?$/.test(path)) return 'marketing-shopee-ads';
+    if (/\/shopee\/marketing\/vouchers\/?$/.test(path)) return 'marketing-vouchers';
     if (/\/shopee\/marketing\/discount\/?$/.test(path)) return 'marketing-discount';
     if (/\/shopee\/finance\/income\/?$/.test(path)) return 'my-income';
     if (/\/shopee\/finance\/balance\/?$/.test(path)) return 'my-balance';
@@ -127,6 +139,11 @@ export default function ShopeePage({ run, currentUser, onBackToSetup, readOnly =
     const raw = Number(search.get('campaign_id') || '');
     return Number.isFinite(raw) && raw > 0 ? raw : null;
   });
+  const [activeFlashSaleCampaignId, setActiveFlashSaleCampaignId] = useState<number | null>(() => {
+    const search = new URLSearchParams(window.location.search);
+    const raw = Number(search.get('campaign_id') || '');
+    return Number.isFinite(raw) && raw > 0 ? raw : null;
+  });
   const [notificationDrawerOpen, setNotificationDrawerOpen] = useState(false);
   const [notificationCount, setNotificationCount] = useState(0);
   const [notificationOrders, setNotificationOrders] = useState<NotificationOrder[]>([]);
@@ -147,7 +164,11 @@ export default function ShopeePage({ run, currentUser, onBackToSetup, readOnly =
     if (/\/shopee\/marketing\/add-on\/orders\/?$/.test(path)) return 'marketing-addon-orders';
     if (/\/shopee\/marketing\/bundle\/orders\/?$/.test(path)) return 'marketing-bundle-orders';
     if (/\/shopee\/marketing\/flash-sale\/create\/?$/.test(path)) return 'marketing-shop-flash-sale-create';
+    if (/\/shopee\/marketing\/flash-sale\/detail\/?$/.test(path)) return 'marketing-shop-flash-sale-detail';
+    if (/\/shopee\/marketing\/flash-sale\/data\/?$/.test(path)) return 'marketing-shop-flash-sale-data';
     if (/\/shopee\/marketing\/flash-sale\/?$/.test(path)) return 'marketing-shop-flash-sale';
+    if (/\/shopee\/marketing\/shopee-ads\/?$/.test(path)) return 'marketing-shopee-ads';
+    if (/\/shopee\/marketing\/vouchers\/?$/.test(path)) return 'marketing-vouchers';
     if (/\/shopee\/marketing\/discount\/?$/.test(path)) return 'marketing-discount';
     if (/\/shopee\/finance\/income\/?$/.test(path)) return 'my-income';
     if (/\/shopee\/finance\/balance\/?$/.test(path)) return 'my-balance';
@@ -176,6 +197,10 @@ export default function ShopeePage({ run, currentUser, onBackToSetup, readOnly =
     if (view === 'marketing-bundle-orders') return `${base}/marketing/bundle/orders`;
     if (view === 'marketing-shop-flash-sale') return `${base}/marketing/flash-sale`;
     if (view === 'marketing-shop-flash-sale-create') return `${base}/marketing/flash-sale/create`;
+    if (view === 'marketing-shop-flash-sale-detail') return `${base}/marketing/flash-sale/detail`;
+    if (view === 'marketing-shop-flash-sale-data') return `${base}/marketing/flash-sale/data`;
+    if (view === 'marketing-shopee-ads') return `${base}/marketing/shopee-ads`;
+    if (view === 'marketing-vouchers') return `${base}/marketing/vouchers`;
     if (view === 'my-income') return `${base}/finance/income`;
     if (view === 'my-balance') return `${base}/finance/balance`;
     if (view === 'bank-accounts') return `${base}/finance/bank-accounts`;
@@ -201,12 +226,19 @@ export default function ShopeePage({ run, currentUser, onBackToSetup, readOnly =
     return Number.isFinite(raw) && raw > 0 ? raw : null;
   };
 
+  const parseFlashSaleCampaignIdFromPath = () => {
+    const search = new URLSearchParams(window.location.search);
+    const raw = Number(search.get('campaign_id') || '');
+    return Number.isFinite(raw) && raw > 0 ? raw : null;
+  };
+
   useEffect(() => {
     const onPopState = () => {
       setActiveView(parseShopeeViewFromPath());
       setEditingListingId(parseEditingListingIdFromPath());
       setActiveOrderId(parseOrderIdFromPath());
       setActiveDiscountCampaignId(parseDiscountCampaignIdFromPath());
+      setActiveFlashSaleCampaignId(parseFlashSaleCampaignIdFromPath());
       setOrderReturnType(new URLSearchParams(window.location.search).get('type') || 'all');
       setMarketingCreateType(resolveMarketingCreateType(window.location.search));
     };
@@ -216,7 +248,7 @@ export default function ShopeePage({ run, currentUser, onBackToSetup, readOnly =
 
   useEffect(() => {
     if (!readOnly) return;
-    const allowed = new Set(['dashboard', 'my-orders', 'my-products', 'new-product', 'my-income', 'my-balance', 'bank-accounts', 'marketing-centre', 'marketing-discount', 'marketing-discount-create', 'marketing-discount-detail', 'marketing-discount-data', 'marketing-addon-orders', 'marketing-bundle-orders', 'marketing-shop-flash-sale', 'marketing-shop-flash-sale-create']);
+    const allowed = new Set(['dashboard', 'my-orders', 'my-products', 'new-product', 'my-income', 'my-balance', 'bank-accounts', 'marketing-centre', 'marketing-discount', 'marketing-discount-create', 'marketing-discount-detail', 'marketing-discount-data', 'marketing-addon-orders', 'marketing-bundle-orders', 'marketing-shop-flash-sale', 'marketing-shop-flash-sale-create', 'marketing-shop-flash-sale-detail', 'marketing-shop-flash-sale-data', 'marketing-shopee-ads', 'marketing-vouchers']);
     if (!allowed.has(activeView)) {
       setActiveView('my-orders');
       const nextPath = withHistoryRunId(buildShopeePath('my-orders'));
@@ -289,7 +321,7 @@ export default function ShopeePage({ run, currentUser, onBackToSetup, readOnly =
 
   const handleSelectView = (view: ShopeeView, listingId?: number | null) => {
     if (readOnly) {
-      const allowed = new Set(['dashboard', 'my-orders', 'my-products', 'new-product', 'my-income', 'my-balance', 'bank-accounts', 'marketing-centre', 'marketing-discount', 'marketing-discount-create', 'marketing-discount-detail', 'marketing-discount-data', 'marketing-addon-orders', 'marketing-bundle-orders', 'marketing-shop-flash-sale', 'marketing-shop-flash-sale-create']);
+      const allowed = new Set(['dashboard', 'my-orders', 'my-products', 'new-product', 'my-income', 'my-balance', 'bank-accounts', 'marketing-centre', 'marketing-discount', 'marketing-discount-create', 'marketing-discount-detail', 'marketing-discount-data', 'marketing-addon-orders', 'marketing-bundle-orders', 'marketing-shop-flash-sale', 'marketing-shop-flash-sale-create', 'marketing-shop-flash-sale-detail', 'marketing-shop-flash-sale-data', 'marketing-shopee-ads', 'marketing-vouchers']);
       if (!allowed.has(view)) {
         alert(HISTORY_READONLY_DETAIL);
         return;
@@ -318,10 +350,39 @@ export default function ShopeePage({ run, currentUser, onBackToSetup, readOnly =
     setEditingListingId(view === 'new-product' ? (listingId && listingId > 0 ? listingId : null) : null);
     setActiveOrderId(null);
     setActiveDiscountCampaignId(null);
+    setActiveFlashSaleCampaignId(null);
     setActiveView(view);
     if (view === 'marketing-discount-create') {
       setMarketingCreateType(resolveMarketingCreateType(nextPathWithRunId.includes('?') ? `?${nextPathWithRunId.split('?')[1]}` : ''));
     }
+  };
+
+  const handleOpenFlashSaleDetail = (campaignId: number) => {
+    if (!currentUser?.public_id) return;
+    const path = withHistoryRunId(
+      `/u/${encodeURIComponent(currentUser.public_id)}/shopee/marketing/flash-sale/detail?campaign_id=${campaignId}`
+    );
+    if (`${window.location.pathname}${window.location.search}` !== path) {
+      window.history.pushState(null, '', path);
+    }
+    setActiveOrderId(null);
+    setActiveDiscountCampaignId(null);
+    setActiveFlashSaleCampaignId(campaignId);
+    setActiveView('marketing-shop-flash-sale-detail');
+  };
+
+  const handleOpenFlashSaleData = (campaignId: number) => {
+    if (!currentUser?.public_id) return;
+    const path = withHistoryRunId(
+      `/u/${encodeURIComponent(currentUser.public_id)}/shopee/marketing/flash-sale/data?campaign_id=${campaignId}`
+    );
+    if (`${window.location.pathname}${window.location.search}` !== path) {
+      window.history.pushState(null, '', path);
+    }
+    setActiveOrderId(null);
+    setActiveDiscountCampaignId(null);
+    setActiveFlashSaleCampaignId(campaignId);
+    setActiveView('marketing-shop-flash-sale-data');
   };
 
   const handleOpenOrderDetail = (orderId: number, tabType: string) => {
@@ -404,7 +465,7 @@ export default function ShopeePage({ run, currentUser, onBackToSetup, readOnly =
             </div>
           )}
           <div className="flex min-w-0 flex-1 overflow-hidden">
-            {activeView !== 'new-product' && activeView !== 'marketing-discount-create' && activeView !== 'marketing-discount-detail' && activeView !== 'marketing-discount-data' && activeView !== 'marketing-addon-orders' && activeView !== 'marketing-bundle-orders' && activeView !== 'marketing-shop-flash-sale-create' && !activeOrderId && (
+            {activeView !== 'new-product' && activeView !== 'marketing-discount-create' && activeView !== 'marketing-discount-detail' && activeView !== 'marketing-discount-data' && activeView !== 'marketing-addon-orders' && activeView !== 'marketing-bundle-orders' && activeView !== 'marketing-shop-flash-sale-create' && activeView !== 'marketing-shop-flash-sale-detail' && activeView !== 'marketing-shop-flash-sale-data' && !activeOrderId && (
               <Sidebar activeView={activeView} onSelectView={handleSelectView} />
             )}
             {activeView === 'my-orders' ? (
@@ -474,8 +535,16 @@ export default function ShopeePage({ run, currentUser, onBackToSetup, readOnly =
               />
             ) : activeView === 'marketing-shop-flash-sale-create' ? (
               <ShopFlashSaleCreateView runId={run?.id ?? null} readOnly={readOnly} onBackToFlashSale={() => handleSelectView('marketing-shop-flash-sale')} />
+            ) : activeView === 'marketing-shop-flash-sale-detail' ? (
+              <ShopFlashSaleDetailView runId={run?.id ?? null} campaignId={activeFlashSaleCampaignId} readOnly={readOnly} onBackToFlashSale={() => handleSelectView('marketing-shop-flash-sale')} />
+            ) : activeView === 'marketing-shop-flash-sale-data' ? (
+              <ShopFlashSaleDataView runId={run?.id ?? null} campaignId={activeFlashSaleCampaignId} readOnly={readOnly} onBackToFlashSale={() => handleOpenFlashSaleDetail(activeFlashSaleCampaignId || 0)} />
             ) : activeView === 'marketing-shop-flash-sale' ? (
-              <ShopFlashSaleView runId={run?.id ?? null} readOnly={readOnly} onCreate={() => handleSelectView('marketing-shop-flash-sale-create')} />
+              <ShopFlashSaleView runId={run?.id ?? null} readOnly={readOnly} onCreate={() => handleSelectView('marketing-shop-flash-sale-create')} onDetail={handleOpenFlashSaleDetail} onData={handleOpenFlashSaleData} />
+            ) : activeView === 'marketing-shopee-ads' ? (
+              <ShopeeAdsView readOnly={readOnly} />
+            ) : activeView === 'marketing-vouchers' ? (
+              <ShopVoucherView readOnly={readOnly} />
             ) : activeView === 'marketing-discount' ? (
               <MarketingDiscountView runId={run?.id ?? null} publicId={currentUser?.public_id ?? ''} readOnly={readOnly} />
             ) : activeView === 'marketing-centre' ? (

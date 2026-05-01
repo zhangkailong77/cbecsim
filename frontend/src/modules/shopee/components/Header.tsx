@@ -1,5 +1,4 @@
-import React from 'react';
-import { Grid, BookOpen, Bell, User, ArrowLeft } from 'lucide-react';
+import { BookOpen, ArrowLeft } from 'lucide-react';
 import shopeeLogo from '../assets/shopee-logo.svg';
 
 interface HeaderProps {
@@ -7,8 +6,8 @@ interface HeaderProps {
   runId: number | null;
   onBackToSetup: () => void;
   onBackToDashboard: () => void;
-  onNavigateToView: (view: 'dashboard' | 'my-orders' | 'my-products' | 'new-product' | 'my-income' | 'my-balance' | 'bank-accounts' | 'marketing-centre' | 'marketing-discount' | 'marketing-discount-create' | 'marketing-discount-detail' | 'marketing-discount-data' | 'marketing-addon-orders' | 'marketing-bundle-orders' | 'marketing-shop-flash-sale' | 'marketing-shop-flash-sale-create') => void;
-  activeView: 'dashboard' | 'my-orders' | 'my-products' | 'new-product' | 'my-income' | 'my-balance' | 'bank-accounts' | 'marketing-centre' | 'marketing-discount' | 'marketing-discount-create' | 'marketing-discount-detail' | 'marketing-discount-data' | 'marketing-addon-orders' | 'marketing-bundle-orders' | 'marketing-shop-flash-sale' | 'marketing-shop-flash-sale-create';
+  onNavigateToView: (view: 'dashboard' | 'my-orders' | 'my-products' | 'new-product' | 'my-income' | 'my-balance' | 'bank-accounts' | 'marketing-centre' | 'marketing-discount' | 'marketing-discount-create' | 'marketing-discount-detail' | 'marketing-discount-data' | 'marketing-addon-orders' | 'marketing-bundle-orders' | 'marketing-shop-flash-sale' | 'marketing-shop-flash-sale-create' | 'marketing-shop-flash-sale-detail' | 'marketing-shop-flash-sale-data' | 'marketing-shopee-ads' | 'marketing-vouchers') => void;
+  activeView: 'dashboard' | 'my-orders' | 'my-products' | 'new-product' | 'my-income' | 'my-balance' | 'bank-accounts' | 'marketing-centre' | 'marketing-discount' | 'marketing-discount-create' | 'marketing-discount-detail' | 'marketing-discount-data' | 'marketing-addon-orders' | 'marketing-bundle-orders' | 'marketing-shop-flash-sale' | 'marketing-shop-flash-sale-create' | 'marketing-shop-flash-sale-detail' | 'marketing-shop-flash-sale-data' | 'marketing-shopee-ads' | 'marketing-vouchers';
   marketingCreateType?: 'discount' | 'bundle' | 'add_on';
   isOrderDetail?: boolean;
   isProductDetail?: boolean;
@@ -81,7 +80,29 @@ export default function Header({
         </div>
       );
     }
-    if (activeView === 'marketing-shop-flash-sale' || activeView === 'marketing-shop-flash-sale-create') {
+    if (activeView === 'marketing-shopee-ads' || activeView === 'marketing-vouchers') {
+      return (
+        <div className="flex items-center gap-2 text-[14px]">
+          <span className="text-gray-300">{'>'}</span>
+          <button
+            type="button"
+            onClick={() => onNavigateToView('marketing-centre')}
+            className="text-gray-700 hover:text-[#ee4d2d]"
+          >
+            营销中心
+          </button>
+          <span className="text-gray-300">{'>'}</span>
+          <button
+            type="button"
+            onClick={() => onNavigateToView(activeView)}
+            className="text-gray-700 hover:text-[#ee4d2d]"
+          >
+            {activeView === 'marketing-shopee-ads' ? 'Shopee 广告' : '代金券'}
+          </button>
+        </div>
+      );
+    }
+    if (activeView === 'marketing-shop-flash-sale' || activeView === 'marketing-shop-flash-sale-create' || activeView === 'marketing-shop-flash-sale-detail' || activeView === 'marketing-shop-flash-sale-data') {
       return (
         <div className="flex items-center gap-2 text-[14px]">
           <span className="text-gray-300">{'>'}</span>
@@ -100,10 +121,10 @@ export default function Header({
           >
             我的店铺限时抢购
           </button>
-          {activeView === 'marketing-shop-flash-sale-create' ? (
+          {activeView === 'marketing-shop-flash-sale-create' || activeView === 'marketing-shop-flash-sale-detail' || activeView === 'marketing-shop-flash-sale-data' ? (
             <>
               <span className="text-gray-300">{'>'}</span>
-              <span className="text-gray-700">创建限时抢购</span>
+              <span className="text-gray-700">{activeView === 'marketing-shop-flash-sale-data' ? '限时抢购数据' : activeView === 'marketing-shop-flash-sale-detail' ? '限时抢购详情' : '创建限时抢购'}</span>
             </>
           ) : null}
         </div>
@@ -170,7 +191,12 @@ export default function Header({
       <div className="flex items-center gap-6">
         <div className="flex items-center gap-4 text-gray-500">
           <button className="hover:text-[#ee4d2d] cursor-pointer">
-            <Grid size={20} />
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect width="7" height="7" x="3" y="3" rx="1" />
+              <rect width="7" height="7" x="14" y="3" rx="1" />
+              <rect width="7" height="7" x="14" y="14" rx="1" />
+              <rect width="7" height="7" x="3" y="14" rx="1" />
+            </svg>
           </button>
           <button className="hover:text-[#ee4d2d] cursor-pointer">
             <BookOpen size={20} />
@@ -191,7 +217,10 @@ export default function Header({
         </button>
 
         <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5">
-          <User size={14} className="text-slate-500" />
+          <svg className="text-slate-500" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M20 21a8 8 0 0 0-16 0" />
+            <circle cx="12" cy="7" r="4" />
+          </svg>
           <span className="text-[12px] font-semibold text-slate-700">玩家: {playerName}</span>
         </div>
         <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1.5">

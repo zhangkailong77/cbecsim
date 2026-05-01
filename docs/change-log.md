@@ -1,6 +1,121 @@
 # Change Log
 
-最后更新：2026-04-29（限时抢购已选商品变体编辑）
+最后更新：2026-04-30（营销中心 Shopee 广告空白页接入）
+
+## 2026-04-30
+
+### 新增
+- 接入 Shopee 营销中心 Shopee 广告空白页。
+  - 涉及文件：`frontend/src/modules/shopee/ShopeePage.tsx`、`frontend/src/modules/shopee/components/Header.tsx`、`frontend/src/modules/shopee/components/Sidebar.tsx`、`frontend/src/modules/shopee/views/MarketingCentreView.tsx`、`frontend/src/modules/shopee/views/ShopeeAdsView.tsx`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：新增 `/shopee/marketing/shopee-ads` 前端路由和 Shopee 广告空白页；营销中心“Shopee 广告”工具卡与左侧菜单可进入该页面；页面包含广告表现指标、创建广告按钮、广告列表、状态 Tab、搜索栏和空表格占位；顶部面包屑显示“营销中心 > Shopee 广告”。
+  - 验证结果：`ShopeePage.tsx`、`Header.tsx`、`Sidebar.tsx`、`ShopeeAdsView.tsx` LSP 诊断无错误；`npm run build --prefix frontend` 通过（Vite 仅提示既有 chunk 体积 warning）。
+  - 影响范围：仅新增 Shopee 广告空白页与导航入口；暂不实现广告创建、列表真实数据、投放模拟或订单归因。
+
+### 优化
+- 优化 Shopee 营销中心代金券前端页面布局。
+  - 涉及文件：`frontend/src/modules/shopee/views/ShopVoucherView.tsx`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：记录用户手动优化后的 `/shopee/marketing/vouchers` 页面；页面从空白占位升级为代金券管理页，包含创建代金券入口分组、代金券表现面板、状态 Tab、搜索栏、mock 代金券列表、操作按钮和分页占位。
+  - 影响范围：仅影响代金券页面前端展示与文档记录；暂不接入代金券真实创建、列表接口、订单模拟或营销归因。
+
+### 新增
+- 接入 Shopee 营销中心代金券空白页。
+  - 涉及文件：`frontend/src/modules/shopee/ShopeePage.tsx`、`frontend/src/modules/shopee/components/Header.tsx`、`frontend/src/modules/shopee/components/Sidebar.tsx`、`frontend/src/modules/shopee/views/MarketingCentreView.tsx`、`frontend/src/modules/shopee/views/ShopVoucherView.tsx`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：新增 `/shopee/marketing/vouchers` 前端路由和代金券空白页；营销中心“代金券”工具卡与左侧菜单可进入该页面；页面沿用限时抢购页布局节奏，包含表现面板、活动列表、状态 Tab、时间筛选、创建按钮和空表格占位；顶部面包屑显示“营销中心 > 代金券”。
+  - 影响范围：仅新增代金券空白页与导航入口；暂不实现代金券创建、列表真实数据、订单模拟或营销归因。
+
+### 修复
+- 修正 Shopee 我的订单限时抢购活动文案。
+  - 涉及文件：`frontend/src/modules/shopee/views/MyOrdersView.tsx`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：我的订单列表中 `flash_sale` 归因订单直接显示“店铺限时抢购活动”，不再拼接“单品折扣：”前缀；同步清理该页面当前未使用的订单摘要图片辅助逻辑。
+  - 影响范围：仅影响 `/shopee/orders` 我的订单列表营销活动文案；不改变订单归因、订单模拟、限时抢购统计或活动数据页。
+
+### 修复
+- 修正 Shopee 限时抢购数据页商品图与未启用 SKU 活动库存展示。
+  - 涉及文件：`backend/apps/api-gateway/app/api/routes/shopee.py`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：限时抢购数据页商品排名接口的商品行图片优先读取 listing 主图，不再使用 SKU 变体快照图作为主商品图；未启用的活动 SKU 变体活动库存返回 `0`。
+  - 影响范围：仅影响 `/shopee/marketing/flash-sale/data?campaign_id=...` 商品排名展示；不改变活动创建、详情页、订单模拟、销量统计或下单概率逻辑。
+
+### 新增
+- 接入 Shopee 限时抢购浏览点击模拟与数据页真实统计。
+  - 涉及文件：`backend/apps/api-gateway/app/models.py`、`backend/apps/api-gateway/app/db.py`、`backend/apps/api-gateway/app/services/shopee_order_simulator.py`、`backend/apps/api-gateway/app/api/routes/shopee.py`、`frontend/src/modules/shopee/ShopeePage.tsx`、`frontend/src/modules/shopee/views/ShopFlashSaleDataView.tsx`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：新增 `shopee_flash_sale_traffic_events` 限时抢购浏览/点击事件表 ORM、索引、唯一约束与表字段注释；订单模拟器按活跃买家和有效活动商品生成 `view/click` 事件，且仅在浏览成功后判断点击；数据页新增概览、商品排名和导出接口，按事件表统计商品浏览量、商品点击数与 CTR，提醒设置数固定为 `0`；前端数据页接入真实接口展示指标卡和商品排名。
+  - 验证结果：`python -m py_compile backend/apps/api-gateway/app/models.py backend/apps/api-gateway/app/db.py backend/apps/api-gateway/app/services/shopee_order_simulator.py backend/apps/api-gateway/app/api/routes/shopee.py` 通过；`ShopFlashSaleDataView.tsx` 与 `ShopeePage.tsx` 前端 LSP 诊断无错误。
+  - 影响范围：影响 Shopee 限时抢购浏览/点击事件生成、数据页概览/商品排名/导出接口和前端数据页展示；不修改现有候选商品评分、`base_order_prob`、`flash_sale_order_prob` 或最终下单概率逻辑。
+
+### 调整
+- 调整 Shopee 限时抢购浏览点击模拟设计中的基础浏览概率。
+  - 涉及文件：`docs/设计文档/35-Shopee限时抢购浏览点击模拟与下单影响设计.md`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：将限时抢购浏览模拟首版 `base_view_prob` 固定为 `0.30`，并将浏览概率上限调整为 `0.75`；补充说明该基础概率是在买家已活跃、活动商品具备展示资格后的条件概率，不代表全买家无条件浏览率。
+  - 影响范围：仅调整设计文档与进度记录；尚未改动前端、后端、数据库或 Redis 业务代码。
+
+### 新增
+- 新增 Shopee 限时抢购浏览点击模拟与下单影响设计文档。
+  - 涉及文件：`docs/设计文档/35-Shopee限时抢购浏览点击模拟与下单影响设计.md`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：设计限时抢购 `view/click` 流量事件模拟、事件表字段与索引、数据页浏览量/点击量/CTR 统计口径、浏览点击对候选商品权重与下单概率的间接影响、Redis 缓存失效和验收标准；提醒设置数本期固定为 `0`。
+  - 影响范围：仅新增设计文档与进度记录；尚未改动前端、后端、数据库或 Redis 业务代码。
+
+- 新增 Shopee 限时抢购数据页前后端数据库 Redis 打通设计文档。
+  - 涉及文件：`docs/设计文档/34-Shopee限时抢购数据页前后端数据库Redis打通设计.md`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：设计 `/shopee/marketing/flash-sale/data?campaign_id=...` 数据页从静态占位切换为真实数据的接入方案，覆盖活动基础信息、关键指标、商品排名、订单类型切换、导出接口、明细级订单归因统计、数据库复用/事件表预留、Redis 缓存与失效规则。
+  - 影响范围：仅新增设计文档与进度记录；尚未改动前端、后端、数据库或 Redis 业务代码。
+
+### 修复
+- 修正 Shopee 限时抢购详情页商品条件类目与主图展示。
+  - 涉及文件：`backend/apps/api-gateway/app/api/routes/shopee.py`、`frontend/src/modules/shopee/views/ShopFlashSaleDetailView.tsx`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：后端活动详情按活动商品对应 listing/product 计算真实类目并返回 `category_key/category_label`，旧详情缓存改用 v2 key 避免继续读取 `全部`；前端商品条件规则按详情商品类目请求，只展示当前活动商品对应类别的条件 Tab；限时抢购详情商品图片统一返回主商品图，不再优先使用 SKU 变体图；变体明细按启用优先排序，停用变体置灰并排在底部；详情页顶部面包屑修正为“营销中心 > 我的店铺限时抢购 > 限时抢购详情”。
+  - 影响范围：仅影响 `/shopee/marketing/flash-sale/detail?campaign_id=...` 商品条件、商品图片、变体明细和顶部面包屑展示；不改变活动创建、列表、订单模拟或统计口径。
+
+### 新增
+- 接入 Shopee 限时抢购数据空白页。
+  - 涉及文件：`frontend/src/modules/shopee/ShopeePage.tsx`、`frontend/src/modules/shopee/components/Header.tsx`、`frontend/src/modules/shopee/views/ShopFlashSaleView.tsx`、`frontend/src/modules/shopee/views/ShopFlashSaleDataView.tsx`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：新增 `/shopee/marketing/flash-sale/data?campaign_id=...` 数据页空白布局，活动列表“数据”按钮可携带活动 ID 跳转；页面预留指标卡、趋势图表区域和商品表现表格；顶部面包屑显示“营销中心 > 我的店铺限时抢购 > 限时抢购数据”。
+  - 影响范围：仅新增限时抢购数据页前端入口与空白页布局；暂不接入真实数据接口，不改变活动创建、详情、订单模拟或统计口径。
+
+- 接入 Shopee 限时抢购详情页数据展示。
+  - 涉及文件：`backend/apps/api-gateway/app/api/routes/shopee.py`、`frontend/src/modules/shopee/ShopeePage.tsx`、`frontend/src/modules/shopee/views/ShopFlashSaleView.tsx`、`frontend/src/modules/shopee/views/ShopFlashSaleDetailView.tsx`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：`/shopee/marketing/flash-sale/detail?campaign_id=...` 详情页读取活动详情和商品条件规则，展示状态、活动时间段、商品条件、活动商品、变体原价、折后价、折扣、活动库存、库存、订单限购和启停状态；后端活动商品详情响应补充商品状态字段。
+  - 验证结果：`python -m py_compile backend/apps/api-gateway/app/api/routes/shopee.py` 通过；`npm run build --prefix frontend` 通过（Vite 仅提示既有 chunk 体积 warning）。
+  - 影响范围：影响限时抢购详情页展示；不改变活动创建、列表筛选、订单模拟和统计口径。
+
+- 接入 Shopee 限时抢购表现当前游戏周统计。
+  - 涉及文件：`backend/apps/api-gateway/app/api/routes/shopee.py`、`frontend/src/modules/shopee/views/ShopFlashSaleView.tsx`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：新增 `/shopee/runs/{run_id}/marketing/flash-sale/performance` 接口，按当前游戏日期所在周统计限时抢购销售额、订单、买家数和 CTR；前端表现面板读取真实接口数据，不再展示写死的表现指标和真实世界日期区间。
+  - 验证结果：`python -m py_compile backend/apps/api-gateway/app/api/routes/shopee.py` 通过；`npm run build --prefix frontend` 通过（Vite 仅提示既有 chunk 体积 warning）。
+  - 影响范围：影响 `/shopee/marketing/flash-sale` 顶部“我的店铺限时抢购表现”展示；统计区间使用游戏时间当前周，不使用真实世界日期。
+
+### 优化
+- 优化 Shopee 限时抢购活动列表前端展示。
+  - 涉及文件：`frontend/src/modules/shopee/views/ShopFlashSaleView.tsx`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：活动列表状态列中 `进行中` 状态改为绿色浅底标签，未开始/即将开始/已结束继续保留灰色样式；删除列表空数据时展示的写死模拟活动和写死分页器，改为真实数据为空时显示“暂无限时抢购活动”。
+  - 影响范围：仅影响 `/shopee/marketing/flash-sale` 活动列表前端展示；不改变活动状态判断、筛选、创建或订单模拟逻辑。
+
+### 新增
+- 接入 Shopee 限时抢购对订单模拟的概率、成交价、库存和归因影响。
+  - 涉及文件：`backend/apps/api-gateway/app/services/shopee_order_simulator.py`、`backend/apps/api-gateway/app/api/routes/shopee.py`、`backend/apps/api-gateway/tests/test_api.py`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：订单模拟器加载当前游戏 tick 有效的限时抢购活动，命中后使用 `flash_price` 作为主商品成交价，按折扣吸引力与时间段倍率提升下单概率并限制上限；限时抢购与单品折扣、套餐优惠、加价购、满额赠互斥；按创建时设置的活动库存和买家活动 SKU 累计购买件数控制命中；订单生成后更新活动商品 `sold_qty`、活动 `order_count/sales_amount` 和订单/明细营销归因；自动订单补跑窗口覆盖限时抢购时临时切换为 1 游戏小时粒度；订单模拟后同步失效限时抢购缓存。
+  - 验证结果：`python -m py_compile backend/apps/api-gateway/app/services/shopee_order_simulator.py backend/apps/api-gateway/app/api/routes/shopee.py` 通过；`PYTHONPATH=backend/apps/api-gateway pytest backend/apps/api-gateway/tests/test_api.py -q -k "flash_sale_price_probability or one_hour_when_flash_sale_overlaps or use_discount_price"` 通过。
+  - 影响范围：影响 Shopee 自动/手动订单模拟、限时抢购活动销量统计、订单营销归因和限时抢购活动缓存刷新；普通无有效限时抢购窗口时仍保持原 8 游戏小时自动补跑粒度。
+
+- 优化 Shopee 限时抢购接入订单模拟概率设计文档。
+  - 涉及文件：`docs/设计文档/33-Shopee限时抢购接入订单模拟概率设计.md`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：明确限时抢购命中后主商品不再叠加单品折扣、套餐优惠、加价购或满额赠；活动库存以创建活动时设置的 `activity_stock_limit` 为准；补充活动库存防超卖校验；买家限购按活动 SKU 累计购买件数统计，不按订单数统计。
+  - 影响范围：仅优化设计文档与进度记录；尚未改动订单模拟业务代码。
+
+- 新增 Shopee 限时抢购接入订单模拟概率设计文档。
+  - 涉及文件：`docs/设计文档/33-Shopee限时抢购接入订单模拟概率设计.md`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：定义限时抢购接入订单模拟的时间压缩口径、补跑窗口内 1 游戏小时临时粒度、各时间段概率倍率、概率上限、活动匹配、营销互斥优先级、活动库存/限购、订单归因、Redis 缓存失效和验收标准。
+  - 影响范围：仅新增设计文档与进度记录；尚未改动订单模拟业务代码。
+
+### 修复
+- 修正 Shopee 限时抢购活动列表展示时间口径。
+  - 涉及文件：`backend/apps/api-gateway/app/api/routes/shopee.py`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：新增限时抢购活动展示时间格式化函数，列表、详情、启停响应的 `display_time` 改为基于游戏时间转换后的时分展示；活动状态判断继续沿用 `current_tick` 与 `start_tick/end_tick` 的原逻辑。
+  - 影响范围：影响 `/shopee/marketing/flash-sale` 活动列表和限时抢购详情/启停返回的时间文案；不改变活动开始、进行中、结束判断逻辑。
+
+- 调整 Shopee 限时抢购创建提交保留停用变体。
+  - 涉及文件：`frontend/src/modules/shopee/views/ShopFlashSaleCreateView.tsx`、`backend/apps/api-gateway/app/api/routes/shopee.py`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：创建页提交时不再过滤停用变体，而是提交全部已选变体并携带 `status=active/disabled`；后端接收并校验启停状态，活动商品落库时写入对应 `status`，时间段名额与重复冲突仍只按启用商品计算。
+  - 影响范围：影响 `/shopee/marketing/flash-sale/create` 正式创建提交口径；停用变体会作为活动商品记录保留但不占用启用商品名额。
 
 ## 2026-04-29
 

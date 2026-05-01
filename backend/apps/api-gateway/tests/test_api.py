@@ -2138,6 +2138,114 @@ def test_simulate_orders_use_discount_price_and_marketing_fields(monkeypatch):
         assert order.buyer_payment == 90 * order_item.quantity
 
 
+def test_simulate_orders_use_flash_sale_price_probability_and_limits(monkeypatch):
+    from app.db import SessionLocal
+    from app.models import (
+        GameRun,
+        ShopeeFlashSaleCampaign,
+        ShopeeFlashSaleCampaignItem,
+        ShopeeListing,
+        ShopeeOrder,
+        ShopeeOrderItem,
+        SimBuyerProfile,
+    )
+    from app.services.shopee_order_simulator import simulate_orders_for_run
+
+    token = _register_or_login_player("13800138243")
+    run = _create_running_run(token, duration_days=30)
+    listing_id = _insert_live_listing_for_run(run["id"], stock=20, price=120)
+    tick_time = datetime.now()
+
+    with SessionLocal() as db:
+        run_row = db.query(GameRun).filter(GameRun.id == run["id"]).first()
+        assert run_row is not None
+        listing = db.query(ShopeeListing).filter(ShopeeListing.id == listing_id).first()
+        assert listing is not None
+        buyer = db.query(SimBuyerProfile).filter(SimBuyerProfile.is_active == True).order_by(SimBuyerProfile.id.asc()).first()
+        assert buyer is not None
+
+        buyer.active_hours_json = json.dumps([1.0] * 24, ensure_ascii=False)
+        buyer.weekday_factors_json = json.dumps([1.0] * 7, ensure_ascii=False)
+        buyer.base_buy_intent = 1.0
+        buyer.impulse_level = 1.0
+        buyer.purchase_power = 0.3
+        buyer.price_sensitivity = 0.8
+
+        campaign = ShopeeFlashSaleCampaign(
+            run_id=run_row.id,
+            user_id=run_row.user_id,
+            campaign_name="限时抢购生效活动",
+            slot_date=tick_time.date(),
+            slot_key="18_21",
+            start_tick=tick_time - timedelta(hours=1),
+            end_tick=tick_time + timedelta(hours=1),
+            status="active",
+        )
+        db.add(campaign)
+        db.flush()
+        campaign_item = ShopeeFlashSaleCampaignItem(
+            campaign_id=campaign.id,
+            run_id=run_row.id,
+            user_id=run_row.user_id,
+            listing_id=listing.id,
+            variant_id=None,
+            product_id=listing.product_id,
+            product_name_snapshot=listing.title,
+            variant_name_snapshot=None,
+            sku_snapshot=listing.sku_code,
+            image_url_snapshot=listing.cover_url,
+            original_price=float(listing.price),
+            flash_price=60,
+            discount_percent=50,
+            activity_stock_limit=2,
+            sold_qty=0,
+            purchase_limit_per_buyer=2,
+            status="active",
+        )
+        db.add(campaign_item)
+        db.commit()
+
+        result = simulate_orders_for_run(db, run_id=run_row.id, user_id=run_row.user_id, tick_time=tick_time)
+        assert result["generated_order_count"] > 0
+
+        order = db.query(ShopeeOrder).filter(ShopeeOrder.marketing_campaign_type == "flash_sale").order_by(ShopeeOrder.id.desc()).first()
+        assert order is not None
+        assert order.marketing_campaign_id == campaign.id
+        assert order.marketing_campaign_name_snapshot == "限时抢购生效活动"
+
+        order_item = db.query(ShopeeOrderItem).filter(ShopeeOrderItem.order_id == order.id).first()
+        assert order_item is not None
+        assert order_item.marketing_campaign_type == "flash_sale"
+        assert order_item.unit_price == 60
+        assert order_item.quantity <= 2
+        assert order.buyer_payment == 60 * order_item.quantity
+
+        flash_sale_items = (
+            db.query(ShopeeOrderItem)
+            .filter(
+                ShopeeOrderItem.marketing_campaign_type == "flash_sale",
+                ShopeeOrderItem.marketing_campaign_id == campaign.id,
+            )
+            .all()
+        )
+        total_flash_sale_qty = sum(int(item.quantity or 0) for item in flash_sale_items)
+        flash_sale_order_count = (
+            db.query(ShopeeOrder)
+            .filter(
+                ShopeeOrder.marketing_campaign_type == "flash_sale",
+                ShopeeOrder.marketing_campaign_id == campaign.id,
+            )
+            .count()
+        )
+
+        db.refresh(campaign_item)
+        db.refresh(campaign)
+        assert campaign_item.sold_qty == total_flash_sale_qty
+        assert campaign_item.sold_qty <= 2
+        assert campaign.order_count == flash_sale_order_count
+        assert campaign.sales_amount == 60 * total_flash_sale_qty
+
+
 def test_shopee_products_list_allows_finished_run_and_returns_existing_listings():
     from app.db import SessionLocal
     from app.models import GameRun, ShopeeListing, ShopeeListingVariant
@@ -3328,6 +3436,58 @@ def test_auto_simulate_orders_by_game_hour_uses_game_hour_seconds(monkeypatch):
         assert called_tick_times[-1] == row.created_at + timedelta(seconds=3000)
         assert all(
             called_tick_times[index] - called_tick_times[index - 1] == timedelta(seconds=600)
+            for index in range(1, len(called_tick_times))
+        )
+
+
+def test_auto_simulate_orders_by_game_hour_uses_one_hour_when_flash_sale_overlaps(monkeypatch):
+    from app.api.routes import shopee as shopee_route
+    from app.db import SessionLocal
+    from app.models import GameRun, ShopeeFlashSaleCampaign
+
+    player_token = _register_or_login_player("13800138244")
+    run = _create_running_run(player_token, duration_days=7)
+
+    with SessionLocal() as db:
+        row = db.query(GameRun).filter(GameRun.id == run["id"]).first()
+        assert row is not None
+        row.created_at = datetime.now() - timedelta(seconds=610)
+        current_game_tick = shopee_route._resolve_game_hour_tick_by_run(row)
+        db.add(
+            ShopeeFlashSaleCampaign(
+                run_id=row.id,
+                user_id=run["user_id"],
+                campaign_name="自动补跑粒度测试",
+                slot_date=current_game_tick.date(),
+                slot_key="18_21",
+                start_tick=row.created_at + timedelta(seconds=1),
+                end_tick=current_game_tick + timedelta(seconds=1),
+                status="active",
+            )
+        )
+        db.commit()
+        db.refresh(row)
+
+        called_tick_times: list[datetime] = []
+        monkeypatch.setattr(
+            shopee_route,
+            "simulate_orders_for_run",
+            lambda _db, run_id, user_id, tick_time: called_tick_times.append(tick_time),
+            raising=False,
+        )
+
+        shopee_route._auto_simulate_orders_by_game_hour(
+            db,
+            run=row,
+            user_id=run["user_id"],
+            max_ticks_per_request=5,
+        )
+
+        step_seconds = max(1, int(shopee_route.REAL_SECONDS_PER_GAME_HOUR))
+        assert len(called_tick_times) == 5
+        assert called_tick_times[0] == row.created_at + timedelta(seconds=step_seconds)
+        assert all(
+            called_tick_times[index] - called_tick_times[index - 1] == timedelta(seconds=step_seconds)
             for index in range(1, len(called_tick_times))
         )
 

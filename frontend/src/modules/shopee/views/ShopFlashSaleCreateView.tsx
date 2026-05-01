@@ -493,12 +493,13 @@ export default function ShopFlashSaleCreateView({ runId, readOnly = false, onBac
     if (!runId || readOnly || !selectedSlotDate || !selectedTimeSlot || enabledProducts.length === 0) return;
     const token = localStorage.getItem(ACCESS_TOKEN_KEY);
     if (!token) return;
-    const items = enabledProducts.map((item) => ({
+    const items = selectedProducts.map((item) => ({
       listing_id: item.listing_id,
       variant_id: item.variant_id,
       flash_price: item.flash_price || item.suggested_flash_price || Math.max(0.01, Number((item.original_price * 0.9).toFixed(2))),
       activity_stock_limit: item.activity_stock_limit || Math.min(Math.max(item.stock_available, 5), 10000),
       purchase_limit_per_buyer: item.purchase_limit_per_buyer || 1,
+      status: item.enabled === false ? 'disabled' : 'active',
     }));
     const response = await fetch(`${API_BASE_URL}/shopee/runs/${runId}/marketing/flash-sale/campaigns`, {
       method: 'POST',
@@ -738,7 +739,7 @@ export default function ShopFlashSaleCreateView({ runId, readOnly = false, onBac
                   {/* 商品卡片底部 Footer */}
                   <div className="bg-[#fafafa] border-t border-[#ebebeb] px-5 py-3.5 flex items-center justify-between rounded-b-sm">
                     <div className="text-[13px] text-[#05a] cursor-pointer hover:underline">
-                      {group.variations.filter((variant) => variant.enabled === false).length} 个已停用变体 ∨
+                      {group.variations.filter((variant) => variant.enabled === false).length} 个已停用变体
                     </div>
                     <div className="text-[13px] text-[#666]">
                       共 {group.variations.length} 个变体

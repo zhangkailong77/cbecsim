@@ -13,6 +13,9 @@ from app.models import (
     InventoryStockMovement,
     ShopeeAddonCampaign,
     ShopeeDiscountCampaign,
+    ShopeeFlashSaleCampaign,
+    ShopeeFlashSaleCampaignItem,
+    ShopeeFlashSaleTrafficEvent,
     ShopeeListing,
     ShopeeListingVariant,
     ShopeeOrder,
@@ -23,6 +26,25 @@ from app.models import (
 from app.services.inventory_lot_sync import get_lot_available_qty, release_reserved_inventory_lots, reserve_inventory_lots
 
 BACKORDER_GRACE_GAME_HOURS = 48
+FLASH_SALE_PROBABILITY_CAP = 0.85
+FLASH_SALE_SLOT_MULTIPLIERS = {
+    "00_12": 2.00,
+    "12_18": 2.20,
+    "18_21": 2.80,
+    "21_00": 2.50,
+}
+FLASH_SALE_TRAFFIC_SLOT_MULTIPLIERS = {
+    "00_12": 1.00,
+    "12_18": 1.15,
+    "18_21": 1.45,
+    "21_00": 1.30,
+}
+FLASH_SALE_BASE_VIEW_PROB = 0.30
+FLASH_SALE_BASE_CLICK_PROB = 0.14
+FLASH_SALE_VIEW_PROB_CAP = 0.75
+FLASH_SALE_CLICK_PROB_CAP = 0.45
+FLASH_SALE_TRAFFIC_MAX_ITEMS_PER_BUYER = 3
+FLASH_SALE_TRAFFIC_MAX_EVENTS_PER_TICK = 200
 
 
 def _clamp(num: float, low: float, high: float) -> float:
@@ -164,6 +186,177 @@ def _safe_load_bundle_rules(raw: str | None) -> dict[str, Any]:
     except Exception:
         return {}
     return data if isinstance(data, dict) else {}
+
+
+def _flash_sale_traffic_price_affordability(*, price: float, buyer_purchase_power: float) -> float:
+    target_price = 30 + _clamp(buyer_purchase_power, 0.0, 1.0) * 300
+    if price <= target_price:
+        return _clamp(1.1 + (target_price - price) / max(target_price, 1.0) * 0.1, 1.0, 1.2)
+    return _clamp(1.0 - (price - target_price) / max(target_price, 1.0) * 0.6, 0.5, 1.0)
+
+
+def _simulate_flash_sale_traffic_for_buyer(
+    db: Session,
+    *,
+    run_id: int,
+    user_id: int,
+    tick_time: datetime,
+    buyer: SimBuyerProfile,
+    preferred_categories: list[str],
+    flash_sale_map: dict[tuple[int, int | None], dict[str, Any]],
+    listing_by_id: dict[int, ShopeeListing],
+    rng: random.Random,
+    existing_event_keys: set[tuple[int, str, str]],
+    remaining_event_slots: int,
+) -> dict[str, int]:
+    if remaining_event_slots <= 0 or not flash_sale_map:
+        return {"view_count": 0, "click_count": 0}
+
+    buyer_code = str(buyer.buyer_code or buyer.nickname or "").strip()
+    if not buyer_code:
+        return {"view_count": 0, "click_count": 0}
+
+    traffic_slot_multiplier = FLASH_SALE_TRAFFIC_SLOT_MULTIPLIERS.get(str(next(iter(flash_sale_map.values())).get("slot_key") or ""), 1.0)
+    impulse = _clamp(float(buyer.impulse_level or 0.0), 0.0, 1.0)
+    purchase_power = _clamp(float(buyer.purchase_power or 0.5), 0.0, 1.0)
+    candidates = list(flash_sale_map.values())
+    rng.shuffle(candidates)
+    view_count = 0
+    click_count = 0
+    viewed_items = 0
+
+    for item in candidates:
+        if remaining_event_slots <= 0 or viewed_items >= FLASH_SALE_TRAFFIC_MAX_ITEMS_PER_BUYER:
+            break
+        campaign_item_id = int(item.get("campaign_item_id") or 0)
+        listing_id = int(item.get("listing_id") or 0)
+        if campaign_item_id <= 0 or listing_id <= 0:
+            continue
+        listing = listing_by_id.get(listing_id)
+        category_match = _category_match_score(listing.category if listing else None, preferred_categories)
+        interest_factor = _clamp(0.9 + category_match * 0.3, 0.8, 1.2)
+        price_affordability = _flash_sale_traffic_price_affordability(price=float(item.get("flash_price") or 0), buyer_purchase_power=purchase_power)
+        discount_attraction = _clamp(float(item.get("discount_boost") or 1.0), 1.0, 1.8)
+        stock_factor = 1.0 if int(item.get("remaining_qty") or 0) > 0 else 0.0
+        view_prob = _clamp(
+            FLASH_SALE_BASE_VIEW_PROB * traffic_slot_multiplier * discount_attraction * price_affordability * stock_factor * interest_factor,
+            0.0,
+            FLASH_SALE_VIEW_PROB_CAP,
+        )
+        if rng.random() > view_prob:
+            continue
+
+        view_key = (campaign_item_id, buyer_code, "view")
+        if view_key not in existing_event_keys:
+            db.add(
+                ShopeeFlashSaleTrafficEvent(
+                    run_id=run_id,
+                    user_id=user_id,
+                    campaign_id=int(item["campaign_id"]),
+                    campaign_item_id=campaign_item_id,
+                    listing_id=listing_id,
+                    variant_id=int(item["variant_id"]) if item.get("variant_id") is not None else None,
+                    buyer_code=buyer_code,
+                    event_type="view",
+                    event_tick=tick_time,
+                    source="simulator",
+                )
+            )
+            existing_event_keys.add(view_key)
+            view_count += 1
+            remaining_event_slots -= 1
+        viewed_items += 1
+
+        if remaining_event_slots <= 0:
+            break
+        click_prob = _clamp(
+            FLASH_SALE_BASE_CLICK_PROB * discount_attraction * price_affordability * (0.8 + impulse * 0.8),
+            0.0,
+            FLASH_SALE_CLICK_PROB_CAP,
+        )
+        if rng.random() > click_prob:
+            continue
+        click_key = (campaign_item_id, buyer_code, "click")
+        if click_key not in existing_event_keys:
+            db.add(
+                ShopeeFlashSaleTrafficEvent(
+                    run_id=run_id,
+                    user_id=user_id,
+                    campaign_id=int(item["campaign_id"]),
+                    campaign_item_id=campaign_item_id,
+                    listing_id=listing_id,
+                    variant_id=int(item["variant_id"]) if item.get("variant_id") is not None else None,
+                    buyer_code=buyer_code,
+                    event_type="click",
+                    event_tick=tick_time,
+                    source="simulator",
+                )
+            )
+            existing_event_keys.add(click_key)
+            click_count += 1
+            remaining_event_slots -= 1
+
+    return {"view_count": view_count, "click_count": click_count}
+
+
+def _load_ongoing_flash_sale_map(db: Session, *, run_id: int, user_id: int, tick_time: datetime) -> dict[tuple[int, int | None], dict[str, Any]]:
+    campaigns = (
+        db.query(ShopeeFlashSaleCampaign)
+        .options(selectinload(ShopeeFlashSaleCampaign.items))
+        .filter(
+            ShopeeFlashSaleCampaign.run_id == run_id,
+            ShopeeFlashSaleCampaign.user_id == user_id,
+            ShopeeFlashSaleCampaign.status == "active",
+            ShopeeFlashSaleCampaign.start_tick <= tick_time,
+            ShopeeFlashSaleCampaign.end_tick > tick_time,
+        )
+        .all()
+    )
+    flash_sale_map: dict[tuple[int, int | None], dict[str, Any]] = {}
+    for campaign in campaigns:
+        slot_multiplier = FLASH_SALE_SLOT_MULTIPLIERS.get(str(campaign.slot_key or ""), 2.0)
+        for item in sorted(campaign.items or [], key=lambda row: row.id):
+            if str(item.status or "") != "active":
+                continue
+            stock_limit = max(0, int(item.activity_stock_limit or 0))
+            sold_qty = max(0, int(item.sold_qty or 0))
+            remaining_qty = max(0, stock_limit - sold_qty)
+            if remaining_qty <= 0 or float(item.flash_price or 0) <= 0:
+                continue
+            original_price = max(1.0, float(item.original_price or item.flash_price or 0))
+            flash_price = max(1, int(round(float(item.flash_price or 0))))
+            discount_boost = _clamp(1.0 + (original_price - float(flash_price)) / original_price, 1.0, 1.8)
+            payload = {
+                "campaign_id": int(campaign.id),
+                "campaign_item_id": int(item.id),
+                "campaign_name": campaign.campaign_name,
+                "campaign_type": "flash_sale",
+                "listing_id": int(item.listing_id or 0),
+                "variant_id": int(item.variant_id) if item.variant_id is not None else None,
+                "slot_key": campaign.slot_key,
+                "slot_multiplier": float(slot_multiplier),
+                "discount_boost": float(discount_boost),
+                "original_price": original_price,
+                "flash_price": flash_price,
+                "activity_stock_limit": stock_limit,
+                "sold_qty": sold_qty,
+                "remaining_qty": remaining_qty,
+                "purchase_limit_per_buyer": max(1, int(item.purchase_limit_per_buyer or 1)),
+            }
+            key = (int(item.listing_id or 0), int(item.variant_id) if item.variant_id is not None else None)
+            flash_sale_map[key] = payload
+    return flash_sale_map
+
+
+def _resolve_flash_sale(
+    listing: ShopeeListing,
+    *,
+    variant: ShopeeListingVariant | None,
+    flash_sale_map: dict[tuple[int, int | None], dict[str, Any]],
+) -> dict[str, Any] | None:
+    listing_id = int(listing.id)
+    variant_id = int(variant.id) if variant else None
+    return flash_sale_map.get((listing_id, variant_id)) or flash_sale_map.get((listing_id, None))
 
 
 def _safe_bundle_tiers(raw: Any) -> list[dict[str, Any]]:
@@ -670,38 +863,50 @@ def _pick_variant_for_buyer(
     buyer_price_sensitivity: float,
     rng: random.Random,
     discount_map: dict[tuple[int, int | None], dict[str, Any]],
-) -> tuple[ShopeeListingVariant | None, int, dict[str, Any] | None, float, float]:
+    flash_sale_map: dict[tuple[int, int | None], dict[str, Any]] | None = None,
+) -> tuple[ShopeeListingVariant | None, int, dict[str, Any] | None, float, float, dict[str, Any] | None]:
     variants = [
         row
         for row in sorted(list(listing.variants or []), key=lambda x: (x.sort_order, x.id))
         if _variant_sellable_cap(row) > 0
     ]
     if not variants:
+        flash_sale = _resolve_flash_sale(listing, variant=None, flash_sale_map=flash_sale_map or {})
         base_price, discount = _resolve_effective_price(listing, variant=None, discount_map=discount_map)
-        price_score, price_gap = _resolve_price_score(
-            price=base_price,
-            target_price=30 + _clamp(float(buyer_purchase_power or 0.5), 0.0, 1.0) * 300,
-            price_sensitivity=buyer_price_sensitivity,
-        )
-        return None, base_price, discount, price_score, price_gap
-    if len(variants) == 1:
-        effective_price, discount = _resolve_effective_price(listing, variant=variants[0], discount_map=discount_map)
+        effective_price = int(flash_sale["flash_price"]) if flash_sale else base_price
         price_score, price_gap = _resolve_price_score(
             price=effective_price,
             target_price=30 + _clamp(float(buyer_purchase_power or 0.5), 0.0, 1.0) * 300,
             price_sensitivity=buyer_price_sensitivity,
         )
-        return variants[0], effective_price, discount, price_score, price_gap
+        return None, effective_price, None if flash_sale else discount, price_score, price_gap, flash_sale
+    if len(variants) == 1:
+        flash_sale = _resolve_flash_sale(listing, variant=variants[0], flash_sale_map=flash_sale_map or {})
+        effective_price, discount = _resolve_effective_price(listing, variant=variants[0], discount_map=discount_map)
+        if flash_sale:
+            effective_price = int(flash_sale["flash_price"])
+            discount = None
+        price_score, price_gap = _resolve_price_score(
+            price=effective_price,
+            target_price=30 + _clamp(float(buyer_purchase_power or 0.5), 0.0, 1.0) * 300,
+            price_sensitivity=buyer_price_sensitivity,
+        )
+        return variants[0], effective_price, discount, price_score, price_gap, flash_sale
 
     target_price = 30 + _clamp(float(buyer_purchase_power or 0.5), 0.0, 1.0) * 300
     best: ShopeeListingVariant | None = None
     best_discount: dict[str, Any] | None = None
+    best_flash_sale: dict[str, Any] | None = None
     best_effective_price = 0
     best_price_score = 0.0
     best_price_gap = 0.0
     best_score = -1.0
     for row in variants:
+        flash_sale = _resolve_flash_sale(listing, variant=row, flash_sale_map=flash_sale_map or {})
         effective_price, discount = _resolve_effective_price(listing, variant=row, discount_map=discount_map)
+        if flash_sale:
+            effective_price = int(flash_sale["flash_price"])
+            discount = None
         price_score, price_gap = _resolve_price_score(
             price=effective_price,
             target_price=target_price,
@@ -709,15 +914,17 @@ def _pick_variant_for_buyer(
         )
         stock_score = _clamp(float(_variant_sellable_cap(row)) / 30.0, 0.0, 1.0)
         jitter = rng.random() * 0.06
-        score = 0.70 * price_score + 0.24 * stock_score + 0.06 * jitter
+        flash_sale_bonus = 0.12 if flash_sale else 0.0
+        score = 0.70 * price_score + 0.24 * stock_score + 0.06 * jitter + flash_sale_bonus
         if score > best_score:
             best_score = score
             best = row
             best_discount = discount
+            best_flash_sale = flash_sale
             best_effective_price = effective_price
             best_price_score = price_score
             best_price_gap = price_gap
-    return best, best_effective_price, best_discount, best_price_score, best_price_gap
+    return best, best_effective_price, best_discount, best_price_score, best_price_gap, best_flash_sale
 
 
 
@@ -775,6 +982,7 @@ def simulate_orders_for_run(
     discount_map = _load_ongoing_discount_map(db, run_id=run_id, user_id=user_id, tick_time=now)
     addon_map = _load_ongoing_addon_map(db, run_id=run_id, user_id=user_id, tick_time=now)
     bundle_map = _load_ongoing_bundle_map(db, run_id=run_id, user_id=user_id, tick_time=now)
+    flash_sale_map = _load_ongoing_flash_sale_map(db, run_id=run_id, user_id=user_id, tick_time=now)
 
     skip_reasons: dict[str, int] = {}
     if not live_products:
@@ -880,8 +1088,69 @@ def simulate_orders_for_run(
             if campaign_id is not None
         }
 
+    flash_sale_campaign_ids = {
+        int(item["campaign_id"])
+        for item in flash_sale_map.values()
+        if int(item.get("campaign_id") or 0) > 0
+    }
+    buyer_flash_sale_qty_counts: dict[tuple[str, int, int, int | None], int] = {}
+    if flash_sale_campaign_ids:
+        flash_sale_rows = (
+            db.query(
+                ShopeeOrder.buyer_name,
+                ShopeeOrderItem.marketing_campaign_id,
+                ShopeeOrderItem.listing_id,
+                ShopeeOrderItem.variant_id,
+                func.coalesce(func.sum(ShopeeOrderItem.quantity), 0),
+            )
+            .join(ShopeeOrderItem, ShopeeOrderItem.order_id == ShopeeOrder.id)
+            .filter(
+                ShopeeOrder.run_id == run_id,
+                ShopeeOrder.user_id == user_id,
+                ShopeeOrderItem.marketing_campaign_type == "flash_sale",
+                ShopeeOrderItem.marketing_campaign_id.in_(flash_sale_campaign_ids),
+            )
+            .group_by(
+                ShopeeOrder.buyer_name,
+                ShopeeOrderItem.marketing_campaign_id,
+                ShopeeOrderItem.listing_id,
+                ShopeeOrderItem.variant_id,
+            )
+            .all()
+        )
+        buyer_flash_sale_qty_counts = {
+            (str(buyer_name or ""), int(campaign_id), int(listing_id), int(variant_id) if variant_id is not None else None): int(qty or 0)
+            for buyer_name, campaign_id, listing_id, variant_id, qty in flash_sale_rows
+            if campaign_id is not None and listing_id is not None
+        }
+
+    flash_sale_listing_ids = {int(item.get("listing_id") or 0) for item in flash_sale_map.values() if int(item.get("listing_id") or 0) > 0}
+    flash_sale_listing_map = {int(row.id): row for row in sellable_products if int(row.id) in flash_sale_listing_ids}
+    flash_sale_existing_event_keys: set[tuple[int, str, str]] = set()
+    if flash_sale_map:
+        event_rows = (
+            db.query(
+                ShopeeFlashSaleTrafficEvent.campaign_item_id,
+                ShopeeFlashSaleTrafficEvent.buyer_code,
+                ShopeeFlashSaleTrafficEvent.event_type,
+            )
+            .filter(
+                ShopeeFlashSaleTrafficEvent.run_id == run_id,
+                ShopeeFlashSaleTrafficEvent.user_id == user_id,
+                ShopeeFlashSaleTrafficEvent.event_tick == now,
+            )
+            .all()
+        )
+        flash_sale_existing_event_keys = {
+            (int(campaign_item_id), str(buyer_code or ""), str(event_type or ""))
+            for campaign_item_id, buyer_code, event_type in event_rows
+            if campaign_item_id is not None and buyer_code and event_type
+        }
+
     active_buyer_count = 0
     generated_order_count = 0
+    flash_sale_traffic_view_count = 0
+    flash_sale_traffic_click_count = 0
     for buyer in buyers:
         journey: dict[str, Any] = {
             "buyer_code": buyer.buyer_code,
@@ -913,6 +1182,22 @@ def simulate_orders_for_run(
         active_buyer_count += 1
 
         preferred_categories = _safe_load_str_list(buyer.preferred_categories_json)
+        if flash_sale_map and flash_sale_traffic_view_count + flash_sale_traffic_click_count < FLASH_SALE_TRAFFIC_MAX_EVENTS_PER_TICK:
+            traffic_summary = _simulate_flash_sale_traffic_for_buyer(
+                db,
+                run_id=run_id,
+                user_id=user_id,
+                tick_time=now,
+                buyer=buyer,
+                preferred_categories=preferred_categories,
+                flash_sale_map=flash_sale_map,
+                listing_by_id=flash_sale_listing_map,
+                rng=rng,
+                existing_event_keys=flash_sale_existing_event_keys,
+                remaining_event_slots=FLASH_SALE_TRAFFIC_MAX_EVENTS_PER_TICK - flash_sale_traffic_view_count - flash_sale_traffic_click_count,
+            )
+            flash_sale_traffic_view_count += int(traffic_summary["view_count"])
+            flash_sale_traffic_click_count += int(traffic_summary["click_count"])
         preferred_candidates = [
             row for row in sellable_products if _category_match_score(row.category, preferred_categories) > 0
         ]
@@ -930,17 +1215,19 @@ def simulate_orders_for_run(
         for listing in candidates[:8]:
             category_match = _category_match_score(listing.category, preferred_categories)
             target_price = 30 + float(buyer.purchase_power or 0.5) * 300
-            preview_variant, effective_price, hit_discount, price_score, price_gap = _pick_variant_for_buyer(
+            preview_variant, effective_price, hit_discount, price_score, price_gap, preview_flash_sale = _pick_variant_for_buyer(
                 listing,
                 buyer_purchase_power=float(buyer.purchase_power or 0.5),
                 buyer_price_sensitivity=float(buyer.price_sensitivity or 0.5),
                 rng=rng,
                 discount_map=discount_map,
+                flash_sale_map=flash_sale_map,
             )
             quality_score = _resolve_listing_quality_score(listing)
             stock_score = _clamp(float(_listing_sellable_cap(listing)) / 40.0, 0.0, 1.0)
             base_intent = _clamp(float(buyer.base_buy_intent or 0.0), 0.0, 1.0)
             impulse = _clamp(float(buyer.impulse_level or 0.0), 0.0, 1.0)
+            flash_sale_candidate_bonus = 0.08 if preview_flash_sale else 0.0
             score = (
                 0.32 * category_match
                 + 0.22 * price_score
@@ -948,6 +1235,7 @@ def simulate_orders_for_run(
                 + 0.08 * stock_score
                 + 0.16 * base_intent
                 + 0.08 * impulse
+                + flash_sale_candidate_bonus
             )
             candidate_logs.append(
                 {
@@ -962,6 +1250,9 @@ def simulate_orders_for_run(
                     "discount_hit": bool(hit_discount),
                     "discount_campaign_id": hit_discount["campaign_id"] if hit_discount else None,
                     "discount_variant_id": preview_variant.id if preview_variant and hit_discount else None,
+                    "flash_sale_hit": bool(preview_flash_sale),
+                    "flash_sale_campaign_id": preview_flash_sale["campaign_id"] if preview_flash_sale else None,
+                    "flash_sale_variant_id": preview_variant.id if preview_variant and preview_flash_sale else None,
                     "stock_available": _listing_available_stock(listing),
                     "sellable_cap": _listing_sellable_cap(listing),
                     "score_components": {
@@ -988,12 +1279,13 @@ def simulate_orders_for_run(
             continue
 
         base_order_prob = _clamp(0.08 + best_score * 0.95, 0.05, 0.90)
-        variant, effective_price, hit_discount, selected_price_score, selected_price_gap = _pick_variant_for_buyer(
+        variant, effective_price, hit_discount, selected_price_score, selected_price_gap, flash_sale_hit = _pick_variant_for_buyer(
             best_listing,
             buyer_purchase_power=float(buyer.purchase_power or 0.5),
             buyer_price_sensitivity=float(buyer.price_sensitivity or 0.5),
             rng=rng,
             discount_map=discount_map,
+            flash_sale_map=flash_sale_map,
         )
         original_unit_price = max(1, int((variant.price if variant else best_listing.price) or 0))
         no_discount_price_score, no_discount_price_gap = _resolve_price_score(
@@ -1024,6 +1316,22 @@ def simulate_orders_for_run(
         max_qty = min(3, sellable_cap)
         if best_listing.max_purchase_qty and int(best_listing.max_purchase_qty) > 0:
             max_qty = min(max_qty, int(best_listing.max_purchase_qty))
+        flash_sale_limit_used = 0
+        if flash_sale_hit:
+            flash_sale_remaining_qty = max(0, int(flash_sale_hit.get("remaining_qty") or 0))
+            flash_sale_limit_key = (
+                str(buyer.nickname or ""),
+                int(flash_sale_hit["campaign_id"]),
+                int(best_listing.id),
+                int(variant.id) if variant else None,
+            )
+            flash_sale_limit_used = buyer_flash_sale_qty_counts.get(flash_sale_limit_key, 0)
+            flash_sale_limit_remaining = max(0, int(flash_sale_hit["purchase_limit_per_buyer"]) - flash_sale_limit_used)
+            max_qty = min(max_qty, flash_sale_remaining_qty, flash_sale_limit_remaining)
+            if flash_sale_remaining_qty <= 0:
+                skip_reasons["flash_sale_stock_limit_reached"] = skip_reasons.get("flash_sale_stock_limit_reached", 0) + 1
+            if flash_sale_limit_remaining <= 0:
+                skip_reasons["flash_sale_purchase_limit_reached"] = skip_reasons.get("flash_sale_purchase_limit_reached", 0) + 1
         if max_qty < min_qty:
             skip_reasons["below_min_purchase_qty"] = skip_reasons.get("below_min_purchase_qty", 0) + 1
             journey["decision"] = "skipped_min_qty"
@@ -1046,7 +1354,7 @@ def simulate_orders_for_run(
         )
         no_discount_order_prob = _clamp(0.08 + no_discount_score * 0.95, 0.05, 0.90)
         discount_order_prob = max(base_order_prob, no_discount_order_prob) if hit_discount else base_order_prob
-        bundle_hit = _resolve_bundle_upgrade(
+        bundle_hit = None if flash_sale_hit else _resolve_bundle_upgrade(
             best_listing,
             variant=variant,
             bundle_map=bundle_map,
@@ -1056,10 +1364,17 @@ def simulate_orders_for_run(
             buyer_impulse_level=impulse,
             rng=rng,
         )
+        flash_sale_order_prob = None
+        if flash_sale_hit:
+            flash_sale_order_prob = _clamp(
+                base_order_prob * float(flash_sale_hit["discount_boost"]) * float(flash_sale_hit["slot_multiplier"]),
+                base_order_prob,
+                FLASH_SALE_PROBABILITY_CAP,
+            )
         base_unit_price = max(int(effective_price or 0), 1)
         quantity: int | None = None
         unit_price = base_unit_price
-        applied_campaign = hit_discount
+        applied_campaign = flash_sale_hit or hit_discount
         bundle_applied = False
         bundle_order_prob = None
         bundle_score = None
@@ -1101,12 +1416,14 @@ def simulate_orders_for_run(
             applied_campaign = bundle_hit
             bundle_applied = True
         order_prob = max(discount_order_prob, bundle_order_prob) if bundle_order_prob is not None and bundle_applied else discount_order_prob
+        if flash_sale_order_prob is not None:
+            order_prob = flash_sale_order_prob
         buyer_budget = 30 + _clamp(float(buyer.purchase_power or 0.5), 0.0, 1.0) * 300
         projected_quantity = max(1, int(quantity or min_qty))
         projected_order_amount = float(unit_price * projected_quantity)
         addon_decision: dict[str, Any] | None = None
         gift_decision: dict[str, Any] | None = None
-        matching_gifts = _matching_addon_campaigns(
+        matching_gifts = [] if flash_sale_hit else _matching_addon_campaigns(
             addon_map,
             listing_id=int(best_listing.id),
             variant_id=int(variant.id) if variant else None,
@@ -1128,7 +1445,7 @@ def simulate_orders_for_run(
         if gift_decision and not bundle_applied:
             order_prob = _clamp(order_prob + float(gift_decision["gift_order_bonus"]), order_prob, 0.92)
 
-        if not bundle_applied:
+        if not bundle_applied and not flash_sale_hit:
             matching_addons = _matching_addon_campaigns(
                 addon_map,
                 listing_id=int(best_listing.id),
@@ -1167,6 +1484,12 @@ def simulate_orders_for_run(
             "discount_hit": bool(hit_discount),
             "discount_campaign_id": hit_discount["campaign_id"] if hit_discount else None,
             "discount_campaign_name": hit_discount["campaign_name"] if hit_discount else None,
+            "flash_sale_hit": bool(flash_sale_hit),
+            "flash_sale_campaign_id": flash_sale_hit["campaign_id"] if flash_sale_hit else None,
+            "flash_sale_campaign_name": flash_sale_hit["campaign_name"] if flash_sale_hit else None,
+            "flash_sale_order_prob": round(flash_sale_order_prob, 4) if flash_sale_order_prob is not None else None,
+            "flash_sale_slot_multiplier": round(float(flash_sale_hit["slot_multiplier"]), 4) if flash_sale_hit else None,
+            "flash_sale_discount_boost": round(float(flash_sale_hit["discount_boost"]), 4) if flash_sale_hit else None,
             "bundle_applied": bool(bundle_applied),
             "bundle_campaign_id": bundle_hit["campaign_id"] if bundle_hit else None,
             "bundle_campaign_name": bundle_hit["campaign_name"] if bundle_hit else None,
@@ -1177,6 +1500,7 @@ def simulate_orders_for_run(
             "base_order_prob": round(base_order_prob, 4),
             "no_discount_order_prob": round(no_discount_order_prob, 4),
             "discount_order_prob": round(discount_order_prob, 4),
+            "flash_sale_order_prob": round(flash_sale_order_prob, 4) if flash_sale_order_prob is not None else None,
             "bundle_order_prob": round(bundle_order_prob, 4) if bundle_order_prob is not None else None,
             "addon_campaign_id": addon_decision["campaign"]["campaign_id"] if addon_decision else None,
             "addon_order_bonus": round(float(addon_decision["addon_order_bonus"]), 4) if addon_decision else 0.0,
@@ -1240,9 +1564,9 @@ def simulate_orders_for_run(
                     "stock_consumed_planned": max(0, quantity - shortfall_qty),
                     "image_url": variant.image_url if variant and (variant.image_url or "").strip() else best_listing.cover_url,
                     "line_role": "main",
-                    "marketing_campaign_type": hit_discount["campaign_type"] if hit_discount else None,
-                    "marketing_campaign_id": hit_discount["campaign_id"] if hit_discount else None,
-                    "marketing_campaign_name_snapshot": hit_discount["campaign_name"] if hit_discount else None,
+                    "marketing_campaign_type": applied_campaign["campaign_type"] if applied_campaign else None,
+                    "marketing_campaign_id": applied_campaign["campaign_id"] if applied_campaign else None,
+                    "marketing_campaign_name_snapshot": applied_campaign["campaign_name"] if applied_campaign else None,
                     "original_unit_price": float(original_unit_price),
                     "discounted_unit_price": float(unit_price),
                 }
@@ -1318,6 +1642,31 @@ def simulate_orders_for_run(
         payment = int(sum(int(line["unit_price"]) * int(line["quantity"]) for line in order_lines))
         total_shortfall_qty = int(sum(max(0, int(line["shortfall_qty"])) for line in order_lines))
         total_quantity = int(sum(max(0, int(line["quantity"])) for line in order_lines))
+        flash_sale_item: ShopeeFlashSaleCampaignItem | None = None
+        if flash_sale_hit:
+            flash_sale_item = (
+                db.query(ShopeeFlashSaleCampaignItem)
+                .filter(
+                    ShopeeFlashSaleCampaignItem.id == int(flash_sale_hit["campaign_item_id"]),
+                    ShopeeFlashSaleCampaignItem.run_id == run_id,
+                    ShopeeFlashSaleCampaignItem.user_id == user_id,
+                    ShopeeFlashSaleCampaignItem.status == "active",
+                )
+                .first()
+            )
+            if not flash_sale_item:
+                skip_reasons["flash_sale_item_missing"] = skip_reasons.get("flash_sale_item_missing", 0) + 1
+                journey["decision"] = "skipped_flash_sale_item_missing"
+                journey["reason"] = "flash_sale_item_missing_before_commit"
+                buyer_journeys.append(journey)
+                continue
+            remaining_qty = max(0, int(flash_sale_item.activity_stock_limit or 0) - int(flash_sale_item.sold_qty or 0))
+            if total_quantity > remaining_qty:
+                skip_reasons["flash_sale_stock_limit_reached"] = skip_reasons.get("flash_sale_stock_limit_reached", 0) + 1
+                journey["decision"] = "skipped_flash_sale_stock_limit"
+                journey["reason"] = "quantity_gt_flash_sale_remaining_qty"
+                buyer_journeys.append(journey)
+                continue
         for line in order_lines:
             listing_for_line: ShopeeListing = line["listing"]
             variant_for_line: ShopeeListingVariant | None = line["variant"]
@@ -1342,6 +1691,12 @@ def simulate_orders_for_run(
                 if int(line["shortfall_qty"]) > 0:
                     variant_for_line.oversell_used = int(variant_for_line.oversell_used or 0) + int(line["shortfall_qty"])
                 listing_for_line.stock_available = _listing_available_stock(listing_for_line)
+
+        if flash_sale_item is not None:
+            flash_sale_item.sold_qty = int(flash_sale_item.sold_qty or 0) + total_quantity
+            if flash_sale_item.campaign:
+                flash_sale_item.campaign.order_count = int(flash_sale_item.campaign.order_count or 0) + 1
+                flash_sale_item.campaign.sales_amount = float(flash_sale_item.campaign.sales_amount or 0) + float(unit_price * total_quantity)
 
         order = ShopeeOrder(
             run_id=run_id,
@@ -1415,6 +1770,14 @@ def simulate_orders_for_run(
         if bundle_applied and bundle_hit:
             buyer_bundle_key = (str(buyer.nickname or ""), int(bundle_hit["campaign_id"]))
             buyer_bundle_order_counts[buyer_bundle_key] = buyer_bundle_order_counts.get(buyer_bundle_key, 0) + 1
+        if flash_sale_hit:
+            flash_sale_limit_key = (
+                str(buyer.nickname or ""),
+                int(flash_sale_hit["campaign_id"]),
+                int(best_listing.id),
+                int(variant.id) if variant else None,
+            )
+            buyer_flash_sale_qty_counts[flash_sale_limit_key] = buyer_flash_sale_qty_counts.get(flash_sale_limit_key, 0) + total_quantity
         journey["decision"] = "generated_order"
         journey["reason"] = "order_roll_le_order_prob"
         journey["generated_order"] = {
@@ -1433,6 +1796,10 @@ def simulate_orders_for_run(
             "discount_hit": bool(applied_campaign and applied_campaign["campaign_type"] == "discount"),
             "discount_campaign_id": hit_discount["campaign_id"] if hit_discount else None,
             "discount_campaign_name": hit_discount["campaign_name"] if hit_discount else None,
+            "flash_sale_hit": bool(flash_sale_hit),
+            "flash_sale_campaign_id": flash_sale_hit["campaign_id"] if flash_sale_hit else None,
+            "flash_sale_campaign_name": flash_sale_hit["campaign_name"] if flash_sale_hit else None,
+            "flash_sale_limit_used": flash_sale_limit_used if flash_sale_hit else None,
             "bundle_applied": bundle_applied,
             "bundle_campaign_id": bundle_hit["campaign_id"] if bundle_hit else None,
             "bundle_campaign_name": bundle_hit["campaign_name"] if bundle_hit else None,
@@ -1452,6 +1819,7 @@ def simulate_orders_for_run(
             "base_order_prob": round(base_order_prob, 4),
             "no_discount_order_prob": round(no_discount_order_prob, 4),
             "discount_order_prob": round(discount_order_prob, 4),
+            "flash_sale_order_prob": round(flash_sale_order_prob, 4) if flash_sale_order_prob is not None else None,
             "bundle_order_prob": round(bundle_order_prob, 4) if bundle_order_prob is not None else None,
             "addon_campaign_id": addon_decision["campaign"]["campaign_id"] if addon_decision else None,
             "addon_applied": addon_applied,
@@ -1487,6 +1855,10 @@ def simulate_orders_for_run(
             "weekday_idx": weekday_idx,
             "buyers_total": len(buyers),
             "products_total": len(sellable_products),
+            "flash_sale_traffic": {
+                "view_count": flash_sale_traffic_view_count,
+                "click_count": flash_sale_traffic_click_count,
+            },
         },
     }
     log_row = ShopeeOrderGenerationLog(
@@ -1507,6 +1879,10 @@ def simulate_orders_for_run(
         "active_buyer_count": active_buyer_count,
         "candidate_product_count": len(sellable_products),
         "generated_order_count": generated_order_count,
+        "flash_sale_traffic": {
+            "view_count": flash_sale_traffic_view_count,
+            "click_count": flash_sale_traffic_click_count,
+        },
         "skip_reasons": skip_reasons,
         "buyer_journeys": buyer_journeys,
     }

@@ -7,6 +7,8 @@ interface ShopFlashSaleViewProps {
   runId: number | null;
   readOnly?: boolean;
   onCreate?: () => void;
+  onDetail?: (campaignId: number) => void;
+  onData?: (campaignId: number) => void;
 }
 
 interface FlashSaleCampaignRow {
@@ -21,6 +23,7 @@ interface FlashSaleCampaignRow {
 }
 
 interface FlashSaleTableRow {
+  id: number;
   time: string;
   enabledCount: number;
   totalCount: number;
@@ -28,12 +31,25 @@ interface FlashSaleTableRow {
   clicks: string | number;
   status: string;
   enabled?: boolean;
-  isNextDay?: boolean;
 }
 
-export default function ShopFlashSaleView({ runId, readOnly = false, onCreate }: ShopFlashSaleViewProps) {
+interface FlashSaleMetric {
+  key: string;
+  label: string;
+  value: string | number;
+  delta: number;
+}
+
+interface FlashSalePerformance {
+  label: string;
+  range_text: string;
+  metrics: FlashSaleMetric[];
+}
+
+export default function ShopFlashSaleView({ runId, readOnly = false, onCreate, onDetail, onData }: ShopFlashSaleViewProps) {
   const [activeTab, setActiveTab] = useState('全部');
   const [campaignRows, setCampaignRows] = useState<FlashSaleCampaignRow[]>([]);
+  const [performance, setPerformance] = useState<FlashSalePerformance | null>(null);
 
   useEffect(() => {
     if (!runId) return;
@@ -56,8 +72,27 @@ export default function ShopFlashSaleView({ runId, readOnly = false, onCreate }:
     };
   }, [activeTab, runId]);
 
-  // 模拟截图中的表格数据
-  const mockTableData: FlashSaleTableRow[] = campaignRows.length > 0 ? campaignRows.map((row) => ({
+  useEffect(() => {
+    if (!runId) return;
+    const token = localStorage.getItem(ACCESS_TOKEN_KEY);
+    if (!token) return;
+    let cancelled = false;
+    const loadPerformance = async () => {
+      const response = await fetch(`${API_BASE_URL}/shopee/runs/${runId}/marketing/flash-sale/performance`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) return;
+      const result = await response.json();
+      if (!cancelled) setPerformance(result);
+    };
+    void loadPerformance();
+    return () => {
+      cancelled = true;
+    };
+  }, [runId]);
+
+  const tableData: FlashSaleTableRow[] = campaignRows.map((row) => ({
+    id: row.id,
     time: row.display_time,
     enabledCount: row.product_enabled_count,
     totalCount: row.product_limit,
@@ -65,49 +100,8 @@ export default function ShopFlashSaleView({ runId, readOnly = false, onCreate }:
     clicks: row.click_count || '-',
     status: row.status_label,
     enabled: row.enabled,
-  })) : [
-    {
-      time: '19-03-2026 18:00 - 21:00',
-      enabledCount: 0,
-      totalCount: 50,
-      reminders: '-',
-      clicks: '-',
-      status: '已结束',
-    },
-    {
-      time: '19-03-2026 12:00 - 18:00',
-      enabledCount: 0,
-      totalCount: 50,
-      reminders: '-',
-      clicks: '-',
-      status: '已结束',
-    },
-    {
-      time: '19-03-2026 00:00 - 12:00',
-      enabledCount: 0,
-      totalCount: 50,
-      reminders: '-',
-      clicks: '-',
-      status: '已结束',
-    },
-    {
-      time: '18-03-2026 21:00 - 00:00',
-      isNextDay: true, // +1 标识
-      enabledCount: 0,
-      totalCount: 50,
-      reminders: '-',
-      clicks: '-',
-      status: '已结束',
-    },
-    {
-      time: '18-03-2026 12:00 - 18:00',
-      enabledCount: 0,
-      totalCount: 50,
-      reminders: '-',
-      clicks: '-',
-      status: '已结束',
-    },
-  ];
+  }));
+  const metricByKey = new Map((performance?.metrics || []).map((metric) => [metric.key, metric]));
 
   // 问号提示小图标组件
   const InfoIcon = () => (
@@ -132,7 +126,7 @@ export default function ShopFlashSaleView({ runId, readOnly = false, onCreate }:
           <div className="px-6 py-4 flex justify-between items-center border-b border-[#ebebeb]">
             <div className="flex items-center gap-3">
               <h2 className="text-[16px] font-medium text-[#333]">我的店铺限时抢购表现</h2>
-              <span className="text-[12px] text-[#999]">(数据截至于 22-04-2026 至 29-04-2026 GMT+7)</span>
+              <span className="text-[12px] text-[#999]">({performance?.range_text || '当前游戏周数据加载中'})</span>
             </div>
             <button className="text-[14px] text-[#05a] hover:underline">更多 &gt;</button>
           </div>
@@ -140,23 +134,23 @@ export default function ShopFlashSaleView({ runId, readOnly = false, onCreate }:
           <div className="grid grid-cols-4 py-6">
             <div className="px-6 border-r border-[#ebebeb]">
               <div className="text-[14px] text-[#666]">销售额 <InfoIcon /></div>
-              <div className="mt-2 text-[24px] text-[#333]">฿ 0</div>
-              <div className="mt-1 text-[12px] text-[#999]">较前7天 <span className="text-[#333]">0.00%</span></div>
+              <div className="mt-2 text-[24px] text-[#333]">{metricByKey.get('sales_amount')?.value ?? 'RM 0.00'}</div>
+              <div className="mt-1 text-[12px] text-[#999]">较前7天 <span className="text-[#333]">{(metricByKey.get('sales_amount')?.delta ?? 0).toFixed(2)}%</span></div>
             </div>
             <div className="px-6 border-r border-[#ebebeb]">
               <div className="text-[14px] text-[#666]">订单 <InfoIcon /></div>
-              <div className="mt-2 text-[24px] text-[#333]">0</div>
-              <div className="mt-1 text-[12px] text-[#999]">较前7天 <span className="text-[#333]">0.00%</span></div>
+              <div className="mt-2 text-[24px] text-[#333]">{metricByKey.get('orders_count')?.value ?? 0}</div>
+              <div className="mt-1 text-[12px] text-[#999]">较前7天 <span className="text-[#333]">{(metricByKey.get('orders_count')?.delta ?? 0).toFixed(2)}%</span></div>
             </div>
             <div className="px-6 border-r border-[#ebebeb]">
               <div className="text-[14px] text-[#666]">买家数 <InfoIcon /></div>
-              <div className="mt-2 text-[24px] text-[#333]">0</div>
-              <div className="mt-1 text-[12px] text-[#999]">较前7天 <span className="text-[#333]">0.00%</span></div>
+              <div className="mt-2 text-[24px] text-[#333]">{metricByKey.get('buyers_count')?.value ?? 0}</div>
+              <div className="mt-1 text-[12px] text-[#999]">较前7天 <span className="text-[#333]">{(metricByKey.get('buyers_count')?.delta ?? 0).toFixed(2)}%</span></div>
             </div>
             <div className="px-6">
               <div className="text-[14px] text-[#666]">点击率 (CTR) <InfoIcon /></div>
-              <div className="mt-2 text-[24px] text-[#333]">0.00 %</div>
-              <div className="mt-1 text-[12px] text-[#999]">较前7天 <span className="text-[#333]">-%</span></div>
+              <div className="mt-2 text-[24px] text-[#333]">{metricByKey.get('ctr')?.value ?? '0.00 %'}</div>
+              <div className="mt-1 text-[12px] text-[#999]">较前7天 <span className="text-[#333]">{(metricByKey.get('ctr')?.delta ?? 0).toFixed(2)}%</span></div>
             </div>
           </div>
         </section>
@@ -227,13 +221,12 @@ export default function ShopFlashSaleView({ runId, readOnly = false, onCreate }:
 
               {/* Table Body */}
               <div className="text-[13px] text-[#333]">
-                {mockTableData.map((row, index) => (
+                {tableData.length > 0 ? tableData.map((row, index) => (
                   <div key={index} className="grid grid-cols-[1.8fr_1.5fr_1.2fr_1.2fr_1fr_0.8fr_1fr] border-b border-[#ebebeb] px-4 py-4 items-start hover:bg-[#fcfcfc] transition-colors last:border-0">
-                    
+
                     {/* 时间段 */}
                     <div className="pr-4 leading-relaxed font-medium">
                       {row.time}
-                      {row.isNextDay && <sup className="text-[#999] ml-0.5 text-[10px]">+1</sup>}
                     </div>
                     
                     {/* 商品 */}
@@ -248,7 +241,7 @@ export default function ShopFlashSaleView({ runId, readOnly = false, onCreate }:
                     
                     {/* 状态 */}
                     <div>
-                      <span className="bg-[#f5f5f5] text-[#999] px-2 py-1 rounded-sm text-[12px]">{row.status}</span>
+                      <span className={`${row.status === '进行中' ? 'bg-[#e7f8ed] text-[#26aa5b]' : 'bg-[#f5f5f5] text-[#999]'} px-2 py-1 rounded-sm text-[12px]`}>{row.status}</span>
                     </div>
                     
                     {/* 启用/停用 Toggle (Mock) */}
@@ -260,32 +253,17 @@ export default function ShopFlashSaleView({ runId, readOnly = false, onCreate }:
                     
                     {/* 操作 */}
                     <div className="flex flex-col gap-1.5 items-start">
-                      <button className="text-[#05a] hover:underline">详情</button>
+                      <button type="button" onClick={() => onDetail?.(row.id)} className="text-[#05a] hover:underline">详情</button>
                       <button className="text-[#05a] hover:underline">复制</button>
-                      <button className="text-[#05a] hover:underline">数据</button>
+                      <button type="button" onClick={() => onData?.(row.id)} className="text-[#05a] hover:underline">数据</button>
                     </div>
                   </div>
-                ))}
+                )) : (
+                  <div className="px-4 py-10 text-center text-[13px] text-[#999]">暂无限时抢购活动</div>
+                )}
               </div>
             </div>
 
-            {/* Pagination (Mock) */}
-            <div className="flex items-center justify-end mt-5 text-[13px] text-[#666] gap-2">
-              <button className="p-1 text-[#ccc]" disabled>&lt;</button>
-              <button className="px-2 text-[#ee4d2d]">1</button>
-              <button className="px-2 hover:text-[#ee4d2d]">2</button>
-              <button className="px-2 hover:text-[#ee4d2d]">3</button>
-              <button className="px-2 hover:text-[#ee4d2d]">4</button>
-              <button className="px-2 hover:text-[#ee4d2d]">5</button>
-              <span>...</span>
-              <button className="px-2 hover:text-[#ee4d2d]">193</button>
-              <button className="p-1 hover:text-[#ee4d2d]">&gt;</button>
-              <div className="flex items-center ml-2">
-                <span className="mr-2">跳转至 页</span>
-                <input type="text" className="border border-[#e5e5e5] w-12 h-7 text-center rounded-sm outline-none focus:border-[#ccc]" />
-                <button className="ml-2 border border-[#e5e5e5] px-3 h-7 rounded-sm hover:bg-[#fafafa]">Go</button>
-              </div>
-            </div>
 
           </div>
         </section>

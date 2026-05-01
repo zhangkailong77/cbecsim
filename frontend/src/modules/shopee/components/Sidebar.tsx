@@ -1,14 +1,13 @@
-import React from 'react';
-import { 
-  ChevronDown
-} from 'lucide-react';
 import { useState } from 'react';
+import { ChevronDown } from 'lucide-react';
 
 type ShopeeView = 'dashboard' | 'my-orders' | 'my-products' | 'new-product' | 'my-income' | 'my-balance' | 'bank-accounts' | 'marketing-centre' | 'marketing-discount' | 'marketing-discount-create' | 'marketing-discount-detail' | 'marketing-discount-data'
   | 'marketing-addon-orders'
   | 'marketing-bundle-orders'
   | 'marketing-shop-flash-sale'
-  | 'marketing-shop-flash-sale-create';
+  | 'marketing-shop-flash-sale-create'
+  | 'marketing-shopee-ads'
+  | 'marketing-vouchers';
 
 const menuItems = [
   {
@@ -105,11 +104,17 @@ export default function Sidebar({ activeView, onSelectView }: SidebarProps) {
                       if (child === '营销中心') {
                         onSelectView('marketing-centre');
                       }
+                      if (child === 'Shopee广告') {
+                        onSelectView('marketing-shopee-ads');
+                      }
                       if (child === '折扣') {
                         onSelectView('marketing-discount');
                       }
                       if (child === '我的店铺限时抢购') {
                         onSelectView('marketing-shop-flash-sale');
+                      }
+                      if (child === '代金券') {
+                        onSelectView('marketing-vouchers');
                       }
                     }}
                     className={`w-full text-left pl-10 pr-6 py-2 text-[14px] transition-colors font-normal ${
@@ -120,8 +125,10 @@ export default function Sidebar({ activeView, onSelectView }: SidebarProps) {
                         (child === '我的余额' && activeView === 'my-balance') ||
                         (child === '银行账户' && activeView === 'bank-accounts') ||
                         (child === '营销中心' && activeView === 'marketing-centre') ||
+                        (child === 'Shopee广告' && activeView === 'marketing-shopee-ads') ||
                         (child === '折扣' && (activeView === 'marketing-discount' || activeView === 'marketing-discount-create' || activeView === 'marketing-discount-detail' || activeView === 'marketing-discount-data' || activeView === 'marketing-addon-orders' || activeView === 'marketing-bundle-orders')) ||
-                        (child === '我的店铺限时抢购' && (activeView === 'marketing-shop-flash-sale' || activeView === 'marketing-shop-flash-sale-create')))
+                        (child === '我的店铺限时抢购' && (activeView === 'marketing-shop-flash-sale' || activeView === 'marketing-shop-flash-sale-create')) ||
+                        (child === '代金券' && activeView === 'marketing-vouchers'))
                         ? 'text-[#ee4d2d] border-l-2 border-[#ee4d2d] bg-[#fff7f5]'
                         : 'text-[#333333] hover:text-[#ee4d2d]'
                     }`}

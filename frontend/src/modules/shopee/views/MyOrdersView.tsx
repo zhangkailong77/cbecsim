@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { HelpCircle, RefreshCw, Package, ChevronDown, ChevronUp } from 'lucide-react';
+import { RefreshCw, Package, ChevronDown, ChevronUp } from 'lucide-react';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000';
 const ACCESS_TOKEN_KEY = 'cbec_access_token';
@@ -192,59 +192,8 @@ function formatMarketingCampaignLabel(row: OrderRow) {
   if (row.marketing_campaign_type === 'bundle') return '套餐优惠';
   if (row.marketing_campaign_type === 'add_on') return '加价购';
   if (row.marketing_campaign_type === 'gift') return '满额赠';
+  if (row.marketing_campaign_type === 'flash_sale') return '店铺限时抢购活动';
   return '单品折扣';
-}
-
-function getOrderItemSummary(row: OrderRow) {
-  const items = row.items ?? [];
-  const firstItem = items[0];
-  if (row.marketing_campaign_type !== 'bundle' || items.length <= 1) {
-    return {
-      imageUrl: firstItem?.image_url ?? 'https://picsum.photos/seed/shopee-fallback/80/80',
-      title: firstItem?.product_name ?? '-',
-      subtitle: `规格：${firstItem?.variant_name || '-'} · x${firstItem?.quantity ?? 0}`,
-    };
-  }
-  const totalQty = items.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0);
-  const names = items.map((item) => item.product_name).filter(Boolean);
-  return {
-    imageUrl: firstItem?.image_url ?? 'https://picsum.photos/seed/shopee-bundle/80/80',
-    title: `套餐优惠：${names.slice(0, 2).join(' + ')}${names.length > 2 ? ` 等 ${names.length} 个商品` : ''}`,
-    subtitle: `组合 SKU：共 ${items.length} 个商品 / ${totalQty} 件`,
-  };
-}
-
-function OrderItemImage({ row, summaryImageUrl }: { row: OrderRow; summaryImageUrl: string }) {
-  const items = row.items ?? [];
-  if (row.marketing_campaign_type !== 'bundle' || items.length <= 1) {
-    return (
-      <img
-        src={summaryImageUrl}
-        className="h-14 w-14 rounded border border-gray-100 object-cover"
-        referrerPolicy="no-referrer"
-      />
-    );
-  }
-
-  const images = items.slice(0, 4).map((item, index) => ({
-    key: `${item.listing_id ?? 'listing'}-${item.variant_id ?? index}-${index}`,
-    src: item.image_url ?? summaryImageUrl,
-    alt: item.variant_name || item.product_name || `套餐商品 ${index + 1}`,
-  }));
-
-  return (
-    <div className="grid h-14 w-14 grid-cols-2 gap-0.5 overflow-hidden rounded border border-orange-100 bg-orange-50 p-0.5">
-      {images.map((image) => (
-        <img
-          key={image.key}
-          src={image.src}
-          alt={image.alt}
-          className="h-full w-full rounded-[2px] object-cover"
-          referrerPolicy="no-referrer"
-        />
-      ))}
-    </div>
-  );
 }
 
 function formatBackorderDeadline(val?: string | null) {
@@ -702,7 +651,7 @@ export default function MyOrdersView({ runId, onOpenOrderDetail, readOnly = fals
             <div className="mt-4 flex items-center justify-between">
               <div className="flex items-center gap-1 text-[16px] font-semibold text-gray-800">
                 <span>{countText} 单</span>
-                <HelpCircle size={16} className="text-gray-400 mt-0.5" />
+                <span className="mt-0.5 inline-flex h-4 w-4 items-center justify-center rounded-full border border-gray-300 text-[11px] font-normal text-gray-400">?</span>
               </div>
               <div className="flex items-center gap-6">
                 <div className="text-[14px] text-gray-600">排序方式： 按发货日期排序（最早的在前）</div>
@@ -783,7 +732,6 @@ export default function MyOrdersView({ runId, onOpenOrderDetail, readOnly = fals
 
               {!loading &&
                 (data?.orders ?? []).map((row) => {
-                  const itemSummary = getOrderItemSummary(row);
                   return (
                     <div key={row.id} className="border-b border-gray-100 p-4">
                       <div className="mb-3 -mx-1 rounded-sm border border-gray-100 bg-[#f6f6f6] px-3 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.65)]">
@@ -847,7 +795,9 @@ export default function MyOrdersView({ runId, onOpenOrderDetail, readOnly = fals
                           <div className="text-gray-800">{formatMoney(row.buyer_payment)}</div>
                           {row.marketing_campaign_id && (
                             <div className="text-[11px] text-orange-500 mt-0.5">
-                              {formatMarketingCampaignLabel(row)}：{row.marketing_campaign_name_snapshot || formatMarketingCampaignLabel(row)}
+                              {row.marketing_campaign_type === 'flash_sale'
+                                ? (row.marketing_campaign_name_snapshot || formatMarketingCampaignLabel(row))
+                                : `${formatMarketingCampaignLabel(row)}：${row.marketing_campaign_name_snapshot || formatMarketingCampaignLabel(row)}`}
                             </div>
                           )}
                           {row.marketing_campaign_type !== 'bundle' && row.discount_percent != null && row.discount_percent > 0 && (

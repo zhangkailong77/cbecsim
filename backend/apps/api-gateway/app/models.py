@@ -1416,6 +1416,29 @@ class ShopeeFlashSaleCampaignItem(Base):
     campaign = relationship("ShopeeFlashSaleCampaign", back_populates="items")
 
 
+class ShopeeFlashSaleTrafficEvent(Base):
+    __tablename__ = "shopee_flash_sale_traffic_events"
+    __table_args__ = (
+        Index("idx_flash_sale_traffic_campaign_event", "run_id", "user_id", "campaign_id", "event_type", "event_tick"),
+        Index("idx_flash_sale_traffic_item_buyer", "run_id", "user_id", "campaign_item_id", "buyer_code", "event_type", "event_tick"),
+        Index("idx_flash_sale_traffic_listing", "run_id", "user_id", "listing_id", "variant_id", "event_type"),
+        UniqueConstraint("run_id", "user_id", "campaign_item_id", "buyer_code", "event_type", "event_tick", name="uq_flash_sale_traffic_tick_buyer_item_event"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("game_runs.id"), nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    campaign_id: Mapped[int] = mapped_column(ForeignKey("shopee_flash_sale_campaigns.id"), nullable=False, index=True)
+    campaign_item_id: Mapped[int] = mapped_column(ForeignKey("shopee_flash_sale_campaign_items.id"), nullable=False, index=True)
+    listing_id: Mapped[int] = mapped_column(ForeignKey("shopee_listings.id"), nullable=False, index=True)
+    variant_id: Mapped[int | None] = mapped_column(ForeignKey("shopee_listing_variants.id"), nullable=True, index=True)
+    buyer_code: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    event_type: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    event_tick: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    source: Mapped[str] = mapped_column(String(32), nullable=False, default="simulator")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
 class ShopeeFlashSaleDraft(Base):
     __tablename__ = "shopee_flash_sale_drafts"
     __table_args__ = (
