@@ -63,6 +63,18 @@ interface OrderRow {
   marketing_campaign_id?: number | null;
   marketing_campaign_name_snapshot?: string | null;
   discount_percent?: number | null;
+  order_subtotal_amount?: number;
+  voucher_campaign_type?: string | null;
+  voucher_campaign_id?: number | null;
+  voucher_name_snapshot?: string | null;
+  voucher_code_snapshot?: string | null;
+  voucher_discount_amount?: number;
+  shipping_promotion_campaign_id?: number | null;
+  shipping_promotion_name_snapshot?: string | null;
+  shipping_promotion_tier_index?: number | null;
+  shipping_fee_before_promotion?: number;
+  shipping_fee_after_promotion?: number;
+  shipping_promotion_discount_amount?: number;
 }
 
 interface OrdersResponse {
@@ -90,6 +102,7 @@ interface SettlementResponse {
   payment_fee_amount: number;
   shipping_cost_amount: number;
   shipping_subsidy_amount: number;
+  shipping_promotion_discount_amount: number;
   net_income_amount: number;
   settled_at: string | null;
 }
@@ -194,6 +207,15 @@ function formatMarketingCampaignLabel(row: OrderRow) {
   if (row.marketing_campaign_type === 'gift') return '满额赠';
   if (row.marketing_campaign_type === 'flash_sale') return '店铺限时抢购活动';
   return '单品折扣';
+}
+
+function formatVoucherCampaignLabel(row: OrderRow) {
+  if (row.voucher_campaign_type === 'product_voucher') return '商品代金券';
+  if (row.voucher_campaign_type === 'live_voucher') return '直播代金券';
+  if (row.voucher_campaign_type === 'video_voucher') return '视频代金券';
+  if (row.voucher_campaign_type === 'private_voucher') return '专属代金券';
+  if (row.voucher_campaign_type === 'follow_voucher') return '关注礼代金券';
+  return '店铺代金券';
 }
 
 function formatBackorderDeadline(val?: string | null) {
@@ -805,6 +827,21 @@ export default function MyOrdersView({ runId, onOpenOrderDetail, readOnly = fals
                               折扣 {row.discount_percent}% off
                             </div>
                           )}
+                          {row.voucher_campaign_id && Number(row.voucher_discount_amount || 0) > 0 && (
+                            <div className="text-[11px] text-orange-500 mt-0.5">
+                              {formatVoucherCampaignLabel(row)}：{row.voucher_name_snapshot || row.voucher_code_snapshot || formatVoucherCampaignLabel(row)}
+                              <span className="text-orange-400"> -{formatMoney(row.voucher_discount_amount || 0)}</span>
+                            </div>
+                          )}
+                          {row.shipping_promotion_campaign_id && Number(row.shipping_promotion_discount_amount || 0) > 0 && (
+                            <div className="text-[11px] text-orange-500 mt-0.5">
+                              运费促销：{row.shipping_promotion_name_snapshot || '运费优惠'}
+                              <span className="text-orange-400"> -{formatMoney(row.shipping_promotion_discount_amount || 0)}</span>
+                              <div className="text-orange-400">
+                                运费 {formatMoney(row.shipping_fee_before_promotion || 0)} → {formatMoney(row.shipping_fee_after_promotion || 0)}
+                              </div>
+                            </div>
+                          )}
                         </div>
                         {isShippingView ? (
                           <>
@@ -1024,6 +1061,7 @@ export default function MyOrdersView({ runId, onOpenOrderDetail, readOnly = fals
               <div>支付手续费</div><div className="text-right">-{formatMoney(settlementDialog.payment_fee_amount)}</div>
               <div>运费成本</div><div className="text-right">-{formatMoney(settlementDialog.shipping_cost_amount)}</div>
               <div>运费补贴</div><div className="text-right">+{formatMoney(settlementDialog.shipping_subsidy_amount)}</div>
+              <div>运费促销</div><div className="text-right">-{formatMoney(settlementDialog.shipping_promotion_discount_amount || 0)}</div>
               <div className="font-semibold">净入账</div><div className="text-right font-semibold text-[#ee4d2d]">{formatMoney(settlementDialog.net_income_amount)}</div>
             </div>
             <div className="mt-3 text-[12px] text-gray-500">

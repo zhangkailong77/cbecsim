@@ -1,5 +1,6 @@
 from datetime import date, datetime, time, timedelta
 import hashlib
+import re
 import json
 import logging
 import os
@@ -51,6 +52,23 @@ from app.models import (
     ShopeeDiscountDraft,
     ShopeeDiscountDraftItem,
     ShopeeDiscountPerformanceDaily,
+    ShopeeShopVoucherCampaign,
+    ShopeeProductVoucherCampaign,
+    ShopeeFollowVoucherCampaign,
+    ShopeeAutoReplySetting,
+    ShopeeQuickReplyPreference,
+    ShopeeQuickReplyGroup,
+    ShopeeQuickReplyMessage,
+    ShopeeShippingFeePromotionCampaign,
+    ShopeeShippingFeePromotionChannel,
+    ShopeeShippingFeePromotionTier,
+    ShopeeProductVoucherItem,
+    ShopeePrivateVoucherCampaign,
+    ShopeePrivateVoucherItem,
+    ShopeeLiveVoucherCampaign,
+    ShopeeLiveVoucherItem,
+    ShopeeVideoVoucherCampaign,
+    ShopeeVideoVoucherItem,
     ShopeeFinanceLedgerEntry,
     ShopeeFlashSaleCampaign,
     ShopeeFlashSaleCampaignItem,
@@ -109,6 +127,13 @@ REDIS_CACHE_TTL_DISCOUNT_BOOTSTRAP_SEC = max(10, int(os.getenv("REDIS_CACHE_TTL_
 REDIS_CACHE_TTL_DISCOUNT_LIST_SEC = max(10, int(os.getenv("REDIS_CACHE_TTL_DISCOUNT_LIST_SEC", "30")))
 REDIS_CACHE_TTL_DISCOUNT_DETAIL_SEC = max(10, int(os.getenv("REDIS_CACHE_TTL_DISCOUNT_DETAIL_SEC", "30")))
 REDIS_CACHE_TTL_DISCOUNT_CREATE_BOOTSTRAP_SEC = max(10, int(os.getenv("REDIS_CACHE_TTL_DISCOUNT_CREATE_BOOTSTRAP_SEC", "30")))
+REDIS_CACHE_TTL_SHOPEE_VOUCHER_CREATE_BOOTSTRAP_SEC = max(10, int(os.getenv("REDIS_CACHE_TTL_SHOPEE_VOUCHER_CREATE_BOOTSTRAP_SEC", "60")))
+REDIS_CACHE_TTL_SHOPEE_VOUCHER_CODE_CHECK_SEC = max(5, int(os.getenv("REDIS_CACHE_TTL_SHOPEE_VOUCHER_CODE_CHECK_SEC", "10")))
+REDIS_CACHE_TTL_SHOPEE_PRODUCT_VOUCHER_ELIGIBLE_PRODUCTS_SEC = max(10, int(os.getenv("REDIS_CACHE_TTL_SHOPEE_PRODUCT_VOUCHER_ELIGIBLE_PRODUCTS_SEC", "30")))
+REDIS_CACHE_TTL_SHOPEE_SHIPPING_FEE_PROMOTION_BOOTSTRAP_SEC = max(10, int(os.getenv("REDIS_CACHE_TTL_SHOPEE_SHIPPING_FEE_PROMOTION_BOOTSTRAP_SEC", "60")))
+REDIS_CACHE_TTL_SHOPEE_SHIPPING_FEE_PROMOTION_LIST_SEC = max(10, int(os.getenv("REDIS_CACHE_TTL_SHOPEE_SHIPPING_FEE_PROMOTION_LIST_SEC", "60")))
+REDIS_CACHE_TTL_SHOPEE_AUTO_REPLY_SETTINGS_SEC = max(10, int(os.getenv("REDIS_CACHE_TTL_SHOPEE_AUTO_REPLY_SETTINGS_SEC", "300")))
+REDIS_CACHE_TTL_SHOPEE_QUICK_REPLY_LIST_SEC = max(10, int(os.getenv("REDIS_CACHE_TTL_SHOPEE_QUICK_REPLY_LIST_SEC", "300")))
 REDIS_CACHE_TTL_DISCOUNT_ELIGIBLE_PRODUCTS_SEC = max(10, int(os.getenv("REDIS_CACHE_TTL_DISCOUNT_ELIGIBLE_PRODUCTS_SEC", "20")))
 REDIS_CACHE_TTL_DISCOUNT_DRAFT_SEC = max(30, int(os.getenv("REDIS_CACHE_TTL_DISCOUNT_DRAFT_SEC", "300")))
 REDIS_CACHE_TTL_ADDON_BOOTSTRAP_SEC = max(10, int(os.getenv("REDIS_CACHE_TTL_ADDON_BOOTSTRAP_SEC", "30")))
@@ -131,6 +156,15 @@ REDIS_RATE_LIMIT_DISCOUNT_DETAIL_PER_MIN = max(10, int(os.getenv("REDIS_RATE_LIM
 REDIS_RATE_LIMIT_DISCOUNT_DATA_PER_MIN = max(10, int(os.getenv("REDIS_RATE_LIMIT_DISCOUNT_DATA_PER_MIN", "120")))
 REDIS_RATE_LIMIT_DISCOUNT_DATA_EXPORT_PER_MIN = max(5, int(os.getenv("REDIS_RATE_LIMIT_DISCOUNT_DATA_EXPORT_PER_MIN", "10")))
 REDIS_RATE_LIMIT_DISCOUNT_CREATE_BOOTSTRAP_PER_MIN = max(10, int(os.getenv("REDIS_RATE_LIMIT_DISCOUNT_CREATE_BOOTSTRAP_PER_MIN", "60")))
+REDIS_RATE_LIMIT_SHOPEE_VOUCHER_CREATE_BOOTSTRAP_PER_MIN = max(10, int(os.getenv("REDIS_RATE_LIMIT_SHOPEE_VOUCHER_CREATE_BOOTSTRAP_PER_MIN", "60")))
+REDIS_RATE_LIMIT_SHOPEE_VOUCHER_CODE_CHECK_PER_MIN = max(10, int(os.getenv("REDIS_RATE_LIMIT_SHOPEE_VOUCHER_CODE_CHECK_PER_MIN", "120")))
+REDIS_RATE_LIMIT_SHOPEE_VOUCHER_CREATE_PER_MIN = max(5, int(os.getenv("REDIS_RATE_LIMIT_SHOPEE_VOUCHER_CREATE_PER_MIN", "20")))
+REDIS_RATE_LIMIT_SHOPEE_SHIPPING_FEE_PROMOTION_PER_MIN = max(10, int(os.getenv("REDIS_RATE_LIMIT_SHOPEE_SHIPPING_FEE_PROMOTION_PER_MIN", "120")))
+REDIS_RATE_LIMIT_SHOPEE_SHIPPING_FEE_PROMOTION_CREATE_PER_MIN = max(5, int(os.getenv("REDIS_RATE_LIMIT_SHOPEE_SHIPPING_FEE_PROMOTION_CREATE_PER_MIN", "20")))
+REDIS_RATE_LIMIT_SHOPEE_AUTO_REPLY_PER_MIN = max(10, int(os.getenv("REDIS_RATE_LIMIT_SHOPEE_AUTO_REPLY_PER_MIN", "120")))
+REDIS_RATE_LIMIT_SHOPEE_AUTO_REPLY_UPDATE_PER_MIN = max(5, int(os.getenv("REDIS_RATE_LIMIT_SHOPEE_AUTO_REPLY_UPDATE_PER_MIN", "30")))
+REDIS_RATE_LIMIT_SHOPEE_QUICK_REPLY_PER_MIN = max(10, int(os.getenv("REDIS_RATE_LIMIT_SHOPEE_QUICK_REPLY_PER_MIN", "120")))
+REDIS_RATE_LIMIT_SHOPEE_QUICK_REPLY_UPDATE_PER_MIN = max(5, int(os.getenv("REDIS_RATE_LIMIT_SHOPEE_QUICK_REPLY_UPDATE_PER_MIN", "30")))
 REDIS_RATE_LIMIT_DISCOUNT_ELIGIBLE_PRODUCTS_PER_MIN = max(10, int(os.getenv("REDIS_RATE_LIMIT_DISCOUNT_ELIGIBLE_PRODUCTS_PER_MIN", "120")))
 REDIS_RATE_LIMIT_DISCOUNT_DRAFTS_PER_MIN = max(10, int(os.getenv("REDIS_RATE_LIMIT_DISCOUNT_DRAFTS_PER_MIN", "60")))
 REDIS_RATE_LIMIT_DISCOUNT_CREATE_PER_MIN = max(5, int(os.getenv("REDIS_RATE_LIMIT_DISCOUNT_CREATE_PER_MIN", "20")))
@@ -168,6 +202,10 @@ def _shopee_addon_orders_cache_prefix(run_id: int, user_id: int) -> str:
 
 def _shopee_bundle_orders_cache_prefix(run_id: int, user_id: int) -> str:
     return f"{REDIS_PREFIX}:cache:shopee:bundle:orders:{run_id}:{user_id}:"
+
+
+def _shopee_voucher_orders_cache_prefix(run_id: int, user_id: int) -> str:
+    return f"{REDIS_PREFIX}:cache:shopee:voucher:orders:{run_id}:{user_id}:"
 
 
 def _shopee_marketing_bootstrap_cache_key(*, run_id: int, user_id: int, market: str, lang: str) -> str:
@@ -245,6 +283,7 @@ def _invalidate_shopee_orders_cache_for_user(*, run_id: int, user_id: int) -> No
     cache_delete_prefix(_shopee_orders_cache_prefix(run_id, user_id))
     cache_delete_prefix(_shopee_addon_orders_cache_prefix(run_id, user_id))
     cache_delete_prefix(_shopee_bundle_orders_cache_prefix(run_id, user_id))
+    cache_delete_prefix(_shopee_voucher_orders_cache_prefix(run_id, user_id))
 
 
 def _shopee_addon_orders_cache_key(*, run_id: int, user_id: int, source_campaign_id: int) -> str:
@@ -253,6 +292,53 @@ def _shopee_addon_orders_cache_key(*, run_id: int, user_id: int, source_campaign
 
 def _shopee_bundle_orders_cache_key(*, run_id: int, user_id: int, campaign_id: int) -> str:
     return f"{_shopee_bundle_orders_cache_prefix(run_id, user_id)}{campaign_id}"
+
+
+def _shopee_voucher_orders_cache_key(*, run_id: int, user_id: int, voucher_type: str, campaign_id: int, page: int, page_size: int) -> str:
+    safe_voucher_type = (voucher_type or "shop_voucher").strip().lower() or "shop_voucher"
+    return f"{_shopee_voucher_orders_cache_prefix(run_id, user_id)}{safe_voucher_type}:{campaign_id}:{page}:{page_size}"
+
+
+def _shopee_auto_reply_settings_cache_key(*, run_id: int, user_id: int) -> str:
+    return f"{REDIS_PREFIX}:cache:shopee:auto_reply:settings:{run_id}:{user_id}"
+
+
+def _invalidate_shopee_auto_reply_cache(*, run_id: int, user_id: int) -> None:
+    cache_delete_prefix(_shopee_auto_reply_settings_cache_key(run_id=run_id, user_id=user_id))
+
+
+def _enforce_shopee_auto_reply_rate_limit(*, user_id: int, update: bool = False) -> None:
+    limited, _remaining, reset_at = check_rate_limit(
+        key=f"{REDIS_PREFIX}:ratelimit:shopee:auto_reply:{'update' if update else 'read'}:user:{user_id}",
+        limit=REDIS_RATE_LIMIT_SHOPEE_AUTO_REPLY_UPDATE_PER_MIN if update else REDIS_RATE_LIMIT_SHOPEE_AUTO_REPLY_PER_MIN,
+        window_sec=60,
+    )
+    if limited:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"请求过于频繁，请在 {reset_at} 后重试",
+        )
+
+
+def _shopee_quick_reply_list_cache_key(*, run_id: int, user_id: int) -> str:
+    return f"{REDIS_PREFIX}:cache:shopee:quick_reply:list:{run_id}:{user_id}"
+
+
+def _invalidate_shopee_quick_reply_cache(*, run_id: int, user_id: int) -> None:
+    cache_delete_prefix(_shopee_quick_reply_list_cache_key(run_id=run_id, user_id=user_id))
+
+
+def _enforce_shopee_quick_reply_rate_limit(*, user_id: int, update: bool = False) -> None:
+    limited, _remaining, reset_at = check_rate_limit(
+        key=f"{REDIS_PREFIX}:ratelimit:shopee:quick_reply:{'update' if update else 'read'}:user:{user_id}",
+        limit=REDIS_RATE_LIMIT_SHOPEE_QUICK_REPLY_UPDATE_PER_MIN if update else REDIS_RATE_LIMIT_SHOPEE_QUICK_REPLY_PER_MIN,
+        window_sec=60,
+    )
+    if limited:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"请求过于频繁，请在 {reset_at} 后重试",
+        )
 
 
 def _enforce_shopee_orders_list_rate_limit(*, user_id: int) -> None:
@@ -287,6 +373,134 @@ def _acquire_shopee_simulate_lock_or_409(*, run_id: int, user_id: int) -> tuple[
     if token is None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="订单模拟正在进行中，请稍后重试")
     return lock_key, token
+
+
+DEFAULT_AUTO_REPLY_MESSAGE = "您好，欢迎光临本店！请问有什么可以帮您？"
+OFF_WORK_AUTO_REPLY_MESSAGE = "亲爱的买家，您的消息已收到。由于目前是非工作时间，我们暂时无法回复您。我们一上线就会立即回复您。感谢您的理解。"
+AUTO_REPLY_TYPES = {"default", "off_work"}
+AUTO_REPLY_MAX_MESSAGE_LENGTH = 500
+
+
+class ShopeeAutoReplySettingResponse(BaseModel):
+    id: int | None = None
+    reply_type: str
+    enabled: bool
+    message: str
+    work_time_enabled: bool = False
+    work_start_time: str | None = None
+    work_end_time: str | None = None
+    timezone: str = "game_time"
+    trigger_interval_minutes: int
+    trigger_once_per_game_day: bool
+    sent_count: int = 0
+    last_sent_game_at: datetime | None = None
+    status: str
+
+
+class ShopeeAutoReplyRulesResponse(BaseModel):
+    max_message_length: int = AUTO_REPLY_MAX_MESSAGE_LENGTH
+    default_reply_interval_minutes: int = 1440
+    off_work_once_per_game_day: bool = True
+
+
+class ShopeeAutoReplySettingsResponse(BaseModel):
+    default_reply: ShopeeAutoReplySettingResponse
+    off_work_reply: ShopeeAutoReplySettingResponse
+    rules: ShopeeAutoReplyRulesResponse
+
+
+class ShopeeAutoReplyUpdateRequest(BaseModel):
+    enabled: bool | None = None
+    message: str | None = None
+    work_start_time: str | None = None
+    work_end_time: str | None = None
+
+
+class ShopeeAutoReplyUpdateResponse(BaseModel):
+    setting: ShopeeAutoReplySettingResponse
+
+
+QUICK_REPLY_MAX_GROUPS = 25
+QUICK_REPLY_MAX_MESSAGES_PER_GROUP = 20
+QUICK_REPLY_MAX_GROUP_NAME_LENGTH = 200
+QUICK_REPLY_MAX_MESSAGE_LENGTH = 500
+QUICK_REPLY_MAX_TAGS_PER_MESSAGE = 3
+QUICK_REPLY_MAX_TAG_LENGTH = 32
+
+
+class ShopeeQuickReplyPreferenceResponse(BaseModel):
+    auto_hint_enabled: bool
+
+
+class ShopeeQuickReplyLimitsResponse(BaseModel):
+    max_groups: int = QUICK_REPLY_MAX_GROUPS
+    max_messages_per_group: int = QUICK_REPLY_MAX_MESSAGES_PER_GROUP
+    max_group_name_length: int = QUICK_REPLY_MAX_GROUP_NAME_LENGTH
+    max_message_length: int = QUICK_REPLY_MAX_MESSAGE_LENGTH
+    max_tags_per_message: int = QUICK_REPLY_MAX_TAGS_PER_MESSAGE
+
+
+class ShopeeQuickReplyMessageResponse(BaseModel):
+    id: int
+    message: str
+    tags: list[str]
+    sort_order: int
+
+
+class ShopeeQuickReplyGroupResponse(BaseModel):
+    id: int
+    group_name: str
+    enabled: bool
+    sort_order: int
+    message_count: int
+    messages: list[ShopeeQuickReplyMessageResponse]
+
+
+class ShopeeQuickReplyListResponse(BaseModel):
+    preference: ShopeeQuickReplyPreferenceResponse
+    limits: ShopeeQuickReplyLimitsResponse
+    groups: list[ShopeeQuickReplyGroupResponse]
+
+
+class ShopeeQuickReplyPreferenceUpdateRequest(BaseModel):
+    auto_hint_enabled: bool
+
+
+class ShopeeQuickReplyPreferenceUpdateResponse(BaseModel):
+    preference: ShopeeQuickReplyPreferenceResponse
+
+
+class ShopeeQuickReplyCreateMessageRequest(BaseModel):
+    message: str
+    tags: list[str] = Field(default_factory=list)
+
+
+class ShopeeQuickReplyCreateGroupRequest(BaseModel):
+    group_name: str
+    enabled: bool = True
+    messages: list[ShopeeQuickReplyCreateMessageRequest]
+
+
+class ShopeeQuickReplyUpdateGroupRequest(BaseModel):
+    group_name: str
+    enabled: bool = True
+    messages: list[ShopeeQuickReplyCreateMessageRequest]
+
+
+class ShopeeQuickReplyGroupCreateResponse(BaseModel):
+    group: ShopeeQuickReplyGroupResponse
+
+
+class ShopeeQuickReplyGroupEnabledRequest(BaseModel):
+    enabled: bool
+
+
+class ShopeeQuickReplyGroupSortRequest(BaseModel):
+    direction: str
+
+
+class ShopeeQuickReplyGroupReorderRequest(BaseModel):
+    group_ids: list[int]
 
 
 class ShopeeOrderItemResponse(BaseModel):
@@ -349,6 +563,18 @@ class ShopeeOrderResponse(BaseModel):
     marketing_campaign_id: int | None = None
     marketing_campaign_name_snapshot: str | None = None
     discount_percent: float | None = None
+    order_subtotal_amount: float = 0
+    voucher_campaign_type: str | None = None
+    voucher_campaign_id: int | None = None
+    voucher_name_snapshot: str | None = None
+    voucher_code_snapshot: str | None = None
+    voucher_discount_amount: float = 0
+    shipping_promotion_campaign_id: int | None = None
+    shipping_promotion_name_snapshot: str | None = None
+    shipping_promotion_tier_index: int | None = None
+    shipping_fee_before_promotion: float = 0
+    shipping_fee_after_promotion: float = 0
+    shipping_promotion_discount_amount: float = 0
 
 
 class ShopeeOrderTabCounts(BaseModel):
@@ -458,6 +684,7 @@ class ShopeeOrderSettlementResponse(BaseModel):
     payment_fee_amount: float
     shipping_cost_amount: float
     shipping_subsidy_amount: float
+    shipping_promotion_discount_amount: float = 0
     net_income_amount: float
     settled_at: datetime | None
 
@@ -821,6 +1048,385 @@ class ShopeeDiscountCampaignCreateResponse(BaseModel):
     item_count: int
     start_at: datetime
     end_at: datetime
+
+
+class ShopeeVoucherCreateMetaResponse(BaseModel):
+    run_id: int
+    user_id: int
+    voucher_type: str
+    read_only: bool
+    current_tick: datetime
+    currency: str = "RM"
+
+
+class ShopeeVoucherCreateFormResponse(BaseModel):
+    voucher_name: str = ""
+    code_prefix: str = "HOME"
+    code_suffix_max_length: int = 5
+    start_at: str
+    end_at: str
+    display_before_start: bool = False
+    display_start_at: str | None = None
+    reward_type: str = "discount"
+    discount_type: str = "fixed_amount"
+    discount_amount: float | None = None
+    discount_percent: float | None = None
+    max_discount_type: str = "set_amount"
+    max_discount_amount: float | None = None
+    min_spend_amount: float | None = None
+    usage_limit: int | None = None
+    per_buyer_limit: int = 1
+    display_type: str = "all_pages"
+    display_channels: list[str] = Field(default_factory=list)
+    applicable_scope: str = "all_shop_products"
+    audience_scope: str = ""
+
+
+class ShopeeVoucherCreateRulesResponse(BaseModel):
+    voucher_name_max_length: int = 100
+    code_suffix_pattern: str = "^[A-Z0-9]{1,5}$"
+    min_duration_minutes: int = 1
+    max_duration_days: int = 180
+    discount_types: list[str] = Field(default_factory=lambda: ["fixed_amount", "percent"])
+    max_discount_types: list[str] = Field(default_factory=lambda: ["set_amount", "no_limit"])
+    display_types: list[str] = Field(default_factory=lambda: ["all_pages", "specific_channels", "code_only"])
+    display_channels: list[str] = Field(default_factory=lambda: ["checkout_page"])
+    min_selected_products: int = 1
+    max_selected_products: int = 100
+    requires_usage_limit: bool = True
+
+
+class ShopeeVoucherProductPickerResponse(BaseModel):
+    default_page_size: int = 20
+    search_fields: list[str] = Field(default_factory=lambda: ["product_name", "product_id"])
+    available_only_default: bool = True
+
+
+class ShopeeVoucherCreateBootstrapResponse(BaseModel):
+    meta: ShopeeVoucherCreateMetaResponse
+    form: ShopeeVoucherCreateFormResponse
+    rules: ShopeeVoucherCreateRulesResponse
+    product_picker: ShopeeVoucherProductPickerResponse | None = None
+    selected_products: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class ShopeeFollowVoucherCreateFormResponse(BaseModel):
+    voucher_name: str = ""
+    claim_start_at: str
+    claim_end_at: str
+    valid_days_after_claim: int = 7
+    reward_type: str = "discount"
+    discount_type: str = "fixed_amount"
+    discount_amount: float | None = None
+    discount_percent: float | None = None
+    max_discount_type: str = "set_amount"
+    max_discount_amount: float | None = None
+    min_spend_amount: float | None = None
+    usage_limit: int | None = None
+    per_buyer_limit: int = 1
+    trigger_type: str = "follow_shop"
+    display_type: str = "follow_reward"
+    applicable_scope: str = "all_products"
+
+
+class ShopeeFollowVoucherCreateRulesResponse(BaseModel):
+    voucher_name_max_length: int = 100
+    valid_days_after_claim: int = 7
+    min_duration_minutes: int = 1
+    max_duration_days: int = 180
+    discount_types: list[str] = Field(default_factory=lambda: ["fixed_amount", "percent"])
+    max_discount_types: list[str] = Field(default_factory=lambda: ["set_amount", "no_limit"])
+    requires_usage_limit: bool = True
+
+
+class ShopeeFollowVoucherCreateBootstrapResponse(BaseModel):
+    meta: ShopeeVoucherCreateMetaResponse
+    form: ShopeeFollowVoucherCreateFormResponse
+    rules: ShopeeFollowVoucherCreateRulesResponse
+
+
+class ShopeeFollowVoucherCampaignCreateRequest(BaseModel):
+    voucher_type: str = "follow_voucher"
+    voucher_name: str
+    claim_start_at: str
+    claim_end_at: str
+    reward_type: str = "discount"
+    discount_type: str = "fixed_amount"
+    discount_amount: float | None = None
+    discount_percent: float | None = None
+    max_discount_type: str = "set_amount"
+    max_discount_amount: float | None = None
+    min_spend_amount: float
+    usage_limit: int
+    per_buyer_limit: int = 1
+
+
+class ShopeeVoucherCodeCheckResponse(BaseModel):
+    code_prefix: str
+    code_suffix: str
+    voucher_code: str
+    available: bool
+    message: str
+
+
+class ShopeeProductVoucherEligibleProductResponse(BaseModel):
+    listing_id: int
+    variant_id: int | None = None
+    variant_ids: list[int] = Field(default_factory=list)
+    product_name: str
+    variant_name: str = ""
+    sku: str | None = None
+    image_url: str | None = None
+    category_key: str = "all"
+    category_label: str = "全部"
+    original_price: float
+    price_range_label: str | None = None
+    stock_available: int
+    likes_count: int = 0
+    conflict: bool = False
+
+
+class ShopeeProductVoucherEligibleProductsResponse(BaseModel):
+    page: int
+    page_size: int
+    total: int
+    items: list[ShopeeProductVoucherEligibleProductResponse] = Field(default_factory=list)
+
+
+class ShopeeProductVoucherItemPayload(BaseModel):
+    listing_id: int
+    variant_id: int | None = None
+
+
+class ShopeeVoucherCampaignCreateRequest(BaseModel):
+    voucher_type: str = "shop_voucher"
+    voucher_name: str
+    code_suffix: str = ""
+    start_at: str
+    end_at: str
+    display_before_start: bool = False
+    display_start_at: str | None = None
+    reward_type: str = "discount"
+    discount_type: str = "fixed_amount"
+    discount_amount: float | None = None
+    discount_percent: float | None = None
+    max_discount_type: str = "set_amount"
+    max_discount_amount: float | None = None
+    min_spend_amount: float
+    usage_limit: int
+    per_buyer_limit: int = 1
+    display_type: str = "all_pages"
+    display_channels: list[str] = Field(default_factory=list)
+    applicable_scope: str = ""
+    live_scope: str = "all_live_sessions"
+    video_scope: str = "all_videos"
+    selected_products: list[ShopeeProductVoucherItemPayload] = Field(default_factory=list)
+
+
+class ShopeeVoucherCampaignCreateResponse(BaseModel):
+    campaign_id: int
+    voucher_type: str
+    status: str
+    redirect_url: str = "/shopee/marketing/vouchers"
+
+
+class ShopeeVoucherSummaryResponse(BaseModel):
+    sales_amount: float = 0
+    order_count: int = 0
+    usage_rate: float = 0
+    buyer_count: int = 0
+
+
+class ShopeeVoucherTabResponse(BaseModel):
+    key: str
+    label: str
+    count: int
+
+
+class ShopeeVoucherRowResponse(BaseModel):
+    id: int
+    voucher_name: str
+    voucher_code: str
+    voucher_type: str
+    voucher_type_label: str
+    discount_type: str
+    discount_label: str
+    status: str
+    status_label: str
+    scope_label: str
+    usage_limit: int
+    used_count: int
+    period: str
+
+
+class ShopeeVoucherListPageResponse(BaseModel):
+    page: int
+    page_size: int
+    total: int
+    items: list[ShopeeVoucherRowResponse] = Field(default_factory=list)
+
+
+class ShopeeVoucherListResponse(BaseModel):
+    summary: ShopeeVoucherSummaryResponse
+    tabs: list[ShopeeVoucherTabResponse] = Field(default_factory=list)
+    list: ShopeeVoucherListPageResponse
+
+
+class ShopeeVoucherDetailResponse(BaseModel):
+    meta: ShopeeVoucherCreateMetaResponse
+    form: ShopeeVoucherCreateFormResponse | ShopeeFollowVoucherCreateFormResponse
+    selected_products: list[dict[str, Any]] = Field(default_factory=list)
+    status: str
+    status_label: str
+    voucher_code: str
+    used_count: int = 0
+    sales_amount: float = 0
+    order_count: int = 0
+    buyer_count: int = 0
+    created_at: datetime
+    updated_at: datetime
+
+
+class ShopeeVoucherOrdersInfoResponse(BaseModel):
+    status_label: str
+    voucher_name: str
+    reward_type_label: str
+    min_spend_text: str
+    discount_text: str
+    period: str
+    voucher_code: str
+    voucher_type_label: str
+    applicable_scope_label: str
+    display_setting_label: str
+    usage_limit: int
+    claimed_count: int
+    used_count: int
+
+
+class ShopeeVoucherOrderProductResponse(BaseModel):
+    image_url: str | None = None
+    product_name: str = ""
+
+
+class ShopeeVoucherOrderRowResponse(BaseModel):
+    id: int
+    order_no: str
+    products: list[ShopeeVoucherOrderProductResponse] = Field(default_factory=list)
+    discount_amount: float
+    total_amount: float
+    created_at_text: str
+    status_label: str
+
+
+class ShopeeVoucherOrdersResponse(BaseModel):
+    voucher: ShopeeVoucherOrdersInfoResponse
+    page: int
+    page_size: int
+    total: int
+    orders: list[ShopeeVoucherOrderRowResponse] = Field(default_factory=list)
+
+
+class ShopeeShippingFeePromotionMetaResponse(BaseModel):
+    run_id: int
+    user_id: int
+    read_only: bool
+    current_tick: str
+    currency: str = "RM"
+
+
+class ShopeeShippingFeePromotionTierFormResponse(BaseModel):
+    tier_index: int
+    min_spend_amount: float | None = None
+    fee_type: str = "fixed_fee"
+    fixed_fee_amount: float | None = None
+
+
+class ShopeeShippingFeePromotionCreateFormResponse(BaseModel):
+    promotion_name: str = ""
+    name_max_length: int = 20
+    period_type: str = "no_limit"
+    start_at: str
+    end_at: str | None = None
+    budget_type: str = "no_limit"
+    budget_limit: float | None = None
+    channels: list[str] = Field(default_factory=lambda: ["standard"])
+    tiers: list[ShopeeShippingFeePromotionTierFormResponse] = Field(default_factory=list)
+
+
+class ShopeeShippingFeePromotionChannelOptionResponse(BaseModel):
+    key: str
+    label: str
+    enabled: bool = True
+
+
+class ShopeeShippingFeePromotionRulesResponse(BaseModel):
+    max_tier_count: int = 3
+    min_tier_count: int = 1
+    currency: str = "RM"
+    min_budget_amount: float = 0.01
+
+
+class ShopeeShippingFeePromotionCreateBootstrapResponse(BaseModel):
+    meta: ShopeeShippingFeePromotionMetaResponse
+    form: ShopeeShippingFeePromotionCreateFormResponse
+    channels: list[ShopeeShippingFeePromotionChannelOptionResponse] = Field(default_factory=list)
+    rules: ShopeeShippingFeePromotionRulesResponse
+
+
+class ShopeeShippingFeePromotionTierPayload(BaseModel):
+    tier_index: int
+    min_spend_amount: float
+    fee_type: str
+    fixed_fee_amount: float | None = None
+
+
+class ShopeeShippingFeePromotionCreateRequest(BaseModel):
+    promotion_name: str
+    period_type: str = "no_limit"
+    start_at: str | None = None
+    end_at: str | None = None
+    budget_type: str = "no_limit"
+    budget_limit: float | None = None
+    channels: list[str] = Field(default_factory=list)
+    tiers: list[ShopeeShippingFeePromotionTierPayload] = Field(default_factory=list)
+
+
+class ShopeeShippingFeePromotionCreateResponse(BaseModel):
+    id: int
+    status: str
+    message: str = "运费促销创建成功"
+
+
+class ShopeeShippingFeePromotionTabResponse(BaseModel):
+    key: str
+    status: str
+    count: int
+
+
+class ShopeeShippingFeePromotionRowResponse(BaseModel):
+    id: int
+    promotion_name: str
+    status: str
+    status_label: str
+    period: str
+    budget_text: str
+    budget_used_text: str
+    channels_text: str
+    tier_summary: str
+    order_count: int = 0
+    shipping_discount_amount: float = 0
+
+
+class ShopeeShippingFeePromotionListPageResponse(BaseModel):
+    page: int
+    page_size: int
+    total: int
+    items: list[ShopeeShippingFeePromotionRowResponse] = Field(default_factory=list)
+
+
+class ShopeeShippingFeePromotionListResponse(BaseModel):
+    tabs: list[ShopeeShippingFeePromotionTabResponse] = Field(default_factory=list)
+    list: ShopeeShippingFeePromotionListPageResponse
 
 
 class ShopeeFlashSaleMetaResponse(BaseModel):
@@ -1795,6 +2401,314 @@ def _get_owned_order_readable_run_or_404(db: Session, run_id: int, user_id: int)
     return run
 
 
+def _default_auto_reply_values(reply_type: str) -> dict[str, Any]:
+    if reply_type == "off_work":
+        return {
+            "reply_type": "off_work",
+            "enabled": False,
+            "message": OFF_WORK_AUTO_REPLY_MESSAGE,
+            "work_time_enabled": True,
+            "work_start_time": "09:00",
+            "work_end_time": "18:00",
+            "timezone": "game_time",
+            "trigger_interval_minutes": 1440,
+            "trigger_once_per_game_day": True,
+            "sent_count": 0,
+            "last_sent_game_at": None,
+        }
+    return {
+        "reply_type": "default",
+        "enabled": False,
+        "message": DEFAULT_AUTO_REPLY_MESSAGE,
+        "work_time_enabled": False,
+        "work_start_time": None,
+        "work_end_time": None,
+        "timezone": "game_time",
+        "trigger_interval_minutes": 1440,
+        "trigger_once_per_game_day": False,
+        "sent_count": 0,
+        "last_sent_game_at": None,
+    }
+
+
+def _resolve_auto_reply_status(*, enabled: bool, message: str) -> str:
+    normalized_message = (message or "").strip()
+    if not normalized_message or len(normalized_message) > AUTO_REPLY_MAX_MESSAGE_LENGTH:
+        return "invalid"
+    return "enabled" if enabled else "disabled"
+
+
+def _serialize_auto_reply_setting(row: ShopeeAutoReplySetting | None, *, reply_type: str) -> ShopeeAutoReplySettingResponse:
+    values = _default_auto_reply_values(reply_type)
+    if row is not None:
+        values.update(
+            {
+                "id": row.id,
+                "reply_type": row.reply_type,
+                "enabled": bool(row.enabled),
+                "message": row.message or "",
+                "work_time_enabled": bool(row.work_time_enabled),
+                "work_start_time": row.work_start_time,
+                "work_end_time": row.work_end_time,
+                "timezone": row.timezone or "game_time",
+                "trigger_interval_minutes": row.trigger_interval_minutes,
+                "trigger_once_per_game_day": bool(row.trigger_once_per_game_day),
+                "sent_count": row.sent_count,
+                "last_sent_game_at": row.last_sent_game_at,
+            }
+        )
+    values["status"] = _resolve_auto_reply_status(enabled=values["enabled"], message=values["message"])
+    return ShopeeAutoReplySettingResponse(**values)
+
+
+def _ensure_auto_reply_settings(db: Session, *, run: GameRun, user_id: int) -> dict[str, ShopeeAutoReplySetting]:
+    rows = (
+        db.query(ShopeeAutoReplySetting)
+        .filter(
+            ShopeeAutoReplySetting.run_id == run.id,
+            ShopeeAutoReplySetting.user_id == user_id,
+            ShopeeAutoReplySetting.reply_type.in_(AUTO_REPLY_TYPES),
+        )
+        .all()
+    )
+    by_type = {row.reply_type: row for row in rows}
+    if run.status != "running":
+        return by_type
+
+    created = False
+    for reply_type in AUTO_REPLY_TYPES:
+        if reply_type in by_type:
+            continue
+        values = _default_auto_reply_values(reply_type)
+        row = ShopeeAutoReplySetting(
+            run_id=run.id,
+            user_id=user_id,
+            reply_type=reply_type,
+            enabled=values["enabled"],
+            message=values["message"],
+            work_time_enabled=values["work_time_enabled"],
+            work_start_time=values["work_start_time"],
+            work_end_time=values["work_end_time"],
+            timezone=values["timezone"],
+            trigger_interval_minutes=values["trigger_interval_minutes"],
+            trigger_once_per_game_day=values["trigger_once_per_game_day"],
+        )
+        db.add(row)
+        by_type[reply_type] = row
+        created = True
+    if created:
+        db.commit()
+        for row in by_type.values():
+            db.refresh(row)
+    return by_type
+
+
+def _build_auto_reply_settings_response(db: Session, *, run: GameRun, user_id: int) -> ShopeeAutoReplySettingsResponse:
+    settings = _ensure_auto_reply_settings(db, run=run, user_id=user_id)
+    return ShopeeAutoReplySettingsResponse(
+        default_reply=_serialize_auto_reply_setting(settings.get("default"), reply_type="default"),
+        off_work_reply=_serialize_auto_reply_setting(settings.get("off_work"), reply_type="off_work"),
+        rules=ShopeeAutoReplyRulesResponse(),
+    )
+
+
+def _is_valid_hhmm(value: str) -> bool:
+    if not re.fullmatch(r"\d{2}:\d{2}", value):
+        return False
+    hour, minute = value.split(":")
+    return 0 <= int(hour) <= 23 and 0 <= int(minute) <= 59
+
+
+def _validate_auto_reply_update(reply_type: str, payload: ShopeeAutoReplyUpdateRequest, row: ShopeeAutoReplySetting) -> tuple[bool, str, str | None, str | None]:
+    if reply_type not in AUTO_REPLY_TYPES:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="自动回复类型不存在")
+
+    next_enabled = bool(row.enabled) if payload.enabled is None else payload.enabled
+    next_message = row.message if payload.message is None else payload.message.strip()
+    if not next_message:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="自动回复内容不能为空")
+    if len(next_message) > AUTO_REPLY_MAX_MESSAGE_LENGTH:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"自动回复内容不能超过 {AUTO_REPLY_MAX_MESSAGE_LENGTH} 字")
+    if next_enabled and not next_message.strip():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="开启自动回复前必须填写回复内容")
+
+    next_start_time = row.work_start_time
+    next_end_time = row.work_end_time
+    if reply_type == "off_work":
+        if payload.work_start_time is not None:
+            next_start_time = payload.work_start_time.strip()
+        if payload.work_end_time is not None:
+            next_end_time = payload.work_end_time.strip()
+        if next_start_time is not None and not _is_valid_hhmm(next_start_time):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="工作开始时间格式必须为 HH:mm")
+        if next_end_time is not None and not _is_valid_hhmm(next_end_time):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="工作结束时间格式必须为 HH:mm")
+        if next_start_time and next_end_time and next_start_time == next_end_time:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="工作开始时间不能等于结束时间")
+    else:
+        next_start_time = None
+        next_end_time = None
+
+    return next_enabled, next_message, next_start_time, next_end_time
+
+
+DEFAULT_QUICK_REPLY_MESSAGES = [
+    "商品有现货哦",
+    "谢谢",
+    "感谢您的支持！我们会尽快为您发货",
+    "我们已经发货了，您可以查看订单页面获取物流状态",
+    "亲爱的顾客，您订购的商品正在运输途中，感谢您的购买。",
+    "本店经常有促销活动，请关注我们的店铺以获取最新优惠",
+    "这是给您的专属特殊折扣",
+    "抱歉，我们目前无法降低该商品的价格了",
+    "如果您喜欢这款商品，请点击购买，我们会立即为您安排发货",
+    "请告诉我您需要的尺寸或重量，以便我们推荐合适的型号",
+    "麻烦提供一下您的订单号，以便我们核查详细信息",
+    "您可以申请取消订单/退款/退货，我们会按照流程尽快处理",
+    "亲爱的顾客，对于给您带来的不便我们深表歉意，请您先提供破损照片。",
+]
+
+
+def _parse_quick_reply_tags(tags_json: str | None) -> list[str]:
+    if not tags_json:
+        return []
+    try:
+        parsed = json.loads(tags_json)
+    except (TypeError, json.JSONDecodeError):
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [str(item) for item in parsed if str(item).strip()]
+
+
+def _serialize_quick_reply_message(row: ShopeeQuickReplyMessage) -> ShopeeQuickReplyMessageResponse:
+    return ShopeeQuickReplyMessageResponse(
+        id=row.id,
+        message=row.message,
+        tags=_parse_quick_reply_tags(row.tags_json),
+        sort_order=row.sort_order,
+    )
+
+
+def _serialize_quick_reply_group(row: ShopeeQuickReplyGroup) -> ShopeeQuickReplyGroupResponse:
+    messages = sorted(row.messages, key=lambda item: (item.sort_order, item.id))
+    return ShopeeQuickReplyGroupResponse(
+        id=row.id,
+        group_name=row.group_name,
+        enabled=bool(row.enabled),
+        sort_order=row.sort_order,
+        message_count=row.message_count,
+        messages=[_serialize_quick_reply_message(item) for item in messages],
+    )
+
+
+def _ensure_quick_reply_data(db: Session, *, run: GameRun, user_id: int) -> tuple[ShopeeQuickReplyPreference | None, list[ShopeeQuickReplyGroup]]:
+    preference = (
+        db.query(ShopeeQuickReplyPreference)
+        .filter(ShopeeQuickReplyPreference.run_id == run.id, ShopeeQuickReplyPreference.user_id == user_id)
+        .first()
+    )
+    groups = (
+        db.query(ShopeeQuickReplyGroup)
+        .options(selectinload(ShopeeQuickReplyGroup.messages))
+        .filter(ShopeeQuickReplyGroup.run_id == run.id, ShopeeQuickReplyGroup.user_id == user_id)
+        .order_by(ShopeeQuickReplyGroup.sort_order.asc(), ShopeeQuickReplyGroup.id.asc())
+        .all()
+    )
+    if run.status != "running":
+        return preference, groups
+
+    created = False
+    if preference is None:
+        preference = ShopeeQuickReplyPreference(run_id=run.id, user_id=user_id, auto_hint_enabled=True)
+        db.add(preference)
+        created = True
+    if not groups:
+        group = ShopeeQuickReplyGroup(run_id=run.id, user_id=user_id, group_name="默认分组", enabled=True, sort_order=1, message_count=len(DEFAULT_QUICK_REPLY_MESSAGES))
+        db.add(group)
+        db.flush()
+        for index, message in enumerate(DEFAULT_QUICK_REPLY_MESSAGES, start=1):
+            db.add(
+                ShopeeQuickReplyMessage(
+                    group_id=group.id,
+                    run_id=run.id,
+                    user_id=user_id,
+                    message=message,
+                    tags_json="[]",
+                    sort_order=index,
+                )
+            )
+        created = True
+    if created:
+        db.commit()
+        preference = (
+            db.query(ShopeeQuickReplyPreference)
+            .filter(ShopeeQuickReplyPreference.run_id == run.id, ShopeeQuickReplyPreference.user_id == user_id)
+            .first()
+        )
+        groups = (
+            db.query(ShopeeQuickReplyGroup)
+            .options(selectinload(ShopeeQuickReplyGroup.messages))
+            .filter(ShopeeQuickReplyGroup.run_id == run.id, ShopeeQuickReplyGroup.user_id == user_id)
+            .order_by(ShopeeQuickReplyGroup.sort_order.asc(), ShopeeQuickReplyGroup.id.asc())
+            .all()
+        )
+    return preference, groups
+
+
+def _build_quick_reply_list_response(db: Session, *, run: GameRun, user_id: int) -> ShopeeQuickReplyListResponse:
+    preference, groups = _ensure_quick_reply_data(db, run=run, user_id=user_id)
+    return ShopeeQuickReplyListResponse(
+        preference=ShopeeQuickReplyPreferenceResponse(auto_hint_enabled=bool(preference.auto_hint_enabled) if preference else True),
+        limits=ShopeeQuickReplyLimitsResponse(),
+        groups=[_serialize_quick_reply_group(group) for group in groups],
+    )
+
+
+def _normalize_quick_reply_tags(raw_tags: list[str]) -> list[str]:
+    tags: list[str] = []
+    for raw_tag in raw_tags:
+        tag = str(raw_tag).strip()
+        if not tag or tag in tags:
+            continue
+        if len(tag) > QUICK_REPLY_MAX_TAG_LENGTH:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"标签不能超过 {QUICK_REPLY_MAX_TAG_LENGTH} 字")
+        tags.append(tag)
+        if len(tags) > QUICK_REPLY_MAX_TAGS_PER_MESSAGE:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"单条消息最多 {QUICK_REPLY_MAX_TAGS_PER_MESSAGE} 个标签")
+    return tags
+
+
+def _validate_quick_reply_payload(payload: ShopeeQuickReplyCreateGroupRequest | ShopeeQuickReplyUpdateGroupRequest) -> tuple[str, list[tuple[str, list[str]]]]:
+    group_name = payload.group_name.strip()
+    if not group_name:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="分组名称不能为空")
+    if len(group_name) > QUICK_REPLY_MAX_GROUP_NAME_LENGTH:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"分组名称不能超过 {QUICK_REPLY_MAX_GROUP_NAME_LENGTH} 字")
+
+    if not payload.messages:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="至少需要添加一条快捷回复消息")
+    if len(payload.messages) > QUICK_REPLY_MAX_MESSAGES_PER_GROUP:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"每个分组最多 {QUICK_REPLY_MAX_MESSAGES_PER_GROUP} 条消息")
+
+    messages: list[tuple[str, list[str]]] = []
+    for item in payload.messages:
+        message = item.message.strip()
+        if not message:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="快捷回复消息不能为空")
+        if len(message) > QUICK_REPLY_MAX_MESSAGE_LENGTH:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"快捷回复消息不能超过 {QUICK_REPLY_MAX_MESSAGE_LENGTH} 字")
+        messages.append((message, _normalize_quick_reply_tags(item.tags)))
+    return group_name, messages
+
+
+def _validate_quick_reply_create_payload(db: Session, *, run_id: int, user_id: int, payload: ShopeeQuickReplyCreateGroupRequest) -> tuple[str, list[tuple[str, list[str]]]]:
+    group_count = db.query(ShopeeQuickReplyGroup).filter(ShopeeQuickReplyGroup.run_id == run_id, ShopeeQuickReplyGroup.user_id == user_id).count()
+    if group_count >= QUICK_REPLY_MAX_GROUPS:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"快捷回复分组最多 {QUICK_REPLY_MAX_GROUPS} 个")
+    return _validate_quick_reply_payload(payload)
+
+
 def _resolve_marketing_lang(raw_lang: str | None) -> str:
     value = (raw_lang or "zh-CN").strip()
     return value or "zh-CN"
@@ -2244,6 +3158,119 @@ def _enforce_shopee_discount_create_rate_limit(*, user_id: int) -> None:
     )
     if limited:
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=f"请求过于频繁，请在 {reset_at} 后重试")
+
+
+def _shopee_voucher_create_bootstrap_cache_key(*, run_id: int, user_id: int, voucher_type: str) -> str:
+    safe_voucher_type = (voucher_type or "shop_voucher").strip().lower() or "shop_voucher"
+    return f"{REDIS_PREFIX}:cache:shopee:voucher:create:bootstrap:{run_id}:{user_id}:{safe_voucher_type}"
+
+
+def _shopee_voucher_code_check_cache_key(*, run_id: int, user_id: int, voucher_type: str, code_suffix: str) -> str:
+    safe_voucher_type = (voucher_type or "shop_voucher").strip().lower() or "shop_voucher"
+    return f"{REDIS_PREFIX}:cache:shopee:voucher:code-check:{run_id}:{user_id}:{safe_voucher_type}:{code_suffix}"
+
+
+
+def _shopee_voucher_eligible_products_cache_key(*, run_id: int, user_id: int, voucher_type: str, search_field: str, category_key: str, keyword: str, page: int, page_size: int) -> str:
+    payload = {
+        "search_field": (search_field or "product_name").strip().lower(),
+        "category_key": (category_key or "all").strip().lower(),
+        "keyword": keyword.strip(),
+        "page": page,
+        "page_size": page_size,
+    }
+    digest = hashlib.md5(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+    safe_voucher_type = (voucher_type or "product_voucher").strip().lower().replace("_", "-")
+    return f"{REDIS_PREFIX}:cache:shopee:{safe_voucher_type}:eligible-products:{run_id}:{user_id}:{digest}"
+
+
+def _shopee_voucher_list_cache_key(*, run_id: int, user_id: int, status_value: str, keyword: str, page: int, page_size: int) -> str:
+    digest = hashlib.md5(json.dumps({"keyword": keyword.strip(), "page_size": page_size}, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+    return f"{REDIS_PREFIX}:cache:shopee:voucher:list:{run_id}:{user_id}:{status_value}:{page}:{digest}"
+
+
+def _invalidate_shopee_voucher_cache(*, run_id: int, user_id: int, campaign_id: int | None = None) -> None:
+    cache_delete_prefix(f"{REDIS_PREFIX}:cache:shopee:voucher:create:bootstrap:{run_id}:{user_id}:")
+    cache_delete_prefix(f"{REDIS_PREFIX}:cache:shopee:voucher:code-check:{run_id}:{user_id}:")
+    cache_delete_prefix(f"{REDIS_PREFIX}:cache:shopee:product-voucher:eligible-products:{run_id}:{user_id}:")
+    cache_delete_prefix(f"{REDIS_PREFIX}:cache:shopee:private-voucher:eligible-products:{run_id}:{user_id}:")
+    cache_delete_prefix(f"{REDIS_PREFIX}:cache:shopee:live-voucher:eligible-products:{run_id}:{user_id}:")
+    cache_delete_prefix(f"{REDIS_PREFIX}:cache:shopee:video-voucher:eligible-products:{run_id}:{user_id}:")
+    cache_delete_prefix(f"{REDIS_PREFIX}:cache:shopee:voucher:list:{run_id}:{user_id}:")
+    cache_delete_prefix(f"{REDIS_PREFIX}:cache:shopee:voucher:performance:{run_id}:{user_id}")
+    if campaign_id:
+        cache_delete_prefix(f"{REDIS_PREFIX}:cache:shopee:voucher:detail:{run_id}:{user_id}:{campaign_id}")
+
+
+def _enforce_shopee_voucher_create_bootstrap_rate_limit(*, user_id: int) -> None:
+    limited, _remaining, reset_at = check_rate_limit(
+        key=f"{REDIS_PREFIX}:ratelimit:shopee:voucher:create:bootstrap:user:{user_id}",
+        limit=REDIS_RATE_LIMIT_SHOPEE_VOUCHER_CREATE_BOOTSTRAP_PER_MIN,
+        window_sec=60,
+    )
+    if limited:
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=f"请求过于频繁，请在 {reset_at} 后重试")
+
+
+def _enforce_shopee_voucher_code_check_rate_limit(*, user_id: int) -> None:
+    limited, _remaining, reset_at = check_rate_limit(
+        key=f"{REDIS_PREFIX}:ratelimit:shopee:voucher:code-check:user:{user_id}",
+        limit=REDIS_RATE_LIMIT_SHOPEE_VOUCHER_CODE_CHECK_PER_MIN,
+        window_sec=60,
+    )
+    if limited:
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=f"请求过于频繁，请在 {reset_at} 后重试")
+
+
+def _enforce_shopee_voucher_create_rate_limit(*, user_id: int) -> None:
+    limited, _remaining, reset_at = check_rate_limit(
+        key=f"{REDIS_PREFIX}:ratelimit:shopee:voucher:create:user:{user_id}",
+        limit=REDIS_RATE_LIMIT_SHOPEE_VOUCHER_CREATE_PER_MIN,
+        window_sec=60,
+    )
+    if limited:
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=f"请求过于频繁，请在 {reset_at} 后重试")
+
+
+SHOPEE_SHIPPING_FEE_PROMOTION_CHANNELS = {
+    "standard": "标准快递 (Standard Delivery)",
+    "bulky": "大件快递 (Standard Delivery Bulky)",
+}
+
+
+def _shopee_shipping_fee_promotion_bootstrap_cache_key(*, run_id: int, user_id: int) -> str:
+    return f"{REDIS_PREFIX}:cache:shopee:shipping_fee_promotion:create:bootstrap:{run_id}:{user_id}"
+
+
+def _shopee_shipping_fee_promotion_list_cache_key(*, run_id: int, user_id: int, status_value: str, page: int, page_size: int) -> str:
+    return f"{REDIS_PREFIX}:cache:shopee:shipping_fee_promotion:list:{run_id}:{user_id}:{status_value}:{page}:{page_size}"
+
+
+def _invalidate_shopee_shipping_fee_promotion_cache(*, run_id: int, user_id: int) -> None:
+    cache_delete_prefix(f"{REDIS_PREFIX}:cache:shopee:shipping_fee_promotion:list:{run_id}:{user_id}:")
+    cache_delete_prefix(f"{REDIS_PREFIX}:cache:shopee:shipping_fee_promotion:active:{run_id}:{user_id}:")
+    cache_delete_prefix(f"{REDIS_PREFIX}:cache:shopee:orders:list:{run_id}:{user_id}:")
+
+
+def _enforce_shopee_shipping_fee_promotion_rate_limit(*, user_id: int) -> None:
+    limited, _remaining, reset_at = check_rate_limit(
+        key=f"{REDIS_PREFIX}:ratelimit:shopee:shipping_fee_promotion:user:{user_id}",
+        limit=REDIS_RATE_LIMIT_SHOPEE_SHIPPING_FEE_PROMOTION_PER_MIN,
+        window_sec=60,
+    )
+    if limited:
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=f"请求过于频繁，请在 {reset_at} 后重试")
+
+
+def _enforce_shopee_shipping_fee_promotion_create_rate_limit(*, user_id: int) -> None:
+    limited, _remaining, reset_at = check_rate_limit(
+        key=f"{REDIS_PREFIX}:ratelimit:shopee:shipping_fee_promotion:create:user:{user_id}",
+        limit=REDIS_RATE_LIMIT_SHOPEE_SHIPPING_FEE_PROMOTION_CREATE_PER_MIN,
+        window_sec=60,
+    )
+    if limited:
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=f"请求过于频繁，请在 {reset_at} 后重试")
+
 
 
 def _flash_sale_query_hash(**kwargs: Any) -> str:
@@ -4689,6 +5716,1382 @@ def _build_discount_create_bootstrap_payload(
     )
 
 
+def _build_shipping_fee_promotion_create_bootstrap_payload(
+    *,
+    run: GameRun,
+    user_id: int,
+    current_tick: datetime,
+    read_only: bool,
+) -> ShopeeShippingFeePromotionCreateBootstrapResponse:
+    start_at = _format_discount_game_datetime(current_tick, run=run) or ""
+    end_at = _format_discount_game_datetime(current_tick + timedelta(seconds=REAL_SECONDS_PER_GAME_HOUR), run=run) or ""
+    return ShopeeShippingFeePromotionCreateBootstrapResponse(
+        meta=ShopeeShippingFeePromotionMetaResponse(
+            run_id=run.id,
+            user_id=user_id,
+            read_only=read_only,
+            current_tick=start_at,
+            currency="RM",
+        ),
+        form=ShopeeShippingFeePromotionCreateFormResponse(
+            start_at=start_at,
+            end_at=end_at,
+            tiers=[ShopeeShippingFeePromotionTierFormResponse(tier_index=1)],
+        ),
+        channels=[
+            ShopeeShippingFeePromotionChannelOptionResponse(key=key, label=label, enabled=True)
+            for key, label in SHOPEE_SHIPPING_FEE_PROMOTION_CHANNELS.items()
+        ],
+        rules=ShopeeShippingFeePromotionRulesResponse(),
+    )
+
+
+def _resolve_shipping_fee_promotion_status(row: ShopeeShippingFeePromotionCampaign, *, current_tick: datetime) -> str:
+    if row.status == "stopped":
+        return "stopped"
+    if row.budget_type == "selected" and row.budget_limit is not None and float(row.budget_used or 0) >= float(row.budget_limit):
+        return "budget_exhausted"
+    if current_tick < _align_compare_time(current_tick, row.start_at):
+        return "upcoming"
+    if row.period_type == "selected" and row.end_at is not None and current_tick >= _align_compare_time(current_tick, row.end_at):
+        return "ended"
+    return "ongoing"
+
+
+def _shipping_fee_promotion_status_label(status_value: str) -> str:
+    return {
+        "upcoming": "即将开始",
+        "ongoing": "进行中",
+        "ended": "已结束",
+        "budget_exhausted": "预算用尽",
+        "stopped": "已停止",
+    }.get(status_value, status_value)
+
+
+def _format_shipping_fee_promotion_period(row: ShopeeShippingFeePromotionCampaign, *, run: GameRun) -> str:
+    if row.period_type == "no_limit" or row.end_at is None:
+        return "无期限"
+    start_text = _format_discount_game_datetime(row.start_at, run=run) or ""
+    end_text = _format_discount_game_datetime(row.end_at, run=run) or ""
+    return f"{start_text.replace('T', ' ')} - {end_text.replace('T', ' ')}"
+
+
+def _format_shipping_fee_promotion_budget(row: ShopeeShippingFeePromotionCampaign) -> tuple[str, str]:
+    budget_text = "无限制" if row.budget_type == "no_limit" or row.budget_limit is None else f"RM {float(row.budget_limit):.2f}"
+    return budget_text, f"RM {float(row.budget_used or 0):.2f}"
+
+
+def _format_shipping_fee_promotion_tier_summary(tiers: list[ShopeeShippingFeePromotionTier]) -> str:
+    parts = []
+    for tier in sorted(tiers, key=lambda item: (item.min_spend_amount, item.tier_index)):
+        min_spend = f"RM{float(tier.min_spend_amount):.2f}"
+        if tier.fee_type == "free_shipping":
+            parts.append(f"满 {min_spend} 免运费")
+        else:
+            fixed_fee = float(tier.fixed_fee_amount or 0)
+            parts.append(f"满 {min_spend}，运费减 RM{fixed_fee:.2f}")
+    return "；".join(parts)
+
+
+def _build_shipping_fee_promotion_row(row: ShopeeShippingFeePromotionCampaign, *, run: GameRun, current_tick: datetime) -> ShopeeShippingFeePromotionRowResponse:
+    status_value = _resolve_shipping_fee_promotion_status(row, current_tick=current_tick)
+    budget_text, budget_used_text = _format_shipping_fee_promotion_budget(row)
+    channels_text = "、".join(channel.channel_label for channel in sorted(row.channels, key=lambda item: item.id))
+    return ShopeeShippingFeePromotionRowResponse(
+        id=row.id,
+        promotion_name=row.promotion_name,
+        status=status_value,
+        status_label=_shipping_fee_promotion_status_label(status_value),
+        period=_format_shipping_fee_promotion_period(row, run=run),
+        budget_text=budget_text,
+        budget_used_text=budget_used_text,
+        channels_text=channels_text,
+        tier_summary=_format_shipping_fee_promotion_tier_summary(list(row.tiers or [])),
+        order_count=int(row.order_count or 0),
+        shipping_discount_amount=float(row.shipping_discount_amount or 0),
+    )
+
+
+def _build_shipping_fee_promotion_list_response(
+    *,
+    db: Session,
+    run: GameRun,
+    user_id: int,
+    status_value: str,
+    page: int,
+    page_size: int,
+) -> ShopeeShippingFeePromotionListResponse:
+    current_tick = _resolve_game_tick(db, run.id, user_id)
+    rows = db.query(ShopeeShippingFeePromotionCampaign).options(
+        selectinload(ShopeeShippingFeePromotionCampaign.channels),
+        selectinload(ShopeeShippingFeePromotionCampaign.tiers),
+    ).filter(
+        ShopeeShippingFeePromotionCampaign.run_id == run.id,
+        ShopeeShippingFeePromotionCampaign.user_id == user_id,
+    ).order_by(ShopeeShippingFeePromotionCampaign.created_at.desc(), ShopeeShippingFeePromotionCampaign.id.desc()).all()
+    built_rows = [_build_shipping_fee_promotion_row(row, run=run, current_tick=current_tick) for row in rows]
+    counts = {key: 0 for key in ["ongoing", "upcoming", "ended"]}
+    for item in built_rows:
+        if item.status == "ongoing":
+            counts["ongoing"] += 1
+        elif item.status == "upcoming":
+            counts["upcoming"] += 1
+        elif item.status in {"ended", "budget_exhausted", "stopped"}:
+            counts["ended"] += 1
+    if status_value == "ongoing":
+        filtered_rows = [item for item in built_rows if item.status == "ongoing"]
+    elif status_value == "upcoming":
+        filtered_rows = [item for item in built_rows if item.status == "upcoming"]
+    elif status_value == "ended":
+        filtered_rows = [item for item in built_rows if item.status in {"ended", "budget_exhausted", "stopped"}]
+    else:
+        filtered_rows = built_rows
+    total = len(filtered_rows)
+    start = max(0, (page - 1) * page_size)
+    return ShopeeShippingFeePromotionListResponse(
+        tabs=[
+            ShopeeShippingFeePromotionTabResponse(key="全部", status="all", count=len(built_rows)),
+            ShopeeShippingFeePromotionTabResponse(key="进行中", status="ongoing", count=counts["ongoing"]),
+            ShopeeShippingFeePromotionTabResponse(key="即将开始", status="upcoming", count=counts["upcoming"]),
+            ShopeeShippingFeePromotionTabResponse(key="已结束", status="ended", count=counts["ended"]),
+        ],
+        list=ShopeeShippingFeePromotionListPageResponse(page=page, page_size=page_size, total=total, items=filtered_rows[start:start + page_size]),
+    )
+
+
+def _validate_shipping_fee_promotion_create_payload(
+    *,
+    payload: ShopeeShippingFeePromotionCreateRequest,
+    start_at: datetime | None,
+    end_at: datetime | None,
+) -> list[ShopeeShippingFeePromotionTierPayload]:
+    promotion_name = payload.promotion_name.strip()
+    if not promotion_name:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="请输入运费促销名称")
+    if len(promotion_name) > 20:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="运费促销名称最多 20 个字符")
+    if payload.period_type not in {"no_limit", "selected"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="期限类型不支持")
+    if payload.period_type == "selected":
+        if start_at is None or end_at is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="请选择自定义期限")
+        if start_at >= end_at:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="结束时间必须晚于开始时间")
+    if payload.budget_type not in {"no_limit", "selected"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="预算类型不支持")
+    if payload.budget_type == "selected" and (payload.budget_limit is None or payload.budget_limit <= 0):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="自定义预算必须大于 0")
+    if not payload.channels:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="请至少选择一个物流渠道")
+    invalid_channels = [item for item in payload.channels if item not in SHOPEE_SHIPPING_FEE_PROMOTION_CHANNELS]
+    if invalid_channels:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="物流渠道不支持")
+    if not (1 <= len(payload.tiers) <= 3):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="运费层级数量必须为 1 到 3 个")
+    sorted_tiers = sorted(payload.tiers, key=lambda item: item.min_spend_amount)
+    seen_min_spend: set[float] = set()
+    previous_rank = -1
+    previous_fixed_fee: float | None = None
+    for tier in sorted_tiers:
+        if tier.min_spend_amount < 0:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="最低消费金额必须大于等于 0")
+        if tier.min_spend_amount in seen_min_spend:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="同一活动内层级门槛不能重复")
+        seen_min_spend.add(tier.min_spend_amount)
+        if tier.fee_type not in {"fixed_fee", "free_shipping"}:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="运费类型不支持")
+        rank = 2 if tier.fee_type == "free_shipping" else 1
+        if rank < previous_rank:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="高门槛层级的优惠力度不能低于低门槛层级")
+        if tier.fee_type == "fixed_fee":
+            if tier.fixed_fee_amount is None or tier.fixed_fee_amount < 0:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="运费减免金额必须大于等于 0")
+            if previous_fixed_fee is not None and tier.fixed_fee_amount < previous_fixed_fee:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="高门槛层级的运费减免金额不能低于低门槛层级")
+            previous_fixed_fee = tier.fixed_fee_amount
+        previous_rank = max(previous_rank, rank)
+    return sorted_tiers
+
+
+
+def _build_voucher_create_bootstrap_payload(
+    *,
+    run: GameRun,
+    user_id: int,
+    current_tick: datetime,
+    read_only: bool,
+    voucher_type: str,
+) -> ShopeeVoucherCreateBootstrapResponse:
+    safe_voucher_type = (voucher_type or "shop_voucher").strip().lower() or "shop_voucher"
+    if safe_voucher_type == "product_voucher":
+        applicable_scope = "selected_products"
+        display_type = "all_pages"
+        audience_scope = ""
+    elif safe_voucher_type == "private_voucher":
+        applicable_scope = "all_products"
+        display_type = "code_only"
+        audience_scope = "private_code"
+    elif safe_voucher_type == "live_voucher":
+        applicable_scope = "all_products"
+        display_type = "live_stream"
+        audience_scope = ""
+    elif safe_voucher_type == "video_voucher":
+        applicable_scope = "all_products"
+        display_type = "video_stream"
+        audience_scope = ""
+    else:
+        applicable_scope = "all_shop_products"
+        display_type = "all_pages"
+        audience_scope = ""
+    return ShopeeVoucherCreateBootstrapResponse(
+        meta=ShopeeVoucherCreateMetaResponse(
+            run_id=run.id,
+            user_id=user_id,
+            voucher_type=safe_voucher_type,
+            read_only=read_only,
+            current_tick=current_tick,
+            currency="RM",
+        ),
+        form=ShopeeVoucherCreateFormResponse(
+            start_at=_format_discount_game_datetime(current_tick, run=run) or "",
+            end_at=_format_discount_game_datetime(current_tick + timedelta(seconds=REAL_SECONDS_PER_GAME_HOUR), run=run) or "",
+            display_type=display_type,
+            applicable_scope=applicable_scope,
+            audience_scope=audience_scope,
+        ),
+        rules=ShopeeVoucherCreateRulesResponse(),
+        product_picker=ShopeeVoucherProductPickerResponse() if safe_voucher_type in {"product_voucher", "private_voucher", "live_voucher", "video_voucher"} else None,
+        selected_products=[],
+    )
+
+
+def _build_follow_voucher_create_bootstrap_payload(
+    *,
+    run: GameRun,
+    user_id: int,
+    current_tick: datetime,
+    read_only: bool,
+) -> ShopeeFollowVoucherCreateBootstrapResponse:
+    return ShopeeFollowVoucherCreateBootstrapResponse(
+        meta=ShopeeVoucherCreateMetaResponse(
+            run_id=run.id,
+            user_id=user_id,
+            voucher_type="follow_voucher",
+            read_only=read_only,
+            current_tick=current_tick,
+            currency="RM",
+        ),
+        form=ShopeeFollowVoucherCreateFormResponse(
+            claim_start_at=_format_discount_game_datetime(current_tick, run=run) or "",
+            claim_end_at=_format_discount_game_datetime(current_tick + timedelta(seconds=REAL_SECONDS_PER_GAME_HOUR), run=run) or "",
+            valid_days_after_claim=7,
+            reward_type="discount",
+            discount_type="fixed_amount",
+            max_discount_type="set_amount",
+            per_buyer_limit=1,
+            trigger_type="follow_shop",
+            display_type="follow_reward",
+            applicable_scope="all_products",
+        ),
+        rules=ShopeeFollowVoucherCreateRulesResponse(),
+    )
+
+
+def _normalize_shop_voucher_code_suffix(raw_value: str) -> str:
+    code_suffix = (raw_value or "").strip().upper()
+    if not re.fullmatch(r"[A-Z0-9]{1,5}", code_suffix):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="代金券代码后缀仅允许 A-Z、0-9，且最多 5 个字符")
+    return code_suffix
+
+
+
+def _resolve_voucher_code_exists(*, db: Session, run: GameRun, user_id: int, voucher_code: str) -> bool:
+    shop_exists = db.query(ShopeeShopVoucherCampaign.id).filter(
+        ShopeeShopVoucherCampaign.run_id == run.id,
+        ShopeeShopVoucherCampaign.user_id == user_id,
+        ShopeeShopVoucherCampaign.voucher_code == voucher_code,
+    ).first()
+    if shop_exists:
+        return True
+    product_exists = db.query(ShopeeProductVoucherCampaign.id).filter(
+        ShopeeProductVoucherCampaign.run_id == run.id,
+        ShopeeProductVoucherCampaign.user_id == user_id,
+        ShopeeProductVoucherCampaign.voucher_code == voucher_code,
+    ).first()
+    if product_exists:
+        return True
+    private_exists = db.query(ShopeePrivateVoucherCampaign.id).filter(
+        ShopeePrivateVoucherCampaign.run_id == run.id,
+        ShopeePrivateVoucherCampaign.user_id == user_id,
+        ShopeePrivateVoucherCampaign.voucher_code == voucher_code,
+    ).first()
+    if private_exists:
+        return True
+    live_exists = db.query(ShopeeLiveVoucherCampaign.id).filter(
+        ShopeeLiveVoucherCampaign.run_id == run.id,
+        ShopeeLiveVoucherCampaign.user_id == user_id,
+        ShopeeLiveVoucherCampaign.voucher_code == voucher_code,
+    ).first()
+    if live_exists:
+        return True
+    video_exists = db.query(ShopeeVideoVoucherCampaign.id).filter(
+        ShopeeVideoVoucherCampaign.run_id == run.id,
+        ShopeeVideoVoucherCampaign.user_id == user_id,
+        ShopeeVideoVoucherCampaign.voucher_code == voucher_code,
+    ).first()
+    if video_exists:
+        return True
+    follow_exists = db.query(ShopeeFollowVoucherCampaign.id).filter(
+        ShopeeFollowVoucherCampaign.run_id == run.id,
+        ShopeeFollowVoucherCampaign.user_id == user_id,
+        ShopeeFollowVoucherCampaign.voucher_code == voucher_code,
+    ).first()
+    return follow_exists is not None
+
+
+def _resolve_shop_voucher_status(*, start_at: datetime, end_at: datetime, current_tick: datetime, used_count: int = 0, usage_limit: int = 0) -> str:
+    if usage_limit > 0 and used_count >= usage_limit:
+        return "sold_out"
+    if current_tick < _align_compare_time(current_tick, start_at):
+        return "upcoming"
+    if current_tick >= _align_compare_time(current_tick, end_at):
+        return "ended"
+    return "ongoing"
+
+
+def _resolve_follow_voucher_status(*, claim_start_at: datetime, claim_end_at: datetime, current_tick: datetime, claimed_count: int = 0, usage_limit: int = 0) -> str:
+    return _resolve_shop_voucher_status(
+        start_at=claim_start_at,
+        end_at=claim_end_at,
+        current_tick=current_tick,
+        used_count=claimed_count,
+        usage_limit=usage_limit,
+    )
+
+
+def _validate_follow_voucher_create_payload(
+    *,
+    payload: ShopeeFollowVoucherCampaignCreateRequest,
+    claim_start_at: datetime | None,
+    claim_end_at: datetime | None,
+) -> None:
+    if (payload.voucher_type or "follow_voucher").strip().lower() != "follow_voucher":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="当前仅支持关注礼代金券")
+    if (payload.reward_type or "discount").strip().lower() != "discount":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="当前仅支持折扣奖励")
+    voucher_name = payload.voucher_name.strip()
+    if not voucher_name:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="请输入代金券名称")
+    if len(voucher_name) > 100:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="代金券名称最多 100 个字符")
+    if claim_start_at is None or claim_end_at is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="请选择领取期限")
+    if claim_start_at >= claim_end_at:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="领取结束时间必须晚于开始时间")
+    if claim_end_at - claim_start_at > timedelta(seconds=REAL_SECONDS_PER_GAME_DAY * 180):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="领取期限最多 180 个游戏天")
+
+    discount_type = (payload.discount_type or "").strip().lower()
+    max_discount_type = (payload.max_discount_type or "").strip().lower()
+    if discount_type not in {"fixed_amount", "percent"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="折扣类型不支持")
+    if payload.min_spend_amount <= 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="最低消费金额必须大于 0")
+    if discount_type == "fixed_amount":
+        if payload.discount_amount is None or payload.discount_amount <= 0:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="优惠金额必须大于 0")
+        if payload.min_spend_amount < payload.discount_amount:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="最低消费金额不能小于优惠金额")
+    else:
+        if payload.discount_percent is None or payload.discount_percent <= 0 or payload.discount_percent > 100:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="优惠百分比必须大于 0 且不超过 100")
+        if max_discount_type not in {"set_amount", "no_limit"}:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="最大折扣金额类型不支持")
+        if max_discount_type == "set_amount" and (payload.max_discount_amount is None or payload.max_discount_amount <= 0):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="最大折扣金额必须大于 0")
+        if max_discount_type == "no_limit" and payload.max_discount_amount is not None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="无限制时最大折扣金额必须为空")
+
+    if payload.usage_limit <= 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="使用数量必须大于 0")
+    if payload.per_buyer_limit <= 0 or payload.per_buyer_limit > payload.usage_limit:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="每位买家最大发放量必须大于 0 且不超过使用数量")
+
+
+def _validate_shop_voucher_create_payload(
+    *,
+    db: Session,
+    run: GameRun,
+    user_id: int,
+    payload: ShopeeVoucherCampaignCreateRequest,
+    start_at: datetime | None,
+    end_at: datetime | None,
+    display_start_at: datetime | None,
+) -> str:
+    voucher_type = (payload.voucher_type or "shop_voucher").strip().lower() or "shop_voucher"
+    if voucher_type not in {"shop_voucher", "product_voucher", "private_voucher", "live_voucher", "video_voucher"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="当前仅支持店铺代金券、商品代金券、专属代金券、直播代金券和视频代金券")
+    if (payload.reward_type or "").strip().lower() != "discount":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="当前仅支持折扣奖励")
+    voucher_name = payload.voucher_name.strip()
+    if not voucher_name:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="请输入代金券名称")
+    if len(voucher_name) > 100:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="代金券名称最多 100 个字符")
+    code_suffix = "" if voucher_type == "video_voucher" else _normalize_shop_voucher_code_suffix(payload.code_suffix)
+    if start_at is None or end_at is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="请选择代金券使用期限")
+    if start_at >= end_at:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="代金券结束时间必须晚于开始时间")
+    if payload.display_before_start:
+        if display_start_at is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="请选择提前展示时间")
+        if display_start_at >= start_at:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="提前展示时间必须早于代金券开始时间")
+    elif display_start_at is not None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="未开启提前展示时展示时间必须为空")
+    if end_at - start_at > timedelta(seconds=REAL_SECONDS_PER_GAME_DAY * 180):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="代金券使用期限最多 180 个游戏天")
+
+    discount_type = (payload.discount_type or "").strip().lower()
+    max_discount_type = (payload.max_discount_type or "").strip().lower()
+    display_type = (payload.display_type or "").strip().lower()
+    if discount_type not in {"fixed_amount", "percent"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="折扣类型不支持")
+    if payload.min_spend_amount <= 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="最低消费金额必须大于 0")
+    if discount_type == "fixed_amount":
+        if payload.discount_amount is None or payload.discount_amount <= 0:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="优惠金额必须大于 0")
+        if payload.min_spend_amount < payload.discount_amount:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="最低消费金额不能小于优惠金额")
+    else:
+        if payload.discount_percent is None or payload.discount_percent <= 0 or payload.discount_percent > 100:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="优惠百分比必须大于 0 且不超过 100")
+        if max_discount_type not in {"set_amount", "no_limit"}:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="最大折扣金额类型不支持")
+        if max_discount_type == "set_amount" and (payload.max_discount_amount is None or payload.max_discount_amount <= 0):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="最大折扣金额必须大于 0")
+        if max_discount_type == "no_limit" and payload.max_discount_amount is not None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="无限制时最大折扣金额必须为空")
+
+    if payload.usage_limit <= 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="使用数量必须大于 0")
+    if payload.per_buyer_limit <= 0 or payload.per_buyer_limit > payload.usage_limit:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="每位买家最大发放量必须大于 0 且不超过使用数量")
+    if display_type not in {"all_pages", "specific_channels", "code_only", "live_stream", "video_stream"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="代金券展示设置不支持")
+    display_channels = set(payload.display_channels or [])
+    if voucher_type == "private_voucher":
+        if display_type != "code_only":
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="专属代金券仅支持通过代金券代码分享")
+        if display_channels:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="专属代金券不支持特定展示渠道")
+    elif voucher_type == "live_voucher":
+        if display_type != "live_stream":
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="直播代金券仅支持 Shopee Live 展示")
+        if display_channels != {"shopee_live"}:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="直播代金券展示渠道仅支持 Shopee Live")
+        if (payload.live_scope or "all_live_sessions").strip().lower() != "all_live_sessions":
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="当前仅支持全部直播场次")
+    elif voucher_type == "video_voucher":
+        if display_type != "video_stream":
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="视频代金券仅支持 Shopee Video 展示")
+        if display_channels != {"shopee_video"}:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="视频代金券展示渠道仅支持 Shopee Video")
+        if (payload.video_scope or "all_videos").strip().lower() != "all_videos":
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="当前仅支持全部视频场景")
+    else:
+        if display_type == "specific_channels" and not display_channels:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="请选择特定展示渠道")
+        if display_channels - {"checkout_page"}:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="当前仅支持订单支付页面展示")
+    if voucher_type in {"product_voucher", "private_voucher", "live_voucher", "video_voucher"}:
+        selected_products = payload.selected_products or []
+        applicable_scope = (payload.applicable_scope or "").strip().lower()
+        if voucher_type == "product_voucher":
+            applicable_scope = "selected_products"
+        elif applicable_scope not in {"all_products", "selected_products"}:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="适用商品范围不支持")
+        if applicable_scope == "selected_products" and not selected_products:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="请至少选择一个适用商品")
+        if len(selected_products) > 100:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="最多选择 100 个适用商品")
+        dedupe_keys = {(item.listing_id, item.variant_id) for item in selected_products}
+        if len(dedupe_keys) != len(selected_products):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="适用商品不可重复选择")
+
+    if voucher_type != "video_voucher":
+        voucher_code = f"HOME{code_suffix}"
+        if _resolve_voucher_code_exists(db=db, run=run, user_id=user_id, voucher_code=voucher_code):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="该代金券代码已存在，请更换后缀")
+    return code_suffix
+
+
+def _format_shop_voucher_period(row: ShopeeShopVoucherCampaign | ShopeeProductVoucherCampaign | ShopeePrivateVoucherCampaign | ShopeeLiveVoucherCampaign | ShopeeVideoVoucherCampaign, *, run: GameRun) -> str:
+    start_text = _format_discount_game_datetime(row.start_at, run=run) or ""
+    end_text = _format_discount_game_datetime(row.end_at, run=run) or ""
+    return _format_game_datetime_period(start_text, end_text)
+
+
+def _format_follow_voucher_period(row: ShopeeFollowVoucherCampaign, *, run: GameRun) -> str:
+    start_text = _format_discount_game_datetime(row.claim_start_at, run=run) or ""
+    end_text = _format_discount_game_datetime(row.claim_end_at, run=run) or ""
+    return _format_game_datetime_period(start_text, end_text)
+
+
+def _format_game_datetime_period(start_text: str, end_text: str) -> str:
+    def normalize(value: str) -> str:
+        parsed = _parse_discount_datetime(value)
+        return parsed.strftime("%d/%m/%Y %H:%M") if parsed else value
+    return f"{normalize(start_text)} - {normalize(end_text)}"
+
+
+def _parse_json_list(raw: str | None) -> list[str]:
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return []
+    return data if isinstance(data, list) else []
+
+
+def _build_voucher_detail_selected_products(items: list[Any]) -> list[dict[str, Any]]:
+    return [
+        {
+            "listing_id": int(item.listing_id),
+            "variant_id": int(item.variant_id) if item.variant_id is not None else None,
+            "product_id": item.product_id,
+            "product_name": item.product_name_snapshot,
+            "variant_name": item.variant_name_snapshot or "",
+            "sku": item.sku_snapshot,
+            "image_url": item.image_url_snapshot,
+            "category_key": item.category_key_snapshot or "all",
+            "category_label": item.category_label_snapshot or "全部",
+            "original_price": float(item.original_price_snapshot or 0),
+            "stock_available": int(item.stock_snapshot or 0),
+        }
+        for item in sorted(items or [], key=lambda row: (row.sort_order, row.id))
+    ]
+
+
+def _build_voucher_detail_response(
+    *,
+    row: Any,
+    run: GameRun,
+    user_id: int,
+    voucher_type: str,
+    status_value: str,
+    status_label: str,
+    current_tick: datetime,
+) -> ShopeeVoucherDetailResponse:
+    is_follow = voucher_type == "follow_voucher"
+    if is_follow:
+        form = ShopeeFollowVoucherCreateFormResponse(
+            voucher_name=row.voucher_name,
+            claim_start_at=_format_discount_game_datetime(row.claim_start_at, run=run) or "",
+            claim_end_at=_format_discount_game_datetime(row.claim_end_at, run=run) or "",
+            valid_days_after_claim=int(row.valid_days_after_claim or 7),
+            reward_type=row.reward_type,
+            discount_type=row.discount_type,
+            discount_amount=row.discount_amount,
+            discount_percent=row.discount_percent,
+            max_discount_type=row.max_discount_type,
+            max_discount_amount=row.max_discount_amount,
+            min_spend_amount=row.min_spend_amount,
+            usage_limit=row.usage_limit,
+            per_buyer_limit=row.per_buyer_limit,
+            trigger_type=row.trigger_type,
+            display_type=row.display_type,
+            applicable_scope=row.applicable_scope,
+        )
+        selected_products: list[dict[str, Any]] = []
+    else:
+        form = ShopeeVoucherCreateFormResponse(
+            voucher_name=row.voucher_name,
+            code_prefix=getattr(row, "code_prefix", "HOME") or "HOME",
+            code_suffix_max_length=5,
+            start_at=_format_discount_game_datetime(row.start_at, run=run) or "",
+            end_at=_format_discount_game_datetime(row.end_at, run=run) or "",
+            display_before_start=bool(getattr(row, "display_before_start", False)),
+            display_start_at=_format_discount_game_datetime(getattr(row, "display_start_at", None), run=run),
+            reward_type=row.reward_type,
+            discount_type=row.discount_type,
+            discount_amount=row.discount_amount,
+            discount_percent=row.discount_percent,
+            max_discount_type=row.max_discount_type,
+            max_discount_amount=row.max_discount_amount,
+            min_spend_amount=row.min_spend_amount,
+            usage_limit=row.usage_limit,
+            per_buyer_limit=row.per_buyer_limit,
+            display_type=row.display_type,
+            display_channels=_parse_json_list(getattr(row, "display_channels", None)),
+            applicable_scope=row.applicable_scope,
+            audience_scope=getattr(row, "audience_scope", ""),
+        )
+        selected_products = _build_voucher_detail_selected_products(list(getattr(row, "items", []) or []))
+    return ShopeeVoucherDetailResponse(
+        meta=ShopeeVoucherCreateMetaResponse(
+            run_id=run.id,
+            user_id=user_id,
+            voucher_type=voucher_type,
+            read_only=True,
+            current_tick=current_tick,
+        ),
+        form=form,
+        selected_products=selected_products,
+        status=status_value,
+        status_label=status_label,
+        voucher_code=row.voucher_code,
+        used_count=int(getattr(row, "used_count", 0) or 0),
+        sales_amount=float(getattr(row, "sales_amount", 0) or 0),
+        order_count=int(getattr(row, "order_count", 0) or 0),
+        buyer_count=int(getattr(row, "buyer_count", 0) or 0),
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
+def _voucher_campaign_config() -> dict[str, tuple[Any, Any, str]]:
+    return {
+        "shop_voucher": (ShopeeShopVoucherCampaign, None, "店铺代金券"),
+        "product_voucher": (ShopeeProductVoucherCampaign, ShopeeProductVoucherCampaign.items, "商品代金券"),
+        "private_voucher": (ShopeePrivateVoucherCampaign, ShopeePrivateVoucherCampaign.items, "专属代金券"),
+        "live_voucher": (ShopeeLiveVoucherCampaign, ShopeeLiveVoucherCampaign.items, "直播代金券"),
+        "video_voucher": (ShopeeVideoVoucherCampaign, ShopeeVideoVoucherCampaign.items, "视频代金券"),
+        "follow_voucher": (ShopeeFollowVoucherCampaign, None, "关注礼代金券"),
+    }
+
+
+def _format_rm_amount(value: float | int | None) -> str:
+    amount = float(value or 0)
+    text = f"{amount:.2f}".rstrip("0").rstrip(".")
+    return f"RM{text}"
+
+
+def _voucher_discount_text(row: Any) -> str:
+    if (getattr(row, "discount_type", "") or "") == "percent":
+        return f"{float(getattr(row, 'discount_percent', 0) or 0):.0f}%"
+    return _format_rm_amount(getattr(row, "discount_amount", 0))
+
+
+def _voucher_scope_label(row: Any, voucher_type: str) -> str:
+    if voucher_type == "shop_voucher":
+        return "所有商品"
+    if voucher_type == "follow_voucher":
+        return "全部商品"
+    selected_count = int(getattr(row, "selected_product_count", 0) or len(getattr(row, "items", []) or []))
+    if selected_count > 0:
+        return f"{selected_count} 件商品"
+    return "全部商品"
+
+
+def _voucher_order_status_label(row: ShopeeOrder) -> str:
+    if (row.type_bucket or "") == "cancelled" or row.cancelled_at:
+        return "已取消"
+    if (row.type_bucket or "") == "completed" or row.delivered_at:
+        return "已完成"
+    if (row.process_status or "") == "shipping":
+        return "运送中"
+    if (row.process_status or "") == "processing":
+        return "待发货"
+    return row.process_status or "处理中"
+
+
+def _build_voucher_orders_response(
+    *,
+    db: Session,
+    run: GameRun,
+    user_id: int,
+    voucher_type: str,
+    campaign_id: int,
+    page: int,
+    page_size: int,
+) -> ShopeeVoucherOrdersResponse:
+    campaign_config = _voucher_campaign_config()
+    if voucher_type not in campaign_config:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="代金券类型不支持")
+
+    model, items_relation, type_label = campaign_config[voucher_type]
+    campaign_query = db.query(model)
+    if items_relation is not None:
+        campaign_query = campaign_query.options(selectinload(items_relation))
+    campaign = campaign_query.filter(model.id == campaign_id, model.run_id == run.id, model.user_id == user_id).first()
+    if not campaign:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="代金券不存在")
+
+    current_tick = _resolve_game_tick(db, run.id, user_id)
+    if voucher_type == "follow_voucher":
+        status_value = _resolve_follow_voucher_status(
+            claim_start_at=campaign.claim_start_at,
+            claim_end_at=campaign.claim_end_at,
+            current_tick=current_tick,
+            claimed_count=campaign.claimed_count,
+            usage_limit=campaign.usage_limit,
+        )
+        period = _format_follow_voucher_period(campaign, run=run)
+        claimed_count = int(campaign.claimed_count or 0)
+    else:
+        status_value = _resolve_shop_voucher_status(
+            start_at=campaign.start_at,
+            end_at=campaign.end_at,
+            current_tick=current_tick,
+            used_count=campaign.used_count,
+            usage_limit=campaign.usage_limit,
+        )
+        period = _format_shop_voucher_period(campaign, run=run)
+        claimed_count = int(getattr(campaign, "claimed_count", 0) or campaign.used_count or 0)
+
+    status_label = {
+        "upcoming": "即将开始",
+        "ongoing": "进行中",
+        "sold_out": "已抢完",
+        "ended": "已过期",
+        "stopped": "已停止",
+    }.get(status_value, status_value)
+
+    query = (
+        db.query(ShopeeOrder)
+        .options(selectinload(ShopeeOrder.items))
+        .filter(
+            ShopeeOrder.run_id == run.id,
+            ShopeeOrder.user_id == user_id,
+            ShopeeOrder.voucher_campaign_type == voucher_type,
+            ShopeeOrder.voucher_campaign_id == campaign_id,
+        )
+        .order_by(desc(ShopeeOrder.created_at), desc(ShopeeOrder.id))
+    )
+    total = query.count()
+    orders = query.offset((page - 1) * page_size).limit(page_size).all()
+
+    return ShopeeVoucherOrdersResponse(
+        voucher=ShopeeVoucherOrdersInfoResponse(
+            status_label=status_label,
+            voucher_name=campaign.voucher_name,
+            reward_type_label="折扣" if (campaign.reward_type or "discount") == "discount" else campaign.reward_type,
+            min_spend_text=_format_rm_amount(campaign.min_spend_amount),
+            discount_text=_voucher_discount_text(campaign),
+            period=period,
+            voucher_code=campaign.voucher_code,
+            voucher_type_label=type_label,
+            applicable_scope_label=_voucher_scope_label(campaign, voucher_type),
+            display_setting_label="不展示" if not bool(getattr(campaign, "display_before_start", False)) else "展示",
+            usage_limit=int(campaign.usage_limit or 0),
+            claimed_count=claimed_count,
+            used_count=int(campaign.used_count or 0),
+        ),
+        page=page,
+        page_size=page_size,
+        total=total,
+        orders=[
+            ShopeeVoucherOrderRowResponse(
+                id=int(order.id),
+                order_no=order.order_no,
+                products=[
+                    ShopeeVoucherOrderProductResponse(
+                        image_url=item.image_url,
+                        product_name=item.product_name,
+                    )
+                    for item in (order.items or [])[:2]
+                ],
+                discount_amount=float(order.voucher_discount_amount or 0),
+                total_amount=float(order.buyer_payment or 0),
+                created_at_text=(_format_discount_game_datetime(order.created_at, run=run) or "")[:10],
+                status_label=_voucher_order_status_label(order),
+            )
+            for order in orders
+        ],
+    )
+
+
+def _build_product_voucher_eligible_products_response(
+    *,
+    db: Session,
+    run: GameRun,
+    user_id: int,
+    search_field: str,
+    category_key: str,
+    keyword: str,
+    page: int,
+    page_size: int,
+) -> ShopeeProductVoucherEligibleProductsResponse:
+    query = (
+        db.query(ShopeeListing)
+        .options(selectinload(ShopeeListing.variants), selectinload(ShopeeListing.images))
+        .filter(
+            ShopeeListing.run_id == run.id,
+            ShopeeListing.user_id == user_id,
+            ShopeeListing.status == "live",
+        )
+        .order_by(desc(ShopeeListing.updated_at), desc(ShopeeListing.id))
+    )
+    clean_keyword = keyword.strip()
+    if clean_keyword:
+        like = f"%{clean_keyword}%"
+        if (search_field or "product_name").strip().lower() == "product_id" and clean_keyword.isdigit():
+            query = query.filter(ShopeeListing.id == int(clean_keyword))
+        else:
+            query = query.filter(or_(ShopeeListing.title.ilike(like), ShopeeListing.sku_code.ilike(like)))
+
+    all_items: list[ShopeeProductVoucherEligibleProductResponse] = []
+    safe_category_key = (category_key or "all").strip()
+    for listing in query.all():
+        category_value = (listing.category or "未分类").strip() or "未分类"
+        row_category_key = category_value
+        row_category_label = category_value
+        if safe_category_key != "all" and row_category_key != safe_category_key:
+            continue
+        image_url = listing.cover_url or next((image.image_url for image in sorted(listing.images, key=lambda row: row.sort_order) if image.image_url), None)
+        active_variants = [variant for variant in sorted(listing.variants, key=lambda row: row.sort_order) if variant.stock > 0 and variant.price > 0]
+        if active_variants:
+            prices = [float(variant.price) for variant in active_variants]
+            min_price = min(prices)
+            max_price = max(prices)
+            price_range_label = f"RM {min_price:.2f}" if min_price == max_price else f"RM {min_price:.2f} - RM {max_price:.2f}"
+            stock_total = sum(int(variant.stock or 0) for variant in active_variants)
+            all_items.append(
+                ShopeeProductVoucherEligibleProductResponse(
+                    listing_id=listing.id,
+                    variant_id=None,
+                    variant_ids=[int(variant.id) for variant in active_variants],
+                    product_name=listing.title,
+                    variant_name="",
+                    sku=active_variants[0].sku,
+                    image_url=image_url,
+                    category_key=row_category_key,
+                    category_label=row_category_label,
+                    original_price=round(min_price, 2),
+                    price_range_label=price_range_label,
+                    stock_available=stock_total,
+                    likes_count=0,
+                    conflict=False,
+                )
+            )
+        elif listing.stock_available > 0 and float(listing.price or 0) > 0:
+            all_items.append(
+                ShopeeProductVoucherEligibleProductResponse(
+                    listing_id=listing.id,
+                    variant_id=None,
+                    product_name=listing.title,
+                    variant_name="",
+                    sku=listing.sku_code,
+                    image_url=image_url,
+                    category_key=row_category_key,
+                    category_label=row_category_label,
+                    original_price=round(float(listing.price or 0), 2),
+                    price_range_label=f"RM {float(listing.price or 0):.2f}",
+                    stock_available=int(listing.stock_available or 0),
+                    likes_count=0,
+                    conflict=False,
+                )
+            )
+
+    total = len(all_items)
+    start = max(0, (page - 1) * page_size)
+    end = start + page_size
+    return ShopeeProductVoucherEligibleProductsResponse(page=page, page_size=page_size, total=total, items=all_items[start:end])
+
+
+def _resolve_product_voucher_item_snapshots(
+    *,
+    db: Session,
+    run: GameRun,
+    user_id: int,
+    selected_products: list[ShopeeProductVoucherItemPayload],
+) -> list[ShopeeProductVoucherItem]:
+    items: list[ShopeeProductVoucherItem] = []
+    for sort_order, selected in enumerate(selected_products):
+        listing = (
+            db.query(ShopeeListing)
+            .options(selectinload(ShopeeListing.variants), selectinload(ShopeeListing.images))
+            .filter(
+                ShopeeListing.id == selected.listing_id,
+                ShopeeListing.run_id == run.id,
+                ShopeeListing.user_id == user_id,
+                ShopeeListing.status == "live",
+            )
+            .first()
+        )
+        if not listing:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="所选商品不存在或不可售")
+        variant = None
+        if selected.variant_id is not None:
+            variant = next((row for row in listing.variants if row.id == selected.variant_id), None)
+            if not variant:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="所选商品变体不存在")
+        stock_available = int(variant.stock if variant else listing.stock_available or 0)
+        original_price = float(variant.price if variant else listing.price or 0)
+        if stock_available <= 0 or original_price <= 0:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="所选商品库存或售价不满足参与条件")
+        image_url = (variant.image_url if variant else None) or listing.cover_url or next(
+            (image.image_url for image in sorted(listing.images, key=lambda row: row.sort_order) if image.image_url),
+            None,
+        )
+        category_label = (listing.category or "未分类").strip() or "未分类"
+        items.append(
+            ShopeeProductVoucherItem(
+                run_id=run.id,
+                user_id=user_id,
+                listing_id=listing.id,
+                variant_id=variant.id if variant else None,
+                product_id=listing.product_id,
+                product_name_snapshot=listing.title,
+                variant_name_snapshot=(variant.variant_name or variant.option_value) if variant else None,
+                sku_snapshot=(variant.sku if variant else listing.sku_code),
+                image_url_snapshot=image_url,
+                category_key_snapshot=category_label,
+                category_label_snapshot=category_label,
+                original_price_snapshot=original_price,
+                stock_snapshot=stock_available,
+                sort_order=sort_order,
+            )
+        )
+    return items
+
+
+def _build_shop_voucher_row(row: ShopeeShopVoucherCampaign, *, run: GameRun, current_tick: datetime) -> ShopeeVoucherRowResponse:
+    status_value = _resolve_shop_voucher_status(
+        start_at=row.start_at,
+        end_at=row.end_at,
+        current_tick=current_tick,
+        used_count=row.used_count,
+        usage_limit=row.usage_limit,
+    )
+    status_labels = {
+        "upcoming": "即将开始",
+        "ongoing": "进行中",
+        "sold_out": "已抢完",
+        "ended": "已结束",
+        "stopped": "已停止",
+    }
+    if row.discount_type == "percent":
+        discount_label = f"{float(row.discount_percent or 0):g}%OFF"
+    else:
+        discount_label = f"RM {float(row.discount_amount or 0):g}"
+    return ShopeeVoucherRowResponse(
+        id=row.id,
+        voucher_name=row.voucher_name,
+        voucher_code=row.voucher_code,
+        voucher_type="shop_voucher",
+        voucher_type_label="店铺代金券",
+        discount_type=row.discount_type,
+        discount_label=discount_label,
+        status=status_value,
+        status_label=status_labels.get(status_value, status_value),
+        scope_label="所有商品",
+        usage_limit=row.usage_limit,
+        used_count=row.used_count,
+        period=_format_shop_voucher_period(row, run=run),
+    )
+
+
+def _resolve_private_voucher_item_snapshots(
+    *,
+    db: Session,
+    run: GameRun,
+    user_id: int,
+    selected_products: list[ShopeeProductVoucherItemPayload],
+) -> list[ShopeePrivateVoucherItem]:
+    items: list[ShopeePrivateVoucherItem] = []
+    for sort_order, selected in enumerate(selected_products):
+        listing = (
+            db.query(ShopeeListing)
+            .options(selectinload(ShopeeListing.variants), selectinload(ShopeeListing.images))
+            .filter(
+                ShopeeListing.id == selected.listing_id,
+                ShopeeListing.run_id == run.id,
+                ShopeeListing.user_id == user_id,
+                ShopeeListing.status == "live",
+            )
+            .first()
+        )
+        if not listing:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="所选商品不存在或不可售")
+        variant = None
+        if selected.variant_id is not None:
+            variant = next((row for row in listing.variants if row.id == selected.variant_id), None)
+            if not variant:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="所选商品变体不存在")
+        stock_available = int(variant.stock if variant else listing.stock_available or 0)
+        original_price = float(variant.price if variant else listing.price or 0)
+        if stock_available <= 0 or original_price <= 0:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="所选商品库存或售价不满足参与条件")
+        image_url = (variant.image_url if variant else None) or listing.cover_url or next(
+            (image.image_url for image in sorted(listing.images, key=lambda row: row.sort_order) if image.image_url),
+            None,
+        )
+        category_label = (listing.category or "未分类").strip() or "未分类"
+        items.append(
+            ShopeePrivateVoucherItem(
+                run_id=run.id,
+                user_id=user_id,
+                listing_id=listing.id,
+                variant_id=variant.id if variant else None,
+                product_id=listing.product_id,
+                product_name_snapshot=listing.title,
+                variant_name_snapshot=(variant.variant_name or variant.option_value) if variant else None,
+                sku_snapshot=(variant.sku if variant else listing.sku_code),
+                image_url_snapshot=image_url,
+                category_key_snapshot=category_label,
+                category_label_snapshot=category_label,
+                original_price_snapshot=original_price,
+                stock_snapshot=stock_available,
+                sort_order=sort_order,
+            )
+        )
+    return items
+
+
+def _resolve_live_voucher_item_snapshots(
+    *,
+    db: Session,
+    run: GameRun,
+    user_id: int,
+    selected_products: list[ShopeeProductVoucherItemPayload],
+) -> list[ShopeeLiveVoucherItem]:
+    return _resolve_scene_voucher_item_snapshots(
+        db=db,
+        run=run,
+        user_id=user_id,
+        selected_products=selected_products,
+        item_model=ShopeeLiveVoucherItem,
+    )
+
+
+def _resolve_video_voucher_item_snapshots(
+    *,
+    db: Session,
+    run: GameRun,
+    user_id: int,
+    selected_products: list[ShopeeProductVoucherItemPayload],
+) -> list[ShopeeVideoVoucherItem]:
+    return _resolve_scene_voucher_item_snapshots(
+        db=db,
+        run=run,
+        user_id=user_id,
+        selected_products=selected_products,
+        item_model=ShopeeVideoVoucherItem,
+    )
+
+
+def _resolve_scene_voucher_item_snapshots(
+    *,
+    db: Session,
+    run: GameRun,
+    user_id: int,
+    selected_products: list[ShopeeProductVoucherItemPayload],
+    item_model: type[ShopeeLiveVoucherItem] | type[ShopeeVideoVoucherItem],
+):
+    items = []
+    for sort_order, selected in enumerate(selected_products):
+        listing = (
+            db.query(ShopeeListing)
+            .options(selectinload(ShopeeListing.variants), selectinload(ShopeeListing.images))
+            .filter(
+                ShopeeListing.id == selected.listing_id,
+                ShopeeListing.run_id == run.id,
+                ShopeeListing.user_id == user_id,
+                ShopeeListing.status == "live",
+            )
+            .first()
+        )
+        if not listing:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="所选商品不存在或不可售")
+        variant = None
+        if selected.variant_id is not None:
+            variant = next((row for row in listing.variants if row.id == selected.variant_id), None)
+            if not variant:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="所选商品变体不存在")
+        stock_available = int(variant.stock if variant else listing.stock_available or 0)
+        original_price = float(variant.price if variant else listing.price or 0)
+        if stock_available <= 0 or original_price <= 0:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="所选商品库存或售价不满足参与条件")
+        image_url = (variant.image_url if variant else None) or listing.cover_url or next(
+            (image.image_url for image in sorted(listing.images, key=lambda row: row.sort_order) if image.image_url),
+            None,
+        )
+        category_label = (listing.category or "未分类").strip() or "未分类"
+        items.append(
+            item_model(
+                run_id=run.id,
+                user_id=user_id,
+                listing_id=listing.id,
+                variant_id=variant.id if variant else None,
+                product_id=listing.product_id,
+                product_name_snapshot=listing.title,
+                variant_name_snapshot=(variant.variant_name or variant.option_value) if variant else None,
+                sku_snapshot=(variant.sku if variant else listing.sku_code),
+                image_url_snapshot=image_url,
+                category_key_snapshot=category_label,
+                category_label_snapshot=category_label,
+                original_price_snapshot=original_price,
+                stock_snapshot=stock_available,
+                sort_order=sort_order,
+            )
+        )
+    return items
+
+
+def _build_follow_voucher_row(row: ShopeeFollowVoucherCampaign, *, run: GameRun, current_tick: datetime) -> ShopeeVoucherRowResponse:
+    status_value = _resolve_follow_voucher_status(
+        claim_start_at=row.claim_start_at,
+        claim_end_at=row.claim_end_at,
+        current_tick=current_tick,
+        claimed_count=row.claimed_count,
+        usage_limit=row.usage_limit,
+    )
+    status_labels = {
+        "upcoming": "即将开始",
+        "ongoing": "进行中",
+        "sold_out": "已抢完",
+        "ended": "已结束",
+        "stopped": "已停止",
+    }
+    if row.discount_type == "percent":
+        discount_label = f"{float(row.discount_percent or 0):g}%OFF"
+    else:
+        discount_label = f"RM {float(row.discount_amount or 0):g}"
+    return ShopeeVoucherRowResponse(
+        id=row.id,
+        voucher_name=row.voucher_name,
+        voucher_code=row.voucher_code,
+        voucher_type="follow_voucher",
+        voucher_type_label="关注礼代金券",
+        discount_type=row.discount_type,
+        discount_label=discount_label,
+        status=status_value,
+        status_label=status_labels.get(status_value, status_value),
+        scope_label="全部商品",
+        usage_limit=row.usage_limit,
+        used_count=row.used_count,
+        period=_format_follow_voucher_period(row, run=run),
+    )
+
+
+def _build_product_voucher_row(row: ShopeeProductVoucherCampaign, *, run: GameRun, current_tick: datetime) -> ShopeeVoucherRowResponse:
+    status_value = _resolve_shop_voucher_status(
+        start_at=row.start_at,
+        end_at=row.end_at,
+        current_tick=current_tick,
+        used_count=row.used_count,
+        usage_limit=row.usage_limit,
+    )
+    status_labels = {
+        "upcoming": "即将开始",
+        "ongoing": "进行中",
+        "sold_out": "已抢完",
+        "ended": "已结束",
+        "stopped": "已停止",
+    }
+    if row.discount_type == "percent":
+        discount_label = f"{float(row.discount_percent or 0):g}%OFF"
+    else:
+        discount_label = f"RM {float(row.discount_amount or 0):g}"
+    selected_count = int(row.selected_product_count or len(row.items or []))
+    return ShopeeVoucherRowResponse(
+        id=row.id,
+        voucher_name=row.voucher_name,
+        voucher_code=row.voucher_code,
+        voucher_type="product_voucher",
+        voucher_type_label="商品代金券",
+        discount_type=row.discount_type,
+        discount_label=discount_label,
+        status=status_value,
+        status_label=status_labels.get(status_value, status_value),
+        scope_label=f"指定商品 {selected_count} 个",
+        usage_limit=row.usage_limit,
+        used_count=row.used_count,
+        period=_format_shop_voucher_period(row, run=run),
+    )
+
+
+def _build_private_voucher_row(row: ShopeePrivateVoucherCampaign, *, run: GameRun, current_tick: datetime) -> ShopeeVoucherRowResponse:
+    status_value = _resolve_shop_voucher_status(
+        start_at=row.start_at,
+        end_at=row.end_at,
+        current_tick=current_tick,
+        used_count=row.used_count,
+        usage_limit=row.usage_limit,
+    )
+    status_labels = {
+        "upcoming": "即将开始",
+        "ongoing": "进行中",
+        "sold_out": "已抢完",
+        "ended": "已结束",
+        "stopped": "已停止",
+    }
+    if row.discount_type == "percent":
+        discount_label = f"{float(row.discount_percent or 0):g}%OFF"
+    else:
+        discount_label = f"RM {float(row.discount_amount or 0):g}"
+    selected_count = int(row.selected_product_count or len(row.items or []))
+    scope_label = "全部商品" if row.applicable_scope == "all_products" else f"指定商品 {selected_count} 个"
+    return ShopeeVoucherRowResponse(
+        id=row.id,
+        voucher_name=row.voucher_name,
+        voucher_code=row.voucher_code,
+        voucher_type="private_voucher",
+        voucher_type_label="专属代金券",
+        discount_type=row.discount_type,
+        discount_label=discount_label,
+        status=status_value,
+        status_label=status_labels.get(status_value, status_value),
+        scope_label=scope_label,
+        usage_limit=row.usage_limit,
+        used_count=row.used_count,
+        period=_format_shop_voucher_period(row, run=run),
+    )
+
+
+def _build_live_voucher_row(row: ShopeeLiveVoucherCampaign, *, run: GameRun, current_tick: datetime) -> ShopeeVoucherRowResponse:
+    return _build_scene_voucher_row(
+        row,
+        run=run,
+        current_tick=current_tick,
+        voucher_type="live_voucher",
+        voucher_type_label="直播代金券",
+    )
+
+
+def _build_video_voucher_row(row: ShopeeVideoVoucherCampaign, *, run: GameRun, current_tick: datetime) -> ShopeeVoucherRowResponse:
+    return _build_scene_voucher_row(
+        row,
+        run=run,
+        current_tick=current_tick,
+        voucher_type="video_voucher",
+        voucher_type_label="视频代金券",
+    )
+
+
+def _build_scene_voucher_row(
+    row: ShopeeLiveVoucherCampaign | ShopeeVideoVoucherCampaign,
+    *,
+    run: GameRun,
+    current_tick: datetime,
+    voucher_type: str,
+    voucher_type_label: str,
+) -> ShopeeVoucherRowResponse:
+    status_value = _resolve_shop_voucher_status(
+        start_at=row.start_at,
+        end_at=row.end_at,
+        current_tick=current_tick,
+        used_count=row.used_count,
+        usage_limit=row.usage_limit,
+    )
+    status_labels = {
+        "upcoming": "即将开始",
+        "ongoing": "进行中",
+        "sold_out": "已抢完",
+        "ended": "已结束",
+        "stopped": "已停止",
+    }
+    if row.discount_type == "percent":
+        discount_label = f"{float(row.discount_percent or 0):g}%OFF"
+    else:
+        discount_label = f"RM {float(row.discount_amount or 0):g}"
+    selected_count = int(row.selected_product_count or len(row.items or []))
+    scope_label = "全部商品" if row.applicable_scope == "all_products" else f"指定商品 {selected_count} 个"
+    return ShopeeVoucherRowResponse(
+        id=row.id,
+        voucher_name=row.voucher_name,
+        voucher_code=row.voucher_code,
+        voucher_type=voucher_type,
+        voucher_type_label=voucher_type_label,
+        discount_type=row.discount_type,
+        discount_label=discount_label,
+        status=status_value,
+        status_label=status_labels.get(status_value, status_value),
+        scope_label=scope_label,
+        usage_limit=row.usage_limit,
+        used_count=row.used_count,
+        period=_format_shop_voucher_period(row, run=run),
+    )
+
+
+def _build_shop_voucher_list_response(
+    *,
+    db: Session,
+    run: GameRun,
+    user_id: int,
+    status_value: str,
+    keyword: str,
+    page: int,
+    page_size: int,
+) -> ShopeeVoucherListResponse:
+    current_tick = _resolve_game_tick(db, run.id, user_id)
+    shop_rows = db.query(ShopeeShopVoucherCampaign).filter(
+        ShopeeShopVoucherCampaign.run_id == run.id,
+        ShopeeShopVoucherCampaign.user_id == user_id,
+    ).all()
+    product_rows = db.query(ShopeeProductVoucherCampaign).options(selectinload(ShopeeProductVoucherCampaign.items)).filter(
+        ShopeeProductVoucherCampaign.run_id == run.id,
+        ShopeeProductVoucherCampaign.user_id == user_id,
+    ).all()
+    private_rows = db.query(ShopeePrivateVoucherCampaign).options(selectinload(ShopeePrivateVoucherCampaign.items)).filter(
+        ShopeePrivateVoucherCampaign.run_id == run.id,
+        ShopeePrivateVoucherCampaign.user_id == user_id,
+    ).all()
+    live_rows = db.query(ShopeeLiveVoucherCampaign).options(selectinload(ShopeeLiveVoucherCampaign.items)).filter(
+        ShopeeLiveVoucherCampaign.run_id == run.id,
+        ShopeeLiveVoucherCampaign.user_id == user_id,
+    ).all()
+    video_rows = db.query(ShopeeVideoVoucherCampaign).options(selectinload(ShopeeVideoVoucherCampaign.items)).filter(
+        ShopeeVideoVoucherCampaign.run_id == run.id,
+        ShopeeVideoVoucherCampaign.user_id == user_id,
+    ).all()
+    follow_rows = db.query(ShopeeFollowVoucherCampaign).filter(
+        ShopeeFollowVoucherCampaign.run_id == run.id,
+        ShopeeFollowVoucherCampaign.user_id == user_id,
+    ).all()
+    row_pairs: list[tuple[datetime, int, ShopeeVoucherRowResponse]] = [
+        (row.created_at, row.id, _build_shop_voucher_row(row, run=run, current_tick=current_tick)) for row in shop_rows
+    ] + [
+        (row.created_at, row.id, _build_product_voucher_row(row, run=run, current_tick=current_tick)) for row in product_rows
+    ] + [
+        (row.created_at, row.id, _build_private_voucher_row(row, run=run, current_tick=current_tick)) for row in private_rows
+    ] + [
+        (row.created_at, row.id, _build_live_voucher_row(row, run=run, current_tick=current_tick)) for row in live_rows
+    ] + [
+        (row.created_at, row.id, _build_video_voucher_row(row, run=run, current_tick=current_tick)) for row in video_rows
+    ] + [
+        (row.created_at, row.id, _build_follow_voucher_row(row, run=run, current_tick=current_tick)) for row in follow_rows
+    ]
+    row_pairs.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    built_rows = [item[2] for item in row_pairs]
+    if keyword.strip():
+        needle = keyword.strip().lower()
+        built_rows = [row for row in built_rows if needle in row.voucher_name.lower() or needle in row.voucher_code.lower()]
+    if status_value != "all":
+        built_rows = [row for row in built_rows if row.status == status_value]
+    total = len(built_rows)
+    start = max(0, (page - 1) * page_size)
+    items = built_rows[start:start + page_size]
+    all_rows = [item[2] for item in row_pairs]
+    counts = {key: 0 for key in ["ongoing", "upcoming", "ended"]}
+    for row in all_rows:
+        if row.status in counts:
+            counts[row.status] += 1
+    campaign_rows = shop_rows + product_rows + private_rows + live_rows + video_rows + follow_rows
+    usage_limit_sum = sum(row.usage_limit for row in campaign_rows)
+    used_count_sum = sum(row.used_count for row in campaign_rows)
+    return ShopeeVoucherListResponse(
+        summary=ShopeeVoucherSummaryResponse(
+            sales_amount=sum(float(row.sales_amount or 0) for row in campaign_rows),
+            order_count=sum(int(row.order_count or 0) for row in campaign_rows),
+            usage_rate=(used_count_sum / usage_limit_sum * 100) if usage_limit_sum > 0 else 0,
+            buyer_count=sum(int(row.buyer_count or 0) for row in campaign_rows),
+        ),
+        tabs=[
+            ShopeeVoucherTabResponse(key="all", label="全部", count=len(all_rows)),
+            ShopeeVoucherTabResponse(key="ongoing", label="进行中", count=counts["ongoing"]),
+            ShopeeVoucherTabResponse(key="upcoming", label="即将开始", count=counts["upcoming"]),
+            ShopeeVoucherTabResponse(key="ended", label="已结束", count=counts["ended"]),
+        ],
+        list=ShopeeVoucherListPageResponse(page=page, page_size=page_size, total=total, items=items),
+    )
+
+
 def _build_bundle_create_bootstrap_payload(
     *,
     db: Session,
@@ -6098,6 +8501,9 @@ def _upsert_order_settlement(
         shipping_cost=shipping_cost,
         shipping_channel=order.shipping_channel,
     )
+    shipping_promotion_discount = round(float(order.shipping_promotion_discount_amount or 0), 2)
+    settlement_data["shipping_promotion_discount_amount"] = shipping_promotion_discount
+    settlement_data["net_income_amount"] = round(float(settlement_data["net_income_amount"] or 0) - shipping_promotion_discount, 2)
     settlement = (
         db.query(ShopeeOrderSettlement)
         .filter(
@@ -7027,6 +9433,18 @@ def list_shopee_orders(
                         "marketing_campaign_type": row.marketing_campaign_type,
                         "marketing_campaign_id": row.marketing_campaign_id,
                         "marketing_campaign_name_snapshot": row.marketing_campaign_name_snapshot,
+                        "order_subtotal_amount": float(row.order_subtotal_amount or 0),
+                        "voucher_campaign_type": row.voucher_campaign_type,
+                        "voucher_campaign_id": row.voucher_campaign_id,
+                        "voucher_name_snapshot": row.voucher_name_snapshot,
+                        "voucher_code_snapshot": row.voucher_code_snapshot,
+                        "voucher_discount_amount": float(row.voucher_discount_amount or 0),
+                        "shipping_promotion_campaign_id": row.shipping_promotion_campaign_id,
+                        "shipping_promotion_name_snapshot": row.shipping_promotion_name_snapshot,
+                        "shipping_promotion_tier_index": row.shipping_promotion_tier_index,
+                        "shipping_fee_before_promotion": float(row.shipping_fee_before_promotion or 0),
+                        "shipping_fee_after_promotion": float(row.shipping_fee_after_promotion or 0),
+                        "shipping_promotion_discount_amount": float(row.shipping_promotion_discount_amount or 0),
                         "discount_percent": (
                             discount_percent_map.get((int(row.marketing_campaign_id), int(row.variant_id) if row.variant_id else None))
                             or discount_percent_map.get((int(row.marketing_campaign_id), None))
@@ -7175,6 +9593,18 @@ def get_shopee_order_detail(
                 "marketing_campaign_type": row.marketing_campaign_type,
                 "marketing_campaign_id": row.marketing_campaign_id,
                 "marketing_campaign_name_snapshot": row.marketing_campaign_name_snapshot,
+                "order_subtotal_amount": float(row.order_subtotal_amount or 0),
+                "voucher_campaign_type": row.voucher_campaign_type,
+                "voucher_campaign_id": row.voucher_campaign_id,
+                "voucher_name_snapshot": row.voucher_name_snapshot,
+                "voucher_code_snapshot": row.voucher_code_snapshot,
+                "voucher_discount_amount": float(row.voucher_discount_amount or 0),
+                "shipping_promotion_campaign_id": row.shipping_promotion_campaign_id,
+                "shipping_promotion_name_snapshot": row.shipping_promotion_name_snapshot,
+                "shipping_promotion_tier_index": row.shipping_promotion_tier_index,
+                "shipping_fee_before_promotion": float(row.shipping_fee_before_promotion or 0),
+                "shipping_fee_after_promotion": float(row.shipping_fee_after_promotion or 0),
+                "shipping_promotion_discount_amount": float(row.shipping_promotion_discount_amount or 0),
                 "discount_percent": discount_percent,
                 "items": [
                     ShopeeOrderItemResponse(
@@ -7528,6 +9958,7 @@ def get_order_settlement(
         payment_fee_amount=float(settlement.payment_fee_amount),
         shipping_cost_amount=float(settlement.shipping_cost_amount),
         shipping_subsidy_amount=float(settlement.shipping_subsidy_amount),
+        shipping_promotion_discount_amount=float(settlement.shipping_promotion_discount_amount or 0),
         net_income_amount=float(settlement.net_income_amount),
         settled_at=settlement.settled_at,
     )
@@ -9096,6 +11527,1334 @@ def list_shopee_discount_eligible_products(
     )
     cache_set_json(cache_key, payload.model_dump(mode="json"), REDIS_CACHE_TTL_DISCOUNT_ELIGIBLE_PRODUCTS_SEC)
     return payload
+
+
+@router.get("/runs/{run_id}/customer-service/auto-replies", response_model=ShopeeAutoReplySettingsResponse)
+def get_shopee_auto_replies(
+    run_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> ShopeeAutoReplySettingsResponse:
+    user_id = int(current_user["id"])
+    _enforce_shopee_auto_reply_rate_limit(user_id=user_id)
+    run = _get_owned_order_readable_run_or_404(db, run_id, user_id)
+    cache_key = _shopee_auto_reply_settings_cache_key(run_id=run.id, user_id=user_id)
+    cached_payload = cache_get_json(cache_key)
+    if isinstance(cached_payload, dict):
+        return ShopeeAutoReplySettingsResponse.model_validate(cached_payload)
+    payload = _build_auto_reply_settings_response(db, run=run, user_id=user_id)
+    cache_set_json(cache_key, payload.model_dump(mode="json"), REDIS_CACHE_TTL_SHOPEE_AUTO_REPLY_SETTINGS_SEC)
+    return payload
+
+
+@router.put("/runs/{run_id}/customer-service/auto-replies/{reply_type}", response_model=ShopeeAutoReplyUpdateResponse)
+def update_shopee_auto_reply(
+    run_id: int,
+    reply_type: str,
+    payload: ShopeeAutoReplyUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> ShopeeAutoReplyUpdateResponse:
+    user_id = int(current_user["id"])
+    _enforce_shopee_auto_reply_rate_limit(user_id=user_id, update=True)
+    run = _get_owned_running_run_or_404(db, run_id, user_id)
+    if reply_type not in AUTO_REPLY_TYPES:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="自动回复类型不存在")
+
+    settings = _ensure_auto_reply_settings(db, run=run, user_id=user_id)
+    row = settings[reply_type]
+    next_enabled, next_message, next_start_time, next_end_time = _validate_auto_reply_update(reply_type, payload, row)
+    row.enabled = next_enabled
+    row.message = next_message
+    row.work_time_enabled = reply_type == "off_work"
+    row.work_start_time = next_start_time
+    row.work_end_time = next_end_time
+    row.timezone = "game_time"
+    row.trigger_interval_minutes = 1440
+    row.trigger_once_per_game_day = reply_type == "off_work"
+    db.commit()
+    db.refresh(row)
+    _invalidate_shopee_auto_reply_cache(run_id=run.id, user_id=user_id)
+    return ShopeeAutoReplyUpdateResponse(setting=_serialize_auto_reply_setting(row, reply_type=reply_type))
+
+
+@router.get("/runs/{run_id}/customer-service/quick-replies", response_model=ShopeeQuickReplyListResponse)
+def get_shopee_quick_replies(
+    run_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> ShopeeQuickReplyListResponse:
+    user_id = int(current_user["id"])
+    _enforce_shopee_quick_reply_rate_limit(user_id=user_id)
+    run = _get_owned_order_readable_run_or_404(db, run_id, user_id)
+    cache_key = _shopee_quick_reply_list_cache_key(run_id=run.id, user_id=user_id)
+    cached_payload = cache_get_json(cache_key)
+    if isinstance(cached_payload, dict):
+        return ShopeeQuickReplyListResponse.model_validate(cached_payload)
+    payload = _build_quick_reply_list_response(db, run=run, user_id=user_id)
+    cache_set_json(cache_key, payload.model_dump(mode="json"), REDIS_CACHE_TTL_SHOPEE_QUICK_REPLY_LIST_SEC)
+    return payload
+
+
+@router.put("/runs/{run_id}/customer-service/quick-replies/preference", response_model=ShopeeQuickReplyPreferenceUpdateResponse)
+def update_shopee_quick_reply_preference(
+    run_id: int,
+    payload: ShopeeQuickReplyPreferenceUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> ShopeeQuickReplyPreferenceUpdateResponse:
+    user_id = int(current_user["id"])
+    _enforce_shopee_quick_reply_rate_limit(user_id=user_id, update=True)
+    run = _get_owned_running_run_or_404(db, run_id, user_id)
+    preference, _groups = _ensure_quick_reply_data(db, run=run, user_id=user_id)
+    if preference is None:
+        preference = ShopeeQuickReplyPreference(run_id=run.id, user_id=user_id, auto_hint_enabled=payload.auto_hint_enabled)
+        db.add(preference)
+    else:
+        preference.auto_hint_enabled = payload.auto_hint_enabled
+    db.commit()
+    db.refresh(preference)
+    _invalidate_shopee_quick_reply_cache(run_id=run.id, user_id=user_id)
+    return ShopeeQuickReplyPreferenceUpdateResponse(preference=ShopeeQuickReplyPreferenceResponse(auto_hint_enabled=bool(preference.auto_hint_enabled)))
+
+
+@router.post("/runs/{run_id}/customer-service/quick-reply-groups", response_model=ShopeeQuickReplyGroupCreateResponse, status_code=status.HTTP_201_CREATED)
+def create_shopee_quick_reply_group(
+    run_id: int,
+    payload: ShopeeQuickReplyCreateGroupRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> ShopeeQuickReplyGroupCreateResponse:
+    user_id = int(current_user["id"])
+    _enforce_shopee_quick_reply_rate_limit(user_id=user_id, update=True)
+    run = _get_owned_running_run_or_404(db, run_id, user_id)
+    _ensure_quick_reply_data(db, run=run, user_id=user_id)
+    group_name, messages = _validate_quick_reply_create_payload(db, run_id=run.id, user_id=user_id, payload=payload)
+    max_sort = db.query(func.max(ShopeeQuickReplyGroup.sort_order)).filter(ShopeeQuickReplyGroup.run_id == run.id, ShopeeQuickReplyGroup.user_id == user_id).scalar() or 0
+    group = ShopeeQuickReplyGroup(
+        run_id=run.id,
+        user_id=user_id,
+        group_name=group_name,
+        enabled=payload.enabled,
+        sort_order=int(max_sort) + 1,
+        message_count=len(messages),
+    )
+    db.add(group)
+    db.flush()
+    for index, (message, tags) in enumerate(messages, start=1):
+        db.add(
+            ShopeeQuickReplyMessage(
+                group_id=group.id,
+                run_id=run.id,
+                user_id=user_id,
+                message=message,
+                tags_json=json.dumps(tags, ensure_ascii=False),
+                sort_order=index,
+            )
+        )
+    db.commit()
+    db.refresh(group)
+    group = (
+        db.query(ShopeeQuickReplyGroup)
+        .options(selectinload(ShopeeQuickReplyGroup.messages))
+        .filter(ShopeeQuickReplyGroup.id == group.id, ShopeeQuickReplyGroup.run_id == run.id, ShopeeQuickReplyGroup.user_id == user_id)
+        .first()
+    )
+    _invalidate_shopee_quick_reply_cache(run_id=run.id, user_id=user_id)
+    return ShopeeQuickReplyGroupCreateResponse(group=_serialize_quick_reply_group(group))
+
+
+@router.put("/runs/{run_id}/customer-service/quick-reply-groups/reorder", response_model=ShopeeQuickReplyListResponse)
+def reorder_shopee_quick_reply_groups(
+    run_id: int,
+    payload: ShopeeQuickReplyGroupReorderRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> ShopeeQuickReplyListResponse:
+    user_id = int(current_user["id"])
+    _enforce_shopee_quick_reply_rate_limit(user_id=user_id, update=True)
+    run = _get_owned_running_run_or_404(db, run_id, user_id)
+    groups = (
+        db.query(ShopeeQuickReplyGroup)
+        .filter(ShopeeQuickReplyGroup.run_id == run.id, ShopeeQuickReplyGroup.user_id == user_id)
+        .all()
+    )
+    existing_ids = {group.id for group in groups}
+    requested_ids = payload.group_ids
+    if len(requested_ids) != len(existing_ids) or set(requested_ids) != existing_ids:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="排序分组列表与当前快捷回复分组不一致")
+    for index, group_id in enumerate(requested_ids, start=1):
+        for group in groups:
+            if group.id == group_id:
+                group.sort_order = index
+                break
+    db.commit()
+    _invalidate_shopee_quick_reply_cache(run_id=run.id, user_id=user_id)
+    return _build_quick_reply_list_response(db, run=run, user_id=user_id)
+
+
+@router.put("/runs/{run_id}/customer-service/quick-reply-groups/{group_id}", response_model=ShopeeQuickReplyGroupCreateResponse)
+def update_shopee_quick_reply_group(
+    run_id: int,
+    group_id: int,
+    payload: ShopeeQuickReplyUpdateGroupRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> ShopeeQuickReplyGroupCreateResponse:
+    user_id = int(current_user["id"])
+    _enforce_shopee_quick_reply_rate_limit(user_id=user_id, update=True)
+    run = _get_owned_running_run_or_404(db, run_id, user_id)
+    group = (
+        db.query(ShopeeQuickReplyGroup)
+        .options(selectinload(ShopeeQuickReplyGroup.messages))
+        .filter(ShopeeQuickReplyGroup.id == group_id, ShopeeQuickReplyGroup.run_id == run.id, ShopeeQuickReplyGroup.user_id == user_id)
+        .first()
+    )
+    if not group:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="快捷回复分组不存在")
+    group_name, messages = _validate_quick_reply_payload(payload)
+    group.group_name = group_name
+    group.enabled = payload.enabled
+    group.message_count = len(messages)
+    for message in list(group.messages):
+        db.delete(message)
+    db.flush()
+    for index, (message, tags) in enumerate(messages, start=1):
+        db.add(
+            ShopeeQuickReplyMessage(
+                group_id=group.id,
+                run_id=run.id,
+                user_id=user_id,
+                message=message,
+                tags_json=json.dumps(tags, ensure_ascii=False),
+                sort_order=index,
+            )
+        )
+    db.commit()
+    group = (
+        db.query(ShopeeQuickReplyGroup)
+        .options(selectinload(ShopeeQuickReplyGroup.messages))
+        .filter(ShopeeQuickReplyGroup.id == group_id, ShopeeQuickReplyGroup.run_id == run.id, ShopeeQuickReplyGroup.user_id == user_id)
+        .first()
+    )
+    _invalidate_shopee_quick_reply_cache(run_id=run.id, user_id=user_id)
+    return ShopeeQuickReplyGroupCreateResponse(group=_serialize_quick_reply_group(group))
+
+
+@router.delete("/runs/{run_id}/customer-service/quick-reply-groups/{group_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_shopee_quick_reply_group(
+    run_id: int,
+    group_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> None:
+    user_id = int(current_user["id"])
+    _enforce_shopee_quick_reply_rate_limit(user_id=user_id, update=True)
+    run = _get_owned_running_run_or_404(db, run_id, user_id)
+    group = (
+        db.query(ShopeeQuickReplyGroup)
+        .filter(ShopeeQuickReplyGroup.id == group_id, ShopeeQuickReplyGroup.run_id == run.id, ShopeeQuickReplyGroup.user_id == user_id)
+        .first()
+    )
+    if not group:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="快捷回复分组不存在")
+    db.delete(group)
+    db.commit()
+    remaining_groups = (
+        db.query(ShopeeQuickReplyGroup)
+        .filter(ShopeeQuickReplyGroup.run_id == run.id, ShopeeQuickReplyGroup.user_id == user_id)
+        .order_by(ShopeeQuickReplyGroup.sort_order.asc(), ShopeeQuickReplyGroup.id.asc())
+        .all()
+    )
+    for index, item in enumerate(remaining_groups, start=1):
+        item.sort_order = index
+    db.commit()
+    _invalidate_shopee_quick_reply_cache(run_id=run.id, user_id=user_id)
+    return None
+
+
+@router.patch("/runs/{run_id}/customer-service/quick-reply-groups/{group_id}/enabled", response_model=ShopeeQuickReplyGroupCreateResponse)
+def update_shopee_quick_reply_group_enabled(
+    run_id: int,
+    group_id: int,
+    payload: ShopeeQuickReplyGroupEnabledRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> ShopeeQuickReplyGroupCreateResponse:
+    user_id = int(current_user["id"])
+    _enforce_shopee_quick_reply_rate_limit(user_id=user_id, update=True)
+    run = _get_owned_running_run_or_404(db, run_id, user_id)
+    group = (
+        db.query(ShopeeQuickReplyGroup)
+        .options(selectinload(ShopeeQuickReplyGroup.messages))
+        .filter(ShopeeQuickReplyGroup.id == group_id, ShopeeQuickReplyGroup.run_id == run.id, ShopeeQuickReplyGroup.user_id == user_id)
+        .first()
+    )
+    if not group:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="快捷回复分组不存在")
+    group.enabled = payload.enabled
+    db.commit()
+    db.refresh(group)
+    _invalidate_shopee_quick_reply_cache(run_id=run.id, user_id=user_id)
+    return ShopeeQuickReplyGroupCreateResponse(group=_serialize_quick_reply_group(group))
+
+
+@router.patch("/runs/{run_id}/customer-service/quick-reply-groups/{group_id}/sort", response_model=ShopeeQuickReplyListResponse)
+def sort_shopee_quick_reply_group(
+    run_id: int,
+    group_id: int,
+    payload: ShopeeQuickReplyGroupSortRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> ShopeeQuickReplyListResponse:
+    user_id = int(current_user["id"])
+    _enforce_shopee_quick_reply_rate_limit(user_id=user_id, update=True)
+    run = _get_owned_running_run_or_404(db, run_id, user_id)
+    groups = (
+        db.query(ShopeeQuickReplyGroup)
+        .options(selectinload(ShopeeQuickReplyGroup.messages))
+        .filter(ShopeeQuickReplyGroup.run_id == run.id, ShopeeQuickReplyGroup.user_id == user_id)
+        .order_by(ShopeeQuickReplyGroup.sort_order.asc(), ShopeeQuickReplyGroup.id.asc())
+        .all()
+    )
+    current_index = next((index for index, item in enumerate(groups) if item.id == group_id), -1)
+    if current_index < 0:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="快捷回复分组不存在")
+    direction = payload.direction.strip().lower()
+    if direction not in {"up", "down"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="排序方向仅支持 up 或 down")
+    target_index = current_index - 1 if direction == "up" else current_index + 1
+    if target_index < 0 or target_index >= len(groups):
+        return _build_quick_reply_list_response(db, run=run, user_id=user_id)
+    groups[current_index], groups[target_index] = groups[target_index], groups[current_index]
+    for index, item in enumerate(groups, start=1):
+        item.sort_order = index
+    db.commit()
+    _invalidate_shopee_quick_reply_cache(run_id=run.id, user_id=user_id)
+    return _build_quick_reply_list_response(db, run=run, user_id=user_id)
+
+
+@router.get("/runs/{run_id}/marketing/shipping-fee-promotion/create/bootstrap", response_model=ShopeeShippingFeePromotionCreateBootstrapResponse)
+def get_shopee_shipping_fee_promotion_create_bootstrap(
+    run_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> ShopeeShippingFeePromotionCreateBootstrapResponse:
+    user_id = int(current_user["id"])
+    _enforce_shopee_shipping_fee_promotion_rate_limit(user_id=user_id)
+    run = _get_owned_order_readable_run_or_404(db, run_id, user_id)
+    cache_key = _shopee_shipping_fee_promotion_bootstrap_cache_key(run_id=run.id, user_id=user_id)
+    cached_payload = cache_get_json(cache_key)
+    if isinstance(cached_payload, dict):
+        return ShopeeShippingFeePromotionCreateBootstrapResponse.model_validate(cached_payload)
+    current_tick = _resolve_game_tick(db, run.id, user_id)
+    payload = _build_shipping_fee_promotion_create_bootstrap_payload(
+        run=run,
+        user_id=user_id,
+        current_tick=current_tick,
+        read_only=run.status == "finished",
+    )
+    cache_set_json(cache_key, payload.model_dump(mode="json"), REDIS_CACHE_TTL_SHOPEE_SHIPPING_FEE_PROMOTION_BOOTSTRAP_SEC)
+    return payload
+
+
+@router.get("/runs/{run_id}/marketing/shipping-fee-promotions", response_model=ShopeeShippingFeePromotionListResponse)
+def list_shopee_shipping_fee_promotions(
+    run_id: int,
+    status_value: str = Query(default="all", alias="status"),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=10, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> ShopeeShippingFeePromotionListResponse:
+    user_id = int(current_user["id"])
+    _enforce_shopee_shipping_fee_promotion_rate_limit(user_id=user_id)
+    run = _get_owned_order_readable_run_or_404(db, run_id, user_id)
+    safe_status = (status_value or "all").strip().lower()
+    if safe_status not in {"all", "ongoing", "upcoming", "ended"}:
+        safe_status = "all"
+    cache_key = _shopee_shipping_fee_promotion_list_cache_key(run_id=run.id, user_id=user_id, status_value=safe_status, page=page, page_size=page_size)
+    cached_payload = cache_get_json(cache_key)
+    if isinstance(cached_payload, dict):
+        return ShopeeShippingFeePromotionListResponse.model_validate(cached_payload)
+    payload = _build_shipping_fee_promotion_list_response(db=db, run=run, user_id=user_id, status_value=safe_status, page=page, page_size=page_size)
+    cache_set_json(cache_key, payload.model_dump(mode="json"), REDIS_CACHE_TTL_SHOPEE_SHIPPING_FEE_PROMOTION_LIST_SEC)
+    return payload
+
+
+@router.post("/runs/{run_id}/marketing/shipping-fee-promotions", response_model=ShopeeShippingFeePromotionCreateResponse, status_code=status.HTTP_201_CREATED)
+def create_shopee_shipping_fee_promotion(
+    run_id: int,
+    payload: ShopeeShippingFeePromotionCreateRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> ShopeeShippingFeePromotionCreateResponse:
+    user_id = int(current_user["id"])
+    _enforce_shopee_shipping_fee_promotion_create_rate_limit(user_id=user_id)
+    run = _get_owned_running_run_or_404(db, run_id, user_id)
+    current_tick = _resolve_game_tick(db, run.id, user_id)
+    start_at = _parse_discount_game_datetime(payload.start_at, run=run) if payload.start_at else current_tick
+    end_at = _parse_discount_game_datetime(payload.end_at, run=run) if payload.end_at else None
+    sorted_tiers = _validate_shipping_fee_promotion_create_payload(payload=payload, start_at=start_at, end_at=end_at)
+    campaign = ShopeeShippingFeePromotionCampaign(
+        run_id=run.id,
+        user_id=user_id,
+        promotion_name=payload.promotion_name.strip(),
+        period_type=payload.period_type,
+        start_at=start_at or current_tick,
+        end_at=end_at if payload.period_type == "selected" else None,
+        budget_type=payload.budget_type,
+        budget_limit=payload.budget_limit if payload.budget_type == "selected" else None,
+        budget_used=0,
+    )
+    campaign.status = _resolve_shipping_fee_promotion_status(campaign, current_tick=current_tick)
+    campaign.channels = [
+        ShopeeShippingFeePromotionChannel(
+            run_id=run.id,
+            user_id=user_id,
+            channel_key=channel_key,
+            channel_label=SHOPEE_SHIPPING_FEE_PROMOTION_CHANNELS[channel_key],
+        )
+        for channel_key in payload.channels
+    ]
+    campaign.tiers = [
+        ShopeeShippingFeePromotionTier(
+            run_id=run.id,
+            user_id=user_id,
+            tier_index=index,
+            min_spend_amount=tier.min_spend_amount,
+            fee_type=tier.fee_type,
+            fixed_fee_amount=tier.fixed_fee_amount if tier.fee_type == "fixed_fee" else None,
+        )
+        for index, tier in enumerate(sorted_tiers, start=1)
+    ]
+    db.add(campaign)
+    db.commit()
+    db.refresh(campaign)
+    _invalidate_shopee_shipping_fee_promotion_cache(run_id=run.id, user_id=user_id)
+    return ShopeeShippingFeePromotionCreateResponse(id=campaign.id, status=campaign.status)
+
+
+@router.get("/runs/{run_id}/marketing/vouchers", response_model=ShopeeVoucherListResponse)
+def list_shopee_vouchers(
+    run_id: int,
+    status_value: str = Query(default="all", alias="status"),
+    keyword: str = Query(default=""),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> ShopeeVoucherListResponse:
+    user_id = int(current_user["id"])
+    run = _get_owned_order_readable_run_or_404(db, run_id, user_id)
+    safe_status = (status_value or "all").strip().lower()
+    if safe_status not in {"all", "ongoing", "upcoming", "ended", "sold_out", "stopped"}:
+        safe_status = "all"
+    cache_key = _shopee_voucher_list_cache_key(run_id=run.id, user_id=user_id, status_value=safe_status, keyword=keyword, page=page, page_size=page_size)
+    cached_payload = cache_get_json(cache_key)
+    if isinstance(cached_payload, dict):
+        return ShopeeVoucherListResponse.model_validate(cached_payload)
+    payload = _build_shop_voucher_list_response(db=db, run=run, user_id=user_id, status_value=safe_status, keyword=keyword, page=page, page_size=page_size)
+    cache_set_json(cache_key, payload.model_dump(mode="json"), 60)
+    return payload
+
+
+@router.get("/runs/{run_id}/marketing/vouchers/{voucher_type}/{campaign_id}/orders", response_model=ShopeeVoucherOrdersResponse)
+def get_shopee_voucher_orders(
+    run_id: int,
+    voucher_type: str,
+    campaign_id: int,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=10, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> ShopeeVoucherOrdersResponse:
+    user_id = int(current_user["id"])
+    run = _get_owned_order_readable_run_or_404(db, run_id, user_id)
+    safe_voucher_type = (voucher_type or "").strip().lower()
+    cache_key = _shopee_voucher_orders_cache_key(
+        run_id=run.id,
+        user_id=user_id,
+        voucher_type=safe_voucher_type,
+        campaign_id=campaign_id,
+        page=page,
+        page_size=page_size,
+    )
+    cached_payload = cache_get_json(cache_key)
+    if isinstance(cached_payload, dict):
+        return ShopeeVoucherOrdersResponse.model_validate(cached_payload)
+    payload = _build_voucher_orders_response(
+        db=db,
+        run=run,
+        user_id=user_id,
+        voucher_type=safe_voucher_type,
+        campaign_id=campaign_id,
+        page=page,
+        page_size=page_size,
+    )
+    cache_set_json(cache_key, payload.model_dump(mode="json"), REDIS_CACHE_TTL_ORDERS_LIST_SEC)
+    return payload
+
+
+@router.get("/runs/{run_id}/marketing/vouchers/detail/{voucher_type}/{campaign_id}", response_model=ShopeeVoucherDetailResponse)
+def get_shopee_voucher_detail(
+    run_id: int,
+    voucher_type: str,
+    campaign_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> ShopeeVoucherDetailResponse:
+    user_id = int(current_user["id"])
+    run = _get_owned_order_readable_run_or_404(db, run_id, user_id)
+    safe_voucher_type = (voucher_type or "").strip().lower()
+    current_tick = _resolve_game_tick(db, run.id, user_id)
+    status_labels = {
+        "upcoming": "即将开始",
+        "ongoing": "进行中",
+        "sold_out": "已抢完",
+        "ended": "已结束",
+        "stopped": "已停止",
+    }
+
+    campaign_config = _voucher_campaign_config()
+    if safe_voucher_type not in campaign_config:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="代金券类型不支持")
+
+    model, items_relation, _type_label = campaign_config[safe_voucher_type]
+    query = db.query(model)
+    if items_relation is not None:
+        query = query.options(selectinload(items_relation))
+    row = query.filter(model.id == campaign_id, model.run_id == run.id, model.user_id == user_id).first()
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="代金券不存在")
+
+    if safe_voucher_type == "follow_voucher":
+        status_value = _resolve_follow_voucher_status(
+            claim_start_at=row.claim_start_at,
+            claim_end_at=row.claim_end_at,
+            current_tick=current_tick,
+            claimed_count=row.claimed_count,
+            usage_limit=row.usage_limit,
+        )
+    else:
+        status_value = _resolve_shop_voucher_status(
+            start_at=row.start_at,
+            end_at=row.end_at,
+            current_tick=current_tick,
+            used_count=row.used_count,
+            usage_limit=row.usage_limit,
+        )
+    return _build_voucher_detail_response(
+        row=row,
+        run=run,
+        user_id=user_id,
+        voucher_type=safe_voucher_type,
+        status_value=status_value,
+        status_label=status_labels.get(status_value, status_value),
+        current_tick=current_tick,
+    )
+
+
+@router.get("/runs/{run_id}/marketing/vouchers/create/bootstrap", response_model=ShopeeVoucherCreateBootstrapResponse)
+def get_shopee_voucher_create_bootstrap(
+    run_id: int,
+    voucher_type: str = Query(default="shop_voucher"),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> ShopeeVoucherCreateBootstrapResponse:
+    user_id = int(current_user["id"])
+    _enforce_shopee_voucher_create_bootstrap_rate_limit(user_id=user_id)
+    run = _get_owned_order_readable_run_or_404(db, run_id, user_id)
+    safe_voucher_type = (voucher_type or "shop_voucher").strip().lower()
+    if safe_voucher_type != "shop_voucher":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="当前仅支持店铺代金券")
+    cache_key = _shopee_voucher_create_bootstrap_cache_key(run_id=run.id, user_id=user_id, voucher_type=safe_voucher_type)
+    cached_payload = cache_get_json(cache_key)
+    if isinstance(cached_payload, dict):
+        return ShopeeVoucherCreateBootstrapResponse.model_validate(cached_payload)
+
+    current_tick = _resolve_game_tick(db, run.id, user_id)
+    payload = _build_voucher_create_bootstrap_payload(
+        run=run,
+        user_id=user_id,
+        current_tick=current_tick,
+        read_only=run.status == "finished",
+        voucher_type=safe_voucher_type,
+    )
+    cache_set_json(cache_key, payload.model_dump(mode="json"), REDIS_CACHE_TTL_SHOPEE_VOUCHER_CREATE_BOOTSTRAP_SEC)
+    return payload
+
+
+@router.get("/runs/{run_id}/marketing/vouchers/follow-create/bootstrap", response_model=ShopeeFollowVoucherCreateBootstrapResponse)
+def get_shopee_follow_voucher_create_bootstrap(
+    run_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> ShopeeFollowVoucherCreateBootstrapResponse:
+    user_id = int(current_user["id"])
+    _enforce_shopee_voucher_create_bootstrap_rate_limit(user_id=user_id)
+    run = _get_owned_order_readable_run_or_404(db, run_id, user_id)
+    cache_key = _shopee_voucher_create_bootstrap_cache_key(run_id=run.id, user_id=user_id, voucher_type="follow_voucher")
+    cached_payload = cache_get_json(cache_key)
+    if isinstance(cached_payload, dict):
+        return ShopeeFollowVoucherCreateBootstrapResponse.model_validate(cached_payload)
+    current_tick = _resolve_game_tick(db, run.id, user_id)
+    payload = _build_follow_voucher_create_bootstrap_payload(
+        run=run,
+        user_id=user_id,
+        current_tick=current_tick,
+        read_only=run.status == "finished",
+    )
+    cache_set_json(cache_key, payload.model_dump(mode="json"), REDIS_CACHE_TTL_SHOPEE_VOUCHER_CREATE_BOOTSTRAP_SEC)
+    return payload
+
+
+@router.get("/runs/{run_id}/marketing/vouchers/product-create/bootstrap", response_model=ShopeeVoucherCreateBootstrapResponse)
+def get_shopee_product_voucher_create_bootstrap(
+    run_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> ShopeeVoucherCreateBootstrapResponse:
+    user_id = int(current_user["id"])
+    _enforce_shopee_voucher_create_bootstrap_rate_limit(user_id=user_id)
+    run = _get_owned_order_readable_run_or_404(db, run_id, user_id)
+    cache_key = _shopee_voucher_create_bootstrap_cache_key(run_id=run.id, user_id=user_id, voucher_type="product_voucher")
+    cached_payload = cache_get_json(cache_key)
+    if isinstance(cached_payload, dict):
+        return ShopeeVoucherCreateBootstrapResponse.model_validate(cached_payload)
+    current_tick = _resolve_game_tick(db, run.id, user_id)
+    payload = _build_voucher_create_bootstrap_payload(
+        run=run,
+        user_id=user_id,
+        current_tick=current_tick,
+        read_only=run.status == "finished",
+        voucher_type="product_voucher",
+    )
+    cache_set_json(cache_key, payload.model_dump(mode="json"), REDIS_CACHE_TTL_SHOPEE_VOUCHER_CREATE_BOOTSTRAP_SEC)
+    return payload
+
+
+@router.get("/runs/{run_id}/marketing/vouchers/product-create/eligible-products", response_model=ShopeeProductVoucherEligibleProductsResponse)
+def list_shopee_product_voucher_eligible_products(
+    run_id: int,
+    keyword: str = Query(default=""),
+    search_field: str = Query(default="product_name"),
+    category_key: str = Query(default="all"),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=50),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> ShopeeProductVoucherEligibleProductsResponse:
+    user_id = int(current_user["id"])
+    run = _get_owned_order_readable_run_or_404(db, run_id, user_id)
+    safe_search_field = (search_field or "product_name").strip().lower()
+    if safe_search_field not in {"product_name", "product_id"}:
+        safe_search_field = "product_name"
+    safe_category_key = (category_key or "all").strip() or "all"
+    cache_key = _shopee_voucher_eligible_products_cache_key(
+        run_id=run.id,
+        user_id=user_id,
+        voucher_type="product_voucher",
+        search_field=safe_search_field,
+        category_key=safe_category_key,
+        keyword=keyword,
+        page=page,
+        page_size=page_size,
+    )
+    cached_payload = cache_get_json(cache_key)
+    if isinstance(cached_payload, dict):
+        return ShopeeProductVoucherEligibleProductsResponse.model_validate(cached_payload)
+    payload = _build_product_voucher_eligible_products_response(
+        db=db,
+        run=run,
+        user_id=user_id,
+        search_field=safe_search_field,
+        category_key=safe_category_key,
+        keyword=keyword,
+        page=page,
+        page_size=page_size,
+    )
+    cache_set_json(cache_key, payload.model_dump(mode="json"), REDIS_CACHE_TTL_DISCOUNT_ELIGIBLE_PRODUCTS_SEC)
+    return payload
+
+
+@router.get("/runs/{run_id}/marketing/vouchers/live-create/bootstrap", response_model=ShopeeVoucherCreateBootstrapResponse)
+def get_shopee_live_voucher_create_bootstrap(
+    run_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> ShopeeVoucherCreateBootstrapResponse:
+    user_id = int(current_user["id"])
+    _enforce_shopee_voucher_create_bootstrap_rate_limit(user_id=user_id)
+    run = _get_owned_order_readable_run_or_404(db, run_id, user_id)
+    cache_key = _shopee_voucher_create_bootstrap_cache_key(run_id=run.id, user_id=user_id, voucher_type="live_voucher")
+    cached_payload = cache_get_json(cache_key)
+    if isinstance(cached_payload, dict):
+        return ShopeeVoucherCreateBootstrapResponse.model_validate(cached_payload)
+    current_tick = _resolve_game_tick(db, run.id, user_id)
+    payload = _build_voucher_create_bootstrap_payload(
+        run=run,
+        user_id=user_id,
+        current_tick=current_tick,
+        read_only=run.status == "finished",
+        voucher_type="live_voucher",
+    )
+    cache_set_json(cache_key, payload.model_dump(mode="json"), REDIS_CACHE_TTL_SHOPEE_VOUCHER_CREATE_BOOTSTRAP_SEC)
+    return payload
+
+
+@router.get("/runs/{run_id}/marketing/vouchers/live-create/eligible-products", response_model=ShopeeProductVoucherEligibleProductsResponse)
+def list_shopee_live_voucher_eligible_products(
+    run_id: int,
+    keyword: str = Query(default=""),
+    search_field: str = Query(default="product_name"),
+    category_key: str = Query(default="all"),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=50),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> ShopeeProductVoucherEligibleProductsResponse:
+    user_id = int(current_user["id"])
+    run = _get_owned_order_readable_run_or_404(db, run_id, user_id)
+    return _list_scene_voucher_eligible_products(
+        db=db,
+        run=run,
+        user_id=user_id,
+        voucher_type="live_voucher",
+        keyword=keyword,
+        search_field=search_field,
+        category_key=category_key,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@router.get("/runs/{run_id}/marketing/vouchers/video-create/bootstrap", response_model=ShopeeVoucherCreateBootstrapResponse)
+def get_shopee_video_voucher_create_bootstrap(
+    run_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> ShopeeVoucherCreateBootstrapResponse:
+    user_id = int(current_user["id"])
+    _enforce_shopee_voucher_create_bootstrap_rate_limit(user_id=user_id)
+    run = _get_owned_order_readable_run_or_404(db, run_id, user_id)
+    cache_key = _shopee_voucher_create_bootstrap_cache_key(run_id=run.id, user_id=user_id, voucher_type="video_voucher")
+    cached_payload = cache_get_json(cache_key)
+    if isinstance(cached_payload, dict):
+        return ShopeeVoucherCreateBootstrapResponse.model_validate(cached_payload)
+    current_tick = _resolve_game_tick(db, run.id, user_id)
+    payload = _build_voucher_create_bootstrap_payload(
+        run=run,
+        user_id=user_id,
+        current_tick=current_tick,
+        read_only=run.status == "finished",
+        voucher_type="video_voucher",
+    )
+    cache_set_json(cache_key, payload.model_dump(mode="json"), REDIS_CACHE_TTL_SHOPEE_VOUCHER_CREATE_BOOTSTRAP_SEC)
+    return payload
+
+
+@router.get("/runs/{run_id}/marketing/vouchers/video-create/eligible-products", response_model=ShopeeProductVoucherEligibleProductsResponse)
+def list_shopee_video_voucher_eligible_products(
+    run_id: int,
+    keyword: str = Query(default=""),
+    search_field: str = Query(default="product_name"),
+    category_key: str = Query(default="all"),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=50),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> ShopeeProductVoucherEligibleProductsResponse:
+    user_id = int(current_user["id"])
+    run = _get_owned_order_readable_run_or_404(db, run_id, user_id)
+    return _list_scene_voucher_eligible_products(
+        db=db,
+        run=run,
+        user_id=user_id,
+        voucher_type="video_voucher",
+        keyword=keyword,
+        search_field=search_field,
+        category_key=category_key,
+        page=page,
+        page_size=page_size,
+    )
+
+
+def _list_scene_voucher_eligible_products(
+    *,
+    db: Session,
+    run: GameRun,
+    user_id: int,
+    voucher_type: str,
+    keyword: str,
+    search_field: str,
+    category_key: str,
+    page: int,
+    page_size: int,
+) -> ShopeeProductVoucherEligibleProductsResponse:
+    safe_search_field = (search_field or "product_name").strip().lower()
+    if safe_search_field not in {"product_name", "product_id"}:
+        safe_search_field = "product_name"
+    safe_category_key = (category_key or "all").strip() or "all"
+    cache_key = _shopee_voucher_eligible_products_cache_key(
+        run_id=run.id,
+        user_id=user_id,
+        voucher_type=voucher_type,
+        search_field=safe_search_field,
+        category_key=safe_category_key,
+        keyword=keyword,
+        page=page,
+        page_size=page_size,
+    )
+    cached_payload = cache_get_json(cache_key)
+    if isinstance(cached_payload, dict):
+        return ShopeeProductVoucherEligibleProductsResponse.model_validate(cached_payload)
+    payload = _build_product_voucher_eligible_products_response(
+        db=db,
+        run=run,
+        user_id=user_id,
+        search_field=safe_search_field,
+        category_key=safe_category_key,
+        keyword=keyword,
+        page=page,
+        page_size=page_size,
+    )
+    cache_set_json(cache_key, payload.model_dump(mode="json"), REDIS_CACHE_TTL_DISCOUNT_ELIGIBLE_PRODUCTS_SEC)
+    return payload
+
+
+@router.get("/runs/{run_id}/marketing/vouchers/private-create/bootstrap", response_model=ShopeeVoucherCreateBootstrapResponse)
+def get_shopee_private_voucher_create_bootstrap(
+    run_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> ShopeeVoucherCreateBootstrapResponse:
+    user_id = int(current_user["id"])
+    _enforce_shopee_voucher_create_bootstrap_rate_limit(user_id=user_id)
+    run = _get_owned_order_readable_run_or_404(db, run_id, user_id)
+    cache_key = _shopee_voucher_create_bootstrap_cache_key(run_id=run.id, user_id=user_id, voucher_type="private_voucher")
+    cached_payload = cache_get_json(cache_key)
+    if isinstance(cached_payload, dict):
+        return ShopeeVoucherCreateBootstrapResponse.model_validate(cached_payload)
+    current_tick = _resolve_game_tick(db, run.id, user_id)
+    payload = _build_voucher_create_bootstrap_payload(
+        run=run,
+        user_id=user_id,
+        current_tick=current_tick,
+        read_only=run.status == "finished",
+        voucher_type="private_voucher",
+    )
+    cache_set_json(cache_key, payload.model_dump(mode="json"), REDIS_CACHE_TTL_SHOPEE_VOUCHER_CREATE_BOOTSTRAP_SEC)
+    return payload
+
+
+@router.get("/runs/{run_id}/marketing/vouchers/private-create/eligible-products", response_model=ShopeeProductVoucherEligibleProductsResponse)
+def list_shopee_private_voucher_eligible_products(
+    run_id: int,
+    keyword: str = Query(default=""),
+    search_field: str = Query(default="product_name"),
+    category_key: str = Query(default="all"),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=50),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> ShopeeProductVoucherEligibleProductsResponse:
+    user_id = int(current_user["id"])
+    run = _get_owned_order_readable_run_or_404(db, run_id, user_id)
+    safe_search_field = (search_field or "product_name").strip().lower()
+    if safe_search_field not in {"product_name", "product_id"}:
+        safe_search_field = "product_name"
+    safe_category_key = (category_key or "all").strip() or "all"
+    cache_key = _shopee_voucher_eligible_products_cache_key(
+        run_id=run.id,
+        user_id=user_id,
+        voucher_type="private_voucher",
+        search_field=safe_search_field,
+        category_key=safe_category_key,
+        keyword=keyword,
+        page=page,
+        page_size=page_size,
+    )
+    cached_payload = cache_get_json(cache_key)
+    if isinstance(cached_payload, dict):
+        return ShopeeProductVoucherEligibleProductsResponse.model_validate(cached_payload)
+    payload = _build_product_voucher_eligible_products_response(
+        db=db,
+        run=run,
+        user_id=user_id,
+        search_field=safe_search_field,
+        category_key=safe_category_key,
+        keyword=keyword,
+        page=page,
+        page_size=page_size,
+    )
+    cache_set_json(cache_key, payload.model_dump(mode="json"), REDIS_CACHE_TTL_DISCOUNT_ELIGIBLE_PRODUCTS_SEC)
+    return payload
+
+
+@router.get("/runs/{run_id}/marketing/vouchers/code/check", response_model=ShopeeVoucherCodeCheckResponse)
+def check_shopee_voucher_code(
+    run_id: int,
+    voucher_type: str = Query(default="shop_voucher"),
+    code_suffix: str = Query(default=""),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> ShopeeVoucherCodeCheckResponse:
+    user_id = int(current_user["id"])
+    _enforce_shopee_voucher_code_check_rate_limit(user_id=user_id)
+    run = _get_owned_order_readable_run_or_404(db, run_id, user_id)
+    safe_voucher_type = (voucher_type or "shop_voucher").strip().lower()
+    if safe_voucher_type not in {"shop_voucher", "product_voucher", "private_voucher", "live_voucher"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="当前仅支持店铺代金券、商品代金券、专属代金券和直播代金券")
+    try:
+        normalized_suffix = _normalize_shop_voucher_code_suffix(code_suffix)
+    except HTTPException as exc:
+        raw_suffix = (code_suffix or "").strip().upper()
+        return ShopeeVoucherCodeCheckResponse(
+            code_prefix="HOME",
+            code_suffix=raw_suffix,
+            voucher_code=f"HOME{raw_suffix}",
+            available=False,
+            message=str(exc.detail),
+        )
+    cache_key = _shopee_voucher_code_check_cache_key(run_id=run.id, user_id=user_id, voucher_type=safe_voucher_type, code_suffix=normalized_suffix)
+    cached_payload = cache_get_json(cache_key)
+    if isinstance(cached_payload, dict):
+        return ShopeeVoucherCodeCheckResponse.model_validate(cached_payload)
+    voucher_code = f"HOME{normalized_suffix}"
+    exists = _resolve_voucher_code_exists(db=db, run=run, user_id=user_id, voucher_code=voucher_code)
+    response = ShopeeVoucherCodeCheckResponse(
+        code_prefix="HOME",
+        code_suffix=normalized_suffix,
+        voucher_code=voucher_code,
+        available=not exists,
+        message="代金券代码可用" if not exists else "该代金券代码已存在，请更换后缀",
+    )
+    cache_set_json(cache_key, response.model_dump(mode="json"), REDIS_CACHE_TTL_SHOPEE_VOUCHER_CODE_CHECK_SEC)
+    return response
+
+
+@router.post("/runs/{run_id}/marketing/vouchers/campaigns", response_model=ShopeeVoucherCampaignCreateResponse, status_code=status.HTTP_201_CREATED)
+def create_shopee_voucher_campaign(
+    run_id: int,
+    payload: ShopeeVoucherCampaignCreateRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> ShopeeVoucherCampaignCreateResponse:
+    user_id = int(current_user["id"])
+    _enforce_shopee_voucher_create_rate_limit(user_id=user_id)
+    run = _get_owned_running_run_or_404(db, run_id, user_id)
+    start_at = _parse_discount_game_datetime(payload.start_at, run=run)
+    end_at = _parse_discount_game_datetime(payload.end_at, run=run)
+    display_start_at = _parse_discount_game_datetime(payload.display_start_at, run=run)
+    code_suffix = _validate_shop_voucher_create_payload(
+        db=db,
+        run=run,
+        user_id=user_id,
+        payload=payload,
+        start_at=start_at,
+        end_at=end_at,
+        display_start_at=display_start_at,
+    )
+    assert start_at is not None
+    assert end_at is not None
+    discount_type = (payload.discount_type or "").strip().lower()
+    max_discount_type = (payload.max_discount_type or "").strip().lower()
+    display_type = (payload.display_type or "").strip().lower()
+    current_tick = _resolve_game_tick(db, run.id, user_id)
+    campaign_status = _resolve_shop_voucher_status(start_at=start_at, end_at=end_at, current_tick=current_tick, usage_limit=payload.usage_limit)
+    campaign = ShopeeShopVoucherCampaign(
+        run_id=run.id,
+        user_id=user_id,
+        voucher_type="shop_voucher",
+        voucher_name=payload.voucher_name.strip(),
+        voucher_code=f"HOME{code_suffix}",
+        code_prefix="HOME",
+        code_suffix=code_suffix,
+        status=campaign_status,
+        start_at=start_at,
+        end_at=end_at,
+        display_before_start=payload.display_before_start,
+        display_start_at=display_start_at if payload.display_before_start else None,
+        reward_type="discount",
+        discount_type=discount_type,
+        discount_amount=payload.discount_amount if discount_type == "fixed_amount" else None,
+        discount_percent=payload.discount_percent if discount_type == "percent" else None,
+        max_discount_type=max_discount_type if discount_type == "percent" else "set_amount",
+        max_discount_amount=payload.max_discount_amount if discount_type == "percent" and max_discount_type == "set_amount" else None,
+        min_spend_amount=payload.min_spend_amount,
+        usage_limit=payload.usage_limit,
+        per_buyer_limit=payload.per_buyer_limit,
+        display_type=display_type,
+        display_channels=json.dumps(payload.display_channels or [], ensure_ascii=False),
+        applicable_scope="all_shop_products",
+    )
+    try:
+        db.add(campaign)
+        db.commit()
+        db.refresh(campaign)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="该代金券代码已存在，请更换后缀") from None
+    _invalidate_shopee_voucher_cache(run_id=run.id, user_id=user_id, campaign_id=campaign.id)
+    return ShopeeVoucherCampaignCreateResponse(campaign_id=campaign.id, voucher_type=campaign.voucher_type, status=campaign.status)
+
+
+@router.post("/runs/{run_id}/marketing/vouchers/product-campaigns", response_model=ShopeeVoucherCampaignCreateResponse, status_code=status.HTTP_201_CREATED)
+def create_shopee_product_voucher_campaign(
+    run_id: int,
+    payload: ShopeeVoucherCampaignCreateRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> ShopeeVoucherCampaignCreateResponse:
+    user_id = int(current_user["id"])
+    _enforce_shopee_voucher_create_rate_limit(user_id=user_id)
+    run = _get_owned_running_run_or_404(db, run_id, user_id)
+    payload.voucher_type = "product_voucher"
+    start_at = _parse_discount_game_datetime(payload.start_at, run=run)
+    end_at = _parse_discount_game_datetime(payload.end_at, run=run)
+    display_start_at = _parse_discount_game_datetime(payload.display_start_at, run=run)
+    code_suffix = _validate_shop_voucher_create_payload(
+        db=db,
+        run=run,
+        user_id=user_id,
+        payload=payload,
+        start_at=start_at,
+        end_at=end_at,
+        display_start_at=display_start_at,
+    )
+    assert start_at is not None
+    assert end_at is not None
+    items = _resolve_product_voucher_item_snapshots(db=db, run=run, user_id=user_id, selected_products=payload.selected_products)
+    discount_type = (payload.discount_type or "").strip().lower()
+    max_discount_type = (payload.max_discount_type or "").strip().lower()
+    display_type = (payload.display_type or "").strip().lower()
+    current_tick = _resolve_game_tick(db, run.id, user_id)
+    campaign_status = _resolve_shop_voucher_status(start_at=start_at, end_at=end_at, current_tick=current_tick, usage_limit=payload.usage_limit)
+    campaign = ShopeeProductVoucherCampaign(
+        run_id=run.id,
+        user_id=user_id,
+        voucher_type="product_voucher",
+        voucher_name=payload.voucher_name.strip(),
+        voucher_code=f"HOME{code_suffix}",
+        code_prefix="HOME",
+        code_suffix=code_suffix,
+        status=campaign_status,
+        start_at=start_at,
+        end_at=end_at,
+        display_before_start=payload.display_before_start,
+        display_start_at=display_start_at if payload.display_before_start else None,
+        reward_type="discount",
+        discount_type=discount_type,
+        discount_amount=payload.discount_amount if discount_type == "fixed_amount" else None,
+        discount_percent=payload.discount_percent if discount_type == "percent" else None,
+        max_discount_type=max_discount_type if discount_type == "percent" else "set_amount",
+        max_discount_amount=payload.max_discount_amount if discount_type == "percent" and max_discount_type == "set_amount" else None,
+        min_spend_amount=payload.min_spend_amount,
+        usage_limit=payload.usage_limit,
+        per_buyer_limit=payload.per_buyer_limit,
+        display_type=display_type,
+        display_channels=json.dumps(payload.display_channels or [], ensure_ascii=False),
+        applicable_scope="selected_products",
+        selected_product_count=len(items),
+    )
+    campaign.items = items
+    try:
+        db.add(campaign)
+        db.commit()
+        db.refresh(campaign)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="该代金券代码已存在，请更换后缀") from None
+    _invalidate_shopee_voucher_cache(run_id=run.id, user_id=user_id, campaign_id=campaign.id)
+    return ShopeeVoucherCampaignCreateResponse(campaign_id=campaign.id, voucher_type=campaign.voucher_type, status=campaign.status)
+
+
+@router.post("/runs/{run_id}/marketing/vouchers/live-campaigns", response_model=ShopeeVoucherCampaignCreateResponse, status_code=status.HTTP_201_CREATED)
+def create_shopee_live_voucher_campaign(
+    run_id: int,
+    payload: ShopeeVoucherCampaignCreateRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> ShopeeVoucherCampaignCreateResponse:
+    user_id = int(current_user["id"])
+    _enforce_shopee_voucher_create_rate_limit(user_id=user_id)
+    run = _get_owned_running_run_or_404(db, run_id, user_id)
+    payload.voucher_type = "live_voucher"
+    payload.display_type = "live_stream"
+    payload.display_channels = ["shopee_live"]
+    payload.live_scope = "all_live_sessions"
+    start_at = _parse_discount_game_datetime(payload.start_at, run=run)
+    end_at = _parse_discount_game_datetime(payload.end_at, run=run)
+    display_start_at = _parse_discount_game_datetime(payload.display_start_at, run=run)
+    code_suffix = _validate_shop_voucher_create_payload(
+        db=db,
+        run=run,
+        user_id=user_id,
+        payload=payload,
+        start_at=start_at,
+        end_at=end_at,
+        display_start_at=display_start_at,
+    )
+    assert start_at is not None
+    assert end_at is not None
+    applicable_scope = (payload.applicable_scope or "all_products").strip().lower()
+    items = []
+    if applicable_scope == "selected_products":
+        items = _resolve_live_voucher_item_snapshots(db=db, run=run, user_id=user_id, selected_products=payload.selected_products)
+    discount_type = (payload.discount_type or "").strip().lower()
+    max_discount_type = (payload.max_discount_type or "").strip().lower()
+    current_tick = _resolve_game_tick(db, run.id, user_id)
+    campaign_status = _resolve_shop_voucher_status(start_at=start_at, end_at=end_at, current_tick=current_tick, usage_limit=payload.usage_limit)
+    campaign = ShopeeLiveVoucherCampaign(
+        run_id=run.id,
+        user_id=user_id,
+        voucher_type="live_voucher",
+        voucher_name=payload.voucher_name.strip(),
+        voucher_code=f"HOME{code_suffix}",
+        code_prefix="HOME",
+        code_suffix=code_suffix,
+        status=campaign_status,
+        start_at=start_at,
+        end_at=end_at,
+        display_before_start=payload.display_before_start,
+        display_start_at=display_start_at if payload.display_before_start else None,
+        reward_type="discount",
+        discount_type=discount_type,
+        discount_amount=payload.discount_amount if discount_type == "fixed_amount" else None,
+        discount_percent=payload.discount_percent if discount_type == "percent" else None,
+        max_discount_type=max_discount_type if discount_type == "percent" else "set_amount",
+        max_discount_amount=payload.max_discount_amount if discount_type == "percent" and max_discount_type == "set_amount" else None,
+        min_spend_amount=payload.min_spend_amount,
+        usage_limit=payload.usage_limit,
+        per_buyer_limit=payload.per_buyer_limit,
+        display_type="live_stream",
+        display_channels=json.dumps(["shopee_live"], ensure_ascii=False),
+        applicable_scope=applicable_scope,
+        selected_product_count=len(items),
+        live_scope="all_live_sessions",
+    )
+    campaign.items = items
+    try:
+        db.add(campaign)
+        db.commit()
+        db.refresh(campaign)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="该代金券代码已存在，请更换后缀") from None
+    _invalidate_shopee_voucher_cache(run_id=run.id, user_id=user_id, campaign_id=campaign.id)
+    return ShopeeVoucherCampaignCreateResponse(campaign_id=campaign.id, voucher_type=campaign.voucher_type, status=campaign.status)
+
+
+@router.post("/runs/{run_id}/marketing/vouchers/video-campaigns", response_model=ShopeeVoucherCampaignCreateResponse, status_code=status.HTTP_201_CREATED)
+def create_shopee_video_voucher_campaign(
+    run_id: int,
+    payload: ShopeeVoucherCampaignCreateRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> ShopeeVoucherCampaignCreateResponse:
+    user_id = int(current_user["id"])
+    _enforce_shopee_voucher_create_rate_limit(user_id=user_id)
+    run = _get_owned_running_run_or_404(db, run_id, user_id)
+    payload.voucher_type = "video_voucher"
+    payload.display_type = "video_stream"
+    payload.display_channels = ["shopee_video"]
+    payload.video_scope = "all_videos"
+    start_at = _parse_discount_game_datetime(payload.start_at, run=run)
+    end_at = _parse_discount_game_datetime(payload.end_at, run=run)
+    display_start_at = _parse_discount_game_datetime(payload.display_start_at, run=run)
+    _validate_shop_voucher_create_payload(
+        db=db,
+        run=run,
+        user_id=user_id,
+        payload=payload,
+        start_at=start_at,
+        end_at=end_at,
+        display_start_at=display_start_at,
+    )
+    assert start_at is not None
+    assert end_at is not None
+    applicable_scope = (payload.applicable_scope or "all_products").strip().lower()
+    items = []
+    if applicable_scope == "selected_products":
+        items = _resolve_video_voucher_item_snapshots(db=db, run=run, user_id=user_id, selected_products=payload.selected_products)
+    discount_type = (payload.discount_type or "").strip().lower()
+    max_discount_type = (payload.max_discount_type or "").strip().lower()
+    current_tick = _resolve_game_tick(db, run.id, user_id)
+    campaign_status = _resolve_shop_voucher_status(start_at=start_at, end_at=end_at, current_tick=current_tick, usage_limit=payload.usage_limit)
+    voucher_code = f"VIDEO{uuid4().hex[:8].upper()}"
+    while _resolve_voucher_code_exists(db=db, run=run, user_id=user_id, voucher_code=voucher_code):
+        voucher_code = f"VIDEO{uuid4().hex[:8].upper()}"
+    campaign = ShopeeVideoVoucherCampaign(
+        run_id=run.id,
+        user_id=user_id,
+        voucher_type="video_voucher",
+        voucher_name=payload.voucher_name.strip(),
+        voucher_code=voucher_code,
+        status=campaign_status,
+        start_at=start_at,
+        end_at=end_at,
+        display_before_start=payload.display_before_start,
+        display_start_at=display_start_at if payload.display_before_start else None,
+        reward_type="discount",
+        discount_type=discount_type,
+        discount_amount=payload.discount_amount if discount_type == "fixed_amount" else None,
+        discount_percent=payload.discount_percent if discount_type == "percent" else None,
+        max_discount_type=max_discount_type if discount_type == "percent" else "set_amount",
+        max_discount_amount=payload.max_discount_amount if discount_type == "percent" and max_discount_type == "set_amount" else None,
+        min_spend_amount=payload.min_spend_amount,
+        usage_limit=payload.usage_limit,
+        per_buyer_limit=payload.per_buyer_limit,
+        display_type="video_stream",
+        display_channels=json.dumps(["shopee_video"], ensure_ascii=False),
+        applicable_scope=applicable_scope,
+        selected_product_count=len(items),
+        video_scope="all_videos",
+    )
+    campaign.items = items
+    try:
+        db.add(campaign)
+        db.commit()
+        db.refresh(campaign)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="视频代金券编号已存在，请重试") from None
+    _invalidate_shopee_voucher_cache(run_id=run.id, user_id=user_id, campaign_id=campaign.id)
+    return ShopeeVoucherCampaignCreateResponse(campaign_id=campaign.id, voucher_type=campaign.voucher_type, status=campaign.status)
+
+
+@router.post("/runs/{run_id}/marketing/vouchers/follow-campaigns", response_model=ShopeeVoucherCampaignCreateResponse, status_code=status.HTTP_201_CREATED)
+def create_shopee_follow_voucher_campaign(
+    run_id: int,
+    payload: ShopeeFollowVoucherCampaignCreateRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> ShopeeVoucherCampaignCreateResponse:
+    user_id = int(current_user["id"])
+    _enforce_shopee_voucher_create_rate_limit(user_id=user_id)
+    run = _get_owned_running_run_or_404(db, run_id, user_id)
+    claim_start_at = _parse_discount_game_datetime(payload.claim_start_at, run=run)
+    claim_end_at = _parse_discount_game_datetime(payload.claim_end_at, run=run)
+    _validate_follow_voucher_create_payload(payload=payload, claim_start_at=claim_start_at, claim_end_at=claim_end_at)
+    assert claim_start_at is not None
+    assert claim_end_at is not None
+    discount_type = (payload.discount_type or "").strip().lower()
+    max_discount_type = (payload.max_discount_type or "").strip().lower()
+    current_tick = _resolve_game_tick(db, run.id, user_id)
+    campaign_status = _resolve_follow_voucher_status(
+        claim_start_at=claim_start_at,
+        claim_end_at=claim_end_at,
+        current_tick=current_tick,
+        usage_limit=payload.usage_limit,
+    )
+    voucher_code = f"FOLLOW{uuid4().hex[:8].upper()}"
+    while _resolve_voucher_code_exists(db=db, run=run, user_id=user_id, voucher_code=voucher_code):
+        voucher_code = f"FOLLOW{uuid4().hex[:8].upper()}"
+    campaign = ShopeeFollowVoucherCampaign(
+        run_id=run.id,
+        user_id=user_id,
+        voucher_type="follow_voucher",
+        voucher_name=payload.voucher_name.strip(),
+        voucher_code=voucher_code,
+        status=campaign_status,
+        claim_start_at=claim_start_at,
+        claim_end_at=claim_end_at,
+        valid_days_after_claim=7,
+        reward_type="discount",
+        discount_type=discount_type,
+        discount_amount=payload.discount_amount if discount_type == "fixed_amount" else None,
+        discount_percent=payload.discount_percent if discount_type == "percent" else None,
+        max_discount_type=max_discount_type if discount_type == "percent" else "set_amount",
+        max_discount_amount=payload.max_discount_amount if discount_type == "percent" and max_discount_type == "set_amount" else None,
+        min_spend_amount=payload.min_spend_amount,
+        usage_limit=payload.usage_limit,
+        per_buyer_limit=payload.per_buyer_limit,
+        trigger_type="follow_shop",
+        display_type="follow_reward",
+        display_channels=json.dumps(["follow_prize"], ensure_ascii=False),
+        applicable_scope="all_products",
+    )
+    try:
+        db.add(campaign)
+        db.commit()
+        db.refresh(campaign)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="关注礼代金券编号已存在，请重试") from None
+    _invalidate_shopee_voucher_cache(run_id=run.id, user_id=user_id, campaign_id=campaign.id)
+    return ShopeeVoucherCampaignCreateResponse(campaign_id=campaign.id, voucher_type=campaign.voucher_type, status=campaign.status)
+
+
+@router.post("/runs/{run_id}/marketing/vouchers/private-campaigns", response_model=ShopeeVoucherCampaignCreateResponse, status_code=status.HTTP_201_CREATED)
+def create_shopee_private_voucher_campaign(
+    run_id: int,
+    payload: ShopeeVoucherCampaignCreateRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> ShopeeVoucherCampaignCreateResponse:
+    user_id = int(current_user["id"])
+    _enforce_shopee_voucher_create_rate_limit(user_id=user_id)
+    run = _get_owned_running_run_or_404(db, run_id, user_id)
+    payload.voucher_type = "private_voucher"
+    payload.display_type = "code_only"
+    payload.display_before_start = False
+    payload.display_start_at = None
+    start_at = _parse_discount_game_datetime(payload.start_at, run=run)
+    end_at = _parse_discount_game_datetime(payload.end_at, run=run)
+    code_suffix = _validate_shop_voucher_create_payload(
+        db=db,
+        run=run,
+        user_id=user_id,
+        payload=payload,
+        start_at=start_at,
+        end_at=end_at,
+        display_start_at=None,
+    )
+    assert start_at is not None
+    assert end_at is not None
+    applicable_scope = (payload.applicable_scope or "all_products").strip().lower()
+    items = []
+    if applicable_scope == "selected_products":
+        items = _resolve_private_voucher_item_snapshots(db=db, run=run, user_id=user_id, selected_products=payload.selected_products)
+    discount_type = (payload.discount_type or "").strip().lower()
+    max_discount_type = (payload.max_discount_type or "").strip().lower()
+    current_tick = _resolve_game_tick(db, run.id, user_id)
+    campaign_status = _resolve_shop_voucher_status(start_at=start_at, end_at=end_at, current_tick=current_tick, usage_limit=payload.usage_limit)
+    campaign = ShopeePrivateVoucherCampaign(
+        run_id=run.id,
+        user_id=user_id,
+        voucher_type="private_voucher",
+        voucher_name=payload.voucher_name.strip(),
+        voucher_code=f"HOME{code_suffix}",
+        code_prefix="HOME",
+        code_suffix=code_suffix,
+        status=campaign_status,
+        start_at=start_at,
+        end_at=end_at,
+        reward_type="discount",
+        discount_type=discount_type,
+        discount_amount=payload.discount_amount if discount_type == "fixed_amount" else None,
+        discount_percent=payload.discount_percent if discount_type == "percent" else None,
+        max_discount_type=max_discount_type if discount_type == "percent" else "set_amount",
+        max_discount_amount=payload.max_discount_amount if discount_type == "percent" and max_discount_type == "set_amount" else None,
+        min_spend_amount=payload.min_spend_amount,
+        usage_limit=payload.usage_limit,
+        per_buyer_limit=payload.per_buyer_limit,
+        display_type="code_only",
+        applicable_scope=applicable_scope,
+        selected_product_count=len(items),
+        audience_scope="private_code",
+    )
+    campaign.items = items
+    try:
+        db.add(campaign)
+        db.commit()
+        db.refresh(campaign)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="该代金券代码已存在，请更换后缀") from None
+    _invalidate_shopee_voucher_cache(run_id=run.id, user_id=user_id, campaign_id=campaign.id)
+    return ShopeeVoucherCampaignCreateResponse(campaign_id=campaign.id, voucher_type=campaign.voucher_type, status=campaign.status)
 
 
 @router.get("/runs/{run_id}/marketing/bundle/create/bootstrap", response_model=ShopeeBundleCreateBootstrapResponse)

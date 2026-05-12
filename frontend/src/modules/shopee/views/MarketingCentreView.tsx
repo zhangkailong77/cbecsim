@@ -258,6 +258,7 @@ export default function MarketingCentreView({ runId, readOnly = false }: Marketi
       /\/shopee\/marketing\/discount\/?$/,
       /\/shopee\/marketing\/flash-sale\/?$/,
       /\/shopee\/marketing\/shopee-ads\/?$/,
+      /\/shopee\/marketing\/shipping-fee-promotion\/?$/,
       /\/shopee\/marketing\/vouchers\/?$/,
     ];
     if (!implementedRoutePatterns.some((pattern) => pattern.test(targetRoute))) {

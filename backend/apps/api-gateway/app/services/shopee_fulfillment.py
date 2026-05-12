@@ -19,12 +19,20 @@ def haversine_km(warehouse_latlng: tuple[float, float], buyer_latlng: tuple[floa
 
 def calc_shipping_cost(distance_km: float, shipping_channel: str) -> float:
     channel_base = {
-        "快捷快递": (4.5, 0.14),
-        "标准大件": (8.0, 0.11),
-        "标准快递": (6.0, 0.12),
+        "快捷快递": (4.5, 0.14, (0.0, 4.0, 8.0)),
+        "标准大件": (8.0, 0.11, (0.0, 6.0, 18.0)),
+        "标准快递": (6.0, 0.12, (0.0, 4.0, 10.0)),
     }
-    base, per_km = channel_base.get(shipping_channel, channel_base["标准快递"])
-    return round(base + max(0.0, distance_km) * per_km, 2)
+    base, per_km, remote_surcharges = channel_base.get(shipping_channel, channel_base["标准快递"])
+    distance = max(0.0, distance_km)
+    billable_distance = min(distance, 80.0)
+    if distance > 800:
+        remote_surcharge = remote_surcharges[2]
+    elif distance > 300:
+        remote_surcharge = remote_surcharges[1]
+    else:
+        remote_surcharge = remote_surcharges[0]
+    return round(base + billable_distance * per_km + remote_surcharge, 2)
 
 
 def calc_eta(distance_km: float, shipping_channel: str, shipped_at: datetime) -> tuple[datetime, datetime]:

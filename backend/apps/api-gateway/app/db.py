@@ -84,6 +84,22 @@ def init_database():
         ShopeeDiscountPerformanceDaily,
         ShopeeFlashSaleCategoryRule,
         ShopeeFlashSaleSlot,
+        ShopeeShopVoucherCampaign,
+        ShopeeProductVoucherCampaign,
+        ShopeeFollowVoucherCampaign,
+        ShopeeBuyerFollowState,
+        ShopeeAutoReplySetting,
+        ShopeeQuickReplyPreference,
+        ShopeeQuickReplyGroup,
+        ShopeeQuickReplyMessage,
+        ShopeeShippingFeePromotionCampaign,
+        ShopeeShippingFeePromotionChannel,
+        ShopeeShippingFeePromotionTier,
+        ShopeeProductVoucherItem,
+        ShopeeLiveVoucherCampaign,
+        ShopeeLiveVoucherItem,
+        ShopeeVideoVoucherCampaign,
+        ShopeeVideoVoucherItem,
         ShopeeMarketingAnnouncement,
         ShopeeMarketingEvent,
         ShopeeMarketingTool,
@@ -112,6 +128,18 @@ def init_database():
     _ensure_shopee_orders_fulfillment_columns()
     _ensure_shopee_order_items_fulfillment_columns()
     _ensure_shopee_orders_marketing_columns()
+    _ensure_shopee_orders_voucher_columns()
+    _ensure_shopee_orders_shipping_promotion_columns()
+    _ensure_shopee_shop_voucher_campaigns_columns()
+    _ensure_shopee_product_voucher_tables()
+    _ensure_shopee_private_voucher_tables()
+    _ensure_shopee_live_voucher_tables()
+    _ensure_shopee_video_voucher_tables()
+    _ensure_shopee_follow_voucher_tables()
+    _ensure_shopee_buyer_follow_state_table()
+    _ensure_shopee_auto_reply_settings_table()
+    _ensure_shopee_quick_reply_tables()
+    _ensure_shopee_shipping_fee_promotion_tables()
     _ensure_shopee_order_generation_log_indexes()
     _cleanup_game_runs_legacy_columns()
     _ensure_table_comments()
@@ -1450,6 +1478,378 @@ def _ensure_shopee_orders_marketing_columns():
                 pass
 
 
+def _ensure_shopee_orders_voucher_columns():
+    inspector = inspect(engine)
+    if "shopee_orders" not in inspector.get_table_names():
+        return
+
+    existing_columns = {col["name"] for col in inspector.get_columns("shopee_orders")}
+    missing_sql = []
+    if "order_subtotal_amount" not in existing_columns:
+        missing_sql.append("ALTER TABLE shopee_orders ADD COLUMN order_subtotal_amount FLOAT NOT NULL DEFAULT 0")
+    if "voucher_campaign_type" not in existing_columns:
+        missing_sql.append("ALTER TABLE shopee_orders ADD COLUMN voucher_campaign_type VARCHAR(32) NULL")
+    if "voucher_campaign_id" not in existing_columns:
+        missing_sql.append("ALTER TABLE shopee_orders ADD COLUMN voucher_campaign_id INTEGER NULL")
+    if "voucher_name_snapshot" not in existing_columns:
+        missing_sql.append("ALTER TABLE shopee_orders ADD COLUMN voucher_name_snapshot VARCHAR(255) NULL")
+    if "voucher_code_snapshot" not in existing_columns:
+        missing_sql.append("ALTER TABLE shopee_orders ADD COLUMN voucher_code_snapshot VARCHAR(64) NULL")
+    if "voucher_discount_amount" not in existing_columns:
+        missing_sql.append("ALTER TABLE shopee_orders ADD COLUMN voucher_discount_amount FLOAT NOT NULL DEFAULT 0")
+
+    if not missing_sql:
+        return
+
+    with engine.begin() as conn:
+        for sql in missing_sql:
+            conn.execute(text(sql))
+        if "voucher_campaign_type" not in existing_columns:
+            try:
+                conn.execute(text("CREATE INDEX ix_shopee_orders_voucher_campaign_type ON shopee_orders (voucher_campaign_type)"))
+            except Exception:
+                pass
+        if "voucher_campaign_id" not in existing_columns:
+            try:
+                conn.execute(text("CREATE INDEX ix_shopee_orders_voucher_campaign_id ON shopee_orders (voucher_campaign_id)"))
+            except Exception:
+                pass
+
+
+
+def _ensure_shopee_orders_shipping_promotion_columns():
+    inspector = inspect(engine)
+    table_names = set(inspector.get_table_names())
+    missing_sql = []
+
+    if "shopee_orders" in table_names:
+        order_columns = {col["name"] for col in inspector.get_columns("shopee_orders")}
+        if "shipping_promotion_campaign_id" not in order_columns:
+            missing_sql.append("ALTER TABLE shopee_orders ADD COLUMN shipping_promotion_campaign_id INTEGER NULL")
+        if "shipping_promotion_name_snapshot" not in order_columns:
+            missing_sql.append("ALTER TABLE shopee_orders ADD COLUMN shipping_promotion_name_snapshot VARCHAR(255) NULL")
+        if "shipping_promotion_tier_index" not in order_columns:
+            missing_sql.append("ALTER TABLE shopee_orders ADD COLUMN shipping_promotion_tier_index INTEGER NULL")
+        if "shipping_fee_before_promotion" not in order_columns:
+            missing_sql.append("ALTER TABLE shopee_orders ADD COLUMN shipping_fee_before_promotion FLOAT NOT NULL DEFAULT 0")
+        if "shipping_fee_after_promotion" not in order_columns:
+            missing_sql.append("ALTER TABLE shopee_orders ADD COLUMN shipping_fee_after_promotion FLOAT NOT NULL DEFAULT 0")
+        if "shipping_promotion_discount_amount" not in order_columns:
+            missing_sql.append("ALTER TABLE shopee_orders ADD COLUMN shipping_promotion_discount_amount FLOAT NOT NULL DEFAULT 0")
+    else:
+        order_columns = set()
+
+    if "shopee_order_settlements" in table_names:
+        settlement_columns = {col["name"] for col in inspector.get_columns("shopee_order_settlements")}
+        if "shipping_promotion_discount_amount" not in settlement_columns:
+            missing_sql.append("ALTER TABLE shopee_order_settlements ADD COLUMN shipping_promotion_discount_amount FLOAT NOT NULL DEFAULT 0")
+    else:
+        settlement_columns = set()
+
+    with engine.begin() as conn:
+        for sql in missing_sql:
+            conn.execute(text(sql))
+        if "shopee_orders" in table_names and "shipping_promotion_campaign_id" not in order_columns:
+            try:
+                conn.execute(text("CREATE INDEX ix_shopee_orders_shipping_promotion_campaign_id ON shopee_orders (shipping_promotion_campaign_id)"))
+            except Exception:
+                pass
+
+
+def _ensure_shopee_shop_voucher_campaigns_columns():
+    inspector = inspect(engine)
+    if "shopee_shop_voucher_campaigns" not in inspector.get_table_names():
+        return
+
+    existing_columns = {col["name"] for col in inspector.get_columns("shopee_shop_voucher_campaigns")}
+    missing_sql = []
+    if "display_start_at" not in existing_columns:
+        missing_sql.append("ALTER TABLE shopee_shop_voucher_campaigns ADD COLUMN display_start_at DATETIME NULL")
+
+    if not missing_sql:
+        return
+
+    with engine.begin() as conn:
+        for sql in missing_sql:
+            conn.execute(text(sql))
+
+
+def _ensure_shopee_product_voucher_tables():
+    inspector = inspect(engine)
+    table_names = set(inspector.get_table_names())
+    if "shopee_product_voucher_campaigns" not in table_names or "shopee_product_voucher_items" not in table_names:
+        return
+
+    campaign_columns = {col["name"] for col in inspector.get_columns("shopee_product_voucher_campaigns")}
+    campaign_missing_sql = []
+    if "display_start_at" not in campaign_columns:
+        campaign_missing_sql.append("ALTER TABLE shopee_product_voucher_campaigns ADD COLUMN display_start_at DATETIME NULL")
+    if "selected_product_count" not in campaign_columns:
+        campaign_missing_sql.append("ALTER TABLE shopee_product_voucher_campaigns ADD COLUMN selected_product_count INT NOT NULL DEFAULT 0")
+
+    item_columns = {col["name"] for col in inspector.get_columns("shopee_product_voucher_items")}
+    item_missing_sql = []
+    if "category_key_snapshot" not in item_columns:
+        item_missing_sql.append("ALTER TABLE shopee_product_voucher_items ADD COLUMN category_key_snapshot VARCHAR(128) NULL")
+    if "category_label_snapshot" not in item_columns:
+        item_missing_sql.append("ALTER TABLE shopee_product_voucher_items ADD COLUMN category_label_snapshot VARCHAR(255) NULL")
+    if "user_id" not in item_columns:
+        item_missing_sql.append("ALTER TABLE shopee_product_voucher_items ADD COLUMN user_id INT NOT NULL DEFAULT 0")
+    if "product_id" not in item_columns:
+        item_missing_sql.append("ALTER TABLE shopee_product_voucher_items ADD COLUMN product_id INT NULL")
+    if "stock_snapshot" not in item_columns:
+        item_missing_sql.append("ALTER TABLE shopee_product_voucher_items ADD COLUMN stock_snapshot INT NOT NULL DEFAULT 0")
+
+    if not campaign_missing_sql and not item_missing_sql:
+        return
+
+    with engine.begin() as conn:
+        for sql in campaign_missing_sql + item_missing_sql:
+            conn.execute(text(sql))
+
+
+def _ensure_shopee_private_voucher_tables():
+    inspector = inspect(engine)
+    table_names = set(inspector.get_table_names())
+    if "shopee_private_voucher_campaigns" not in table_names or "shopee_private_voucher_items" not in table_names:
+        return
+
+    campaign_columns = {col["name"] for col in inspector.get_columns("shopee_private_voucher_campaigns")}
+    campaign_missing_sql = []
+    if "selected_product_count" not in campaign_columns:
+        campaign_missing_sql.append("ALTER TABLE shopee_private_voucher_campaigns ADD COLUMN selected_product_count INT NOT NULL DEFAULT 0")
+    if "audience_scope" not in campaign_columns:
+        campaign_missing_sql.append("ALTER TABLE shopee_private_voucher_campaigns ADD COLUMN audience_scope VARCHAR(32) NOT NULL DEFAULT 'private_code'")
+    if "audience_payload" not in campaign_columns:
+        campaign_missing_sql.append("ALTER TABLE shopee_private_voucher_campaigns ADD COLUMN audience_payload TEXT NULL")
+
+    item_columns = {col["name"] for col in inspector.get_columns("shopee_private_voucher_items")}
+    item_missing_sql = []
+    if "category_key_snapshot" not in item_columns:
+        item_missing_sql.append("ALTER TABLE shopee_private_voucher_items ADD COLUMN category_key_snapshot VARCHAR(128) NULL")
+    if "category_label_snapshot" not in item_columns:
+        item_missing_sql.append("ALTER TABLE shopee_private_voucher_items ADD COLUMN category_label_snapshot VARCHAR(255) NULL")
+    if "user_id" not in item_columns:
+        item_missing_sql.append("ALTER TABLE shopee_private_voucher_items ADD COLUMN user_id INT NOT NULL DEFAULT 0")
+    if "product_id" not in item_columns:
+        item_missing_sql.append("ALTER TABLE shopee_private_voucher_items ADD COLUMN product_id INT NULL")
+    if "stock_snapshot" not in item_columns:
+        item_missing_sql.append("ALTER TABLE shopee_private_voucher_items ADD COLUMN stock_snapshot INT NOT NULL DEFAULT 0")
+
+    if not campaign_missing_sql and not item_missing_sql:
+        return
+
+    with engine.begin() as conn:
+        for sql in campaign_missing_sql + item_missing_sql:
+            conn.execute(text(sql))
+
+
+def _ensure_shopee_live_voucher_tables():
+    inspector = inspect(engine)
+    table_names = set(inspector.get_table_names())
+    if "shopee_live_voucher_campaigns" not in table_names or "shopee_live_voucher_items" not in table_names:
+        return
+
+    campaign_columns = {col["name"] for col in inspector.get_columns("shopee_live_voucher_campaigns")}
+    campaign_missing_sql = []
+    if "display_start_at" not in campaign_columns:
+        campaign_missing_sql.append("ALTER TABLE shopee_live_voucher_campaigns ADD COLUMN display_start_at DATETIME NULL")
+    if "selected_product_count" not in campaign_columns:
+        campaign_missing_sql.append("ALTER TABLE shopee_live_voucher_campaigns ADD COLUMN selected_product_count INT NOT NULL DEFAULT 0")
+    if "live_scope" not in campaign_columns:
+        campaign_missing_sql.append("ALTER TABLE shopee_live_voucher_campaigns ADD COLUMN live_scope VARCHAR(32) NOT NULL DEFAULT 'all_live_sessions'")
+    if "live_payload" not in campaign_columns:
+        campaign_missing_sql.append("ALTER TABLE shopee_live_voucher_campaigns ADD COLUMN live_payload TEXT NULL")
+
+    item_columns = {col["name"] for col in inspector.get_columns("shopee_live_voucher_items")}
+    item_missing_sql = []
+    if "category_key_snapshot" not in item_columns:
+        item_missing_sql.append("ALTER TABLE shopee_live_voucher_items ADD COLUMN category_key_snapshot VARCHAR(128) NULL")
+    if "category_label_snapshot" not in item_columns:
+        item_missing_sql.append("ALTER TABLE shopee_live_voucher_items ADD COLUMN category_label_snapshot VARCHAR(255) NULL")
+    if "user_id" not in item_columns:
+        item_missing_sql.append("ALTER TABLE shopee_live_voucher_items ADD COLUMN user_id INT NOT NULL DEFAULT 0")
+    if "product_id" not in item_columns:
+        item_missing_sql.append("ALTER TABLE shopee_live_voucher_items ADD COLUMN product_id INT NULL")
+    if "stock_snapshot" not in item_columns:
+        item_missing_sql.append("ALTER TABLE shopee_live_voucher_items ADD COLUMN stock_snapshot INT NOT NULL DEFAULT 0")
+
+    if not campaign_missing_sql and not item_missing_sql:
+        return
+
+    with engine.begin() as conn:
+        for sql in campaign_missing_sql + item_missing_sql:
+            conn.execute(text(sql))
+
+
+
+def _ensure_shopee_video_voucher_tables():
+    inspector = inspect(engine)
+    table_names = set(inspector.get_table_names())
+    if "shopee_video_voucher_campaigns" not in table_names or "shopee_video_voucher_items" not in table_names:
+        return
+
+    campaign_columns = {col["name"] for col in inspector.get_columns("shopee_video_voucher_campaigns")}
+    campaign_missing_sql = []
+    if "display_start_at" not in campaign_columns:
+        campaign_missing_sql.append("ALTER TABLE shopee_video_voucher_campaigns ADD COLUMN display_start_at DATETIME NULL")
+    if "selected_product_count" not in campaign_columns:
+        campaign_missing_sql.append("ALTER TABLE shopee_video_voucher_campaigns ADD COLUMN selected_product_count INT NOT NULL DEFAULT 0")
+    if "video_scope" not in campaign_columns:
+        campaign_missing_sql.append("ALTER TABLE shopee_video_voucher_campaigns ADD COLUMN video_scope VARCHAR(32) NOT NULL DEFAULT 'all_videos'")
+    if "video_payload" not in campaign_columns:
+        campaign_missing_sql.append("ALTER TABLE shopee_video_voucher_campaigns ADD COLUMN video_payload TEXT NULL")
+
+    item_columns = {col["name"] for col in inspector.get_columns("shopee_video_voucher_items")}
+    item_missing_sql = []
+    if "category_key_snapshot" not in item_columns:
+        item_missing_sql.append("ALTER TABLE shopee_video_voucher_items ADD COLUMN category_key_snapshot VARCHAR(128) NULL")
+    if "category_label_snapshot" not in item_columns:
+        item_missing_sql.append("ALTER TABLE shopee_video_voucher_items ADD COLUMN category_label_snapshot VARCHAR(255) NULL")
+    if "user_id" not in item_columns:
+        item_missing_sql.append("ALTER TABLE shopee_video_voucher_items ADD COLUMN user_id INT NOT NULL DEFAULT 0")
+    if "product_id" not in item_columns:
+        item_missing_sql.append("ALTER TABLE shopee_video_voucher_items ADD COLUMN product_id INT NULL")
+    if "stock_snapshot" not in item_columns:
+        item_missing_sql.append("ALTER TABLE shopee_video_voucher_items ADD COLUMN stock_snapshot INT NOT NULL DEFAULT 0")
+
+    if not campaign_missing_sql and not item_missing_sql:
+        return
+
+    with engine.begin() as conn:
+        for sql in campaign_missing_sql + item_missing_sql:
+            conn.execute(text(sql))
+
+
+
+def _ensure_shopee_follow_voucher_tables():
+    inspector = inspect(engine)
+    if "shopee_follow_voucher_campaigns" not in inspector.get_table_names():
+        return
+
+    campaign_columns = {col["name"] for col in inspector.get_columns("shopee_follow_voucher_campaigns")}
+    missing_sql = []
+    expected_columns = {
+        "valid_days_after_claim": "ALTER TABLE shopee_follow_voucher_campaigns ADD COLUMN valid_days_after_claim INT NOT NULL DEFAULT 7",
+        "claimed_count": "ALTER TABLE shopee_follow_voucher_campaigns ADD COLUMN claimed_count INT NOT NULL DEFAULT 0",
+        "trigger_type": "ALTER TABLE shopee_follow_voucher_campaigns ADD COLUMN trigger_type VARCHAR(32) NOT NULL DEFAULT 'follow_shop'",
+        "display_channels": "ALTER TABLE shopee_follow_voucher_campaigns ADD COLUMN display_channels TEXT NULL",
+        "sales_amount": "ALTER TABLE shopee_follow_voucher_campaigns ADD COLUMN sales_amount DOUBLE NOT NULL DEFAULT 0",
+        "order_count": "ALTER TABLE shopee_follow_voucher_campaigns ADD COLUMN order_count INT NOT NULL DEFAULT 0",
+        "buyer_count": "ALTER TABLE shopee_follow_voucher_campaigns ADD COLUMN buyer_count INT NOT NULL DEFAULT 0",
+    }
+    for column_name, sql in expected_columns.items():
+        if column_name not in campaign_columns:
+            missing_sql.append(sql)
+
+    if not missing_sql:
+        return
+
+    with engine.begin() as conn:
+        for sql in missing_sql:
+            conn.execute(text(sql))
+
+
+def _ensure_shopee_buyer_follow_state_table():
+    inspector = inspect(engine)
+    if "shopee_buyer_follow_states" not in inspector.get_table_names():
+        return
+
+    existing_indexes = {idx["name"] for idx in inspector.get_indexes("shopee_buyer_follow_states")}
+    with engine.begin() as conn:
+        if "ix_shopee_buyer_follow_states_run_user" not in existing_indexes:
+            try:
+                conn.execute(text("CREATE INDEX ix_shopee_buyer_follow_states_run_user ON shopee_buyer_follow_states (run_id, user_id)"))
+            except Exception:
+                pass
+        if "ix_shopee_buyer_follow_states_source_campaign" not in existing_indexes:
+            try:
+                conn.execute(text("CREATE INDEX ix_shopee_buyer_follow_states_source_campaign ON shopee_buyer_follow_states (source_campaign_id)"))
+            except Exception:
+                pass
+
+
+
+def _ensure_shopee_auto_reply_settings_table():
+    inspector = inspect(engine)
+    existing_tables = set(inspector.get_table_names())
+    if "shopee_auto_reply_settings" not in existing_tables:
+        return
+
+    existing_indexes = {idx["name"] for idx in inspector.get_indexes("shopee_auto_reply_settings")}
+    with engine.begin() as conn:
+        if "ix_shopee_auto_reply_settings_run_user_enabled" not in existing_indexes:
+            try:
+                conn.execute(text("CREATE INDEX ix_shopee_auto_reply_settings_run_user_enabled ON shopee_auto_reply_settings (run_id, user_id, enabled)"))
+            except Exception:
+                pass
+
+
+
+def _ensure_shopee_quick_reply_tables():
+    inspector = inspect(engine)
+    existing_tables = set(inspector.get_table_names())
+    with engine.begin() as conn:
+        if "shopee_quick_reply_groups" in existing_tables:
+            group_indexes = {idx["name"] for idx in inspector.get_indexes("shopee_quick_reply_groups")}
+            if "ix_shopee_quick_reply_groups_run_user_sort" not in group_indexes:
+                try:
+                    conn.execute(text("CREATE INDEX ix_shopee_quick_reply_groups_run_user_sort ON shopee_quick_reply_groups (run_id, user_id, sort_order)"))
+                except Exception:
+                    pass
+            if "ix_shopee_quick_reply_groups_run_user_enabled" not in group_indexes:
+                try:
+                    conn.execute(text("CREATE INDEX ix_shopee_quick_reply_groups_run_user_enabled ON shopee_quick_reply_groups (run_id, user_id, enabled)"))
+                except Exception:
+                    pass
+        if "shopee_quick_reply_messages" in existing_tables:
+            message_indexes = {idx["name"] for idx in inspector.get_indexes("shopee_quick_reply_messages")}
+            if "ix_shopee_quick_reply_messages_group_sort" not in message_indexes:
+                try:
+                    conn.execute(text("CREATE INDEX ix_shopee_quick_reply_messages_group_sort ON shopee_quick_reply_messages (group_id, sort_order)"))
+                except Exception:
+                    pass
+            if "ix_shopee_quick_reply_messages_run_user" not in message_indexes:
+                try:
+                    conn.execute(text("CREATE INDEX ix_shopee_quick_reply_messages_run_user ON shopee_quick_reply_messages (run_id, user_id)"))
+                except Exception:
+                    pass
+
+
+
+def _ensure_shopee_shipping_fee_promotion_tables():
+    inspector = inspect(engine)
+    existing_tables = set(inspector.get_table_names())
+    with engine.begin() as conn:
+        if "shopee_shipping_fee_promotion_campaigns" in existing_tables:
+            campaign_indexes = {idx["name"] for idx in inspector.get_indexes("shopee_shipping_fee_promotion_campaigns")}
+            if "ix_shopee_shipping_fee_promotions_run_user_status" not in campaign_indexes:
+                try:
+                    conn.execute(text("CREATE INDEX ix_shopee_shipping_fee_promotions_run_user_status ON shopee_shipping_fee_promotion_campaigns (run_id, user_id, status)"))
+                except Exception:
+                    pass
+            if "ix_shopee_shipping_fee_promotions_run_user_time" not in campaign_indexes:
+                try:
+                    conn.execute(text("CREATE INDEX ix_shopee_shipping_fee_promotions_run_user_time ON shopee_shipping_fee_promotion_campaigns (run_id, user_id, start_at, end_at)"))
+                except Exception:
+                    pass
+        if "shopee_shipping_fee_promotion_channels" in existing_tables:
+            channel_indexes = {idx["name"] for idx in inspector.get_indexes("shopee_shipping_fee_promotion_channels")}
+            if "ix_shopee_shipping_fee_promotion_channels_campaign" not in channel_indexes:
+                try:
+                    conn.execute(text("CREATE INDEX ix_shopee_shipping_fee_promotion_channels_campaign ON shopee_shipping_fee_promotion_channels (campaign_id)"))
+                except Exception:
+                    pass
+        if "shopee_shipping_fee_promotion_tiers" in existing_tables:
+            tier_indexes = {idx["name"] for idx in inspector.get_indexes("shopee_shipping_fee_promotion_tiers")}
+            if "ix_shopee_shipping_fee_promotion_tiers_campaign" not in tier_indexes:
+                try:
+                    conn.execute(text("CREATE INDEX ix_shopee_shipping_fee_promotion_tiers_campaign ON shopee_shipping_fee_promotion_tiers (campaign_id)"))
+                except Exception:
+                    pass
+
+
+
 def _ensure_shopee_order_generation_log_indexes():
     if DATABASE_URL.startswith("sqlite"):
         return
@@ -1544,6 +1944,24 @@ def _ensure_table_comments():
         "shopee_flash_sale_draft_items": "Shopee 我的店铺限时抢购草稿商品表",
         "shopee_flash_sale_slots": "Shopee 我的店铺限时抢购时间段配置表",
         "shopee_flash_sale_category_rules": "Shopee 我的店铺限时抢购类目商品条件配置表",
+        "shopee_shop_voucher_campaigns": "Shopee 店铺代金券活动表",
+        "shopee_product_voucher_campaigns": "Shopee 商品代金券活动表",
+        "shopee_product_voucher_items": "Shopee 商品代金券适用商品明细表",
+        "shopee_private_voucher_campaigns": "Shopee 专属代金券活动表",
+        "shopee_private_voucher_items": "Shopee 专属代金券适用商品明细表",
+        "shopee_live_voucher_campaigns": "Shopee 直播代金券活动表",
+        "shopee_live_voucher_items": "Shopee 直播代金券适用商品明细表",
+        "shopee_video_voucher_campaigns": "Shopee 视频代金券活动表",
+        "shopee_video_voucher_items": "Shopee 视频代金券适用商品明细表",
+        "shopee_follow_voucher_campaigns": "Shopee 关注礼代金券活动表",
+        "shopee_buyer_follow_states": "Shopee 模拟买家店铺关注状态表",
+        "shopee_auto_reply_settings": "Shopee 自动回复配置表",
+        "shopee_quick_reply_preferences": "Shopee 快捷回复用户偏好表",
+        "shopee_quick_reply_groups": "Shopee 快捷回复分组表",
+        "shopee_quick_reply_messages": "Shopee 快捷回复消息表",
+        "shopee_shipping_fee_promotion_campaigns": "Shopee 运费促销活动主表",
+        "shopee_shipping_fee_promotion_channels": "Shopee 运费促销适用物流渠道表",
+        "shopee_shipping_fee_promotion_tiers": "Shopee 运费促销门槛层级表",
         "shopee_order_generation_logs": "Shopee 订单模拟生成日志表",
         "warehouse_landmarks": "海外仓地标点位表",
         "sim_buyer_profiles": "买家画像池表（模拟订单买家）",
@@ -1940,6 +2358,18 @@ def _ensure_column_comments():
             "marketing_campaign_type": "命中的营销活动类型(discount/bundle/add_on/gift)",
             "marketing_campaign_id": "命中的营销活动ID",
             "marketing_campaign_name_snapshot": "下单时命中的营销活动名称快照",
+            "order_subtotal_amount": "代金券抵扣前订单商品小计，单位RM",
+            "voucher_campaign_type": "订单使用的代金券类型(shop_voucher/product_voucher/private_voucher/live_voucher/video_voucher/follow_voucher)",
+            "voucher_campaign_id": "订单使用的代金券活动ID",
+            "voucher_name_snapshot": "下单时使用的代金券名称快照",
+            "voucher_code_snapshot": "下单时使用的代金券代码快照",
+            "voucher_discount_amount": "本单代金券抵扣金额，单位RM",
+            "shipping_promotion_campaign_id": "命中的运费促销活动ID",
+            "shipping_promotion_name_snapshot": "命中的运费促销名称快照",
+            "shipping_promotion_tier_index": "命中的运费促销层级序号",
+            "shipping_fee_before_promotion": "运费促销前买家侧原始运费，单位RM",
+            "shipping_fee_after_promotion": "运费促销后买家侧应付运费，单位RM",
+            "shipping_promotion_discount_amount": "本单运费促销优惠金额，单位RM",
             "created_at": "创建时间",
         },
         "shopee_order_items": {
@@ -1983,7 +2413,8 @@ def _ensure_column_comments():
             "payment_fee_amount": "支付手续费金额",
             "shipping_cost_amount": "运费成本金额",
             "shipping_subsidy_amount": "运费补贴金额",
-            "net_income_amount": "净收入金额",
+            "shipping_promotion_discount_amount": "卖家承担的运费促销优惠金额，单位RM",
+            "net_income_amount": "净收入金额（已扣除运费促销优惠）",
             "settlement_status": "结算状态",
             "settled_at": "结算时间",
             "created_at": "创建时间",
@@ -2365,6 +2796,388 @@ def _ensure_column_comments():
             "repeat_control_days": "重复参加控制天数",
             "is_active": "是否启用",
             "sort_order": "排序号",
+            "created_at": "创建时间",
+            "updated_at": "更新时间",
+        },
+        "shopee_shop_voucher_campaigns": {
+            "id": "店铺代金券活动ID",
+            "run_id": "所属对局ID",
+            "user_id": "所属卖家用户ID",
+            "voucher_type": "代金券类型，V1固定为shop_voucher",
+            "voucher_name": "卖家可见的代金券名称",
+            "voucher_code": "完整代金券代码，如HOME12345",
+            "code_prefix": "代金券代码前缀",
+            "code_suffix": "卖家输入的代码后缀",
+            "status": "状态：upcoming/ongoing/sold_out/ended/stopped",
+            "start_at": "代金券可使用开始游戏时间映射后的系统时间",
+            "end_at": "代金券可使用结束游戏时间映射后的系统时间",
+            "display_before_start": "是否提前展示代金券",
+            "display_start_at": "提前展示开始游戏时间映射后的系统时间；未提前展示时为空",
+            "reward_type": "奖励类型，V1固定为discount",
+            "discount_type": "折扣类型：fixed_amount/percent",
+            "discount_amount": "固定金额优惠，单位为店铺币种",
+            "discount_percent": "百分比优惠，单位为百分比",
+            "max_discount_type": "最大折扣金额类型：set_amount/no_limit",
+            "max_discount_amount": "百分比优惠最高抵扣金额，单位为店铺币种；无限制时为空",
+            "min_spend_amount": "最低消费金额，单位为店铺币种",
+            "usage_limit": "所有买家可使用总代金券数量",
+            "used_count": "已使用数量",
+            "per_buyer_limit": "每位买家可使用次数上限",
+            "display_type": "展示方式：all_pages/specific_channels/code_only",
+            "display_channels": "特定渠道配置JSON，V1支持checkout_page",
+            "applicable_scope": "适用商品范围，V1固定全店商品",
+            "sales_amount": "代金券归因销售额，单位为店铺币种",
+            "order_count": "代金券归因订单数",
+            "buyer_count": "使用代金券买家数",
+            "created_at": "创建时间",
+            "updated_at": "更新时间",
+        },
+        "shopee_product_voucher_campaigns": {
+            "id": "商品代金券活动ID",
+            "run_id": "所属对局ID",
+            "user_id": "所属卖家用户ID",
+            "voucher_type": "代金券类型，V1固定为product_voucher",
+            "voucher_name": "卖家可见的代金券名称",
+            "voucher_code": "完整代金券代码，如HOME12345",
+            "code_prefix": "代金券代码前缀",
+            "code_suffix": "卖家输入的代码后缀",
+            "status": "状态：upcoming/ongoing/sold_out/ended/stopped",
+            "start_at": "代金券可使用开始游戏时间映射后的系统时间",
+            "end_at": "代金券可使用结束游戏时间映射后的系统时间",
+            "display_before_start": "是否提前展示代金券",
+            "display_start_at": "提前展示开始游戏时间映射后的系统时间；未提前展示时为空",
+            "reward_type": "奖励类型，V1固定为discount",
+            "discount_type": "折扣类型：fixed_amount/percent",
+            "discount_amount": "固定金额优惠，单位为店铺币种",
+            "discount_percent": "百分比优惠，单位为百分比",
+            "max_discount_type": "最大折扣金额类型：set_amount/no_limit",
+            "max_discount_amount": "百分比优惠最高抵扣金额，单位为店铺币种；无限制时为空",
+            "min_spend_amount": "最低消费金额，单位为店铺币种",
+            "usage_limit": "所有买家可使用总代金券数量",
+            "used_count": "已使用数量",
+            "per_buyer_limit": "每位买家可使用次数上限",
+            "display_type": "展示方式：all_pages/specific_channels/code_only",
+            "display_channels": "特定渠道配置JSON，V1支持checkout_page",
+            "applicable_scope": "适用范围，商品代金券固定指定商品",
+            "selected_product_count": "已选择适用商品数量",
+            "sales_amount": "代金券归因销售额，单位为店铺币种",
+            "order_count": "代金券归因订单数",
+            "buyer_count": "使用代金券买家数",
+            "created_at": "创建时间",
+            "updated_at": "更新时间",
+        },
+        "shopee_product_voucher_items": {
+            "id": "商品代金券明细ID",
+            "campaign_id": "所属商品代金券活动ID",
+            "run_id": "所属对局ID",
+            "user_id": "所属卖家用户ID",
+            "listing_id": "商品listing ID",
+            "variant_id": "商品变体ID；单规格商品为空",
+            "product_id": "关联选品池商品ID",
+            "product_name_snapshot": "创建时商品名称快照",
+            "variant_name_snapshot": "创建时变体名称快照",
+            "sku_snapshot": "创建时SKU快照",
+            "image_url_snapshot": "创建时商品图片快照",
+            "category_key_snapshot": "创建时商品分类key快照",
+            "category_label_snapshot": "创建时商品分类标签快照",
+            "original_price_snapshot": "创建时商品原价快照",
+            "stock_snapshot": "创建时可用库存快照",
+            "sort_order": "页面展示排序",
+            "created_at": "创建时间",
+            "updated_at": "更新时间",
+        },
+        "shopee_private_voucher_campaigns": {
+            "id": "专属代金券活动ID",
+            "run_id": "所属对局ID",
+            "user_id": "所属卖家用户ID",
+            "voucher_type": "代金券类型，V1固定为private_voucher",
+            "voucher_name": "卖家可见的代金券名称",
+            "voucher_code": "完整代金券代码，如HOMEVIP01",
+            "code_prefix": "代金券代码前缀",
+            "code_suffix": "卖家输入的代码后缀",
+            "status": "状态：upcoming/ongoing/sold_out/ended/stopped",
+            "start_at": "代金券可使用开始游戏时间映射后的系统时间",
+            "end_at": "代金券可使用结束游戏时间映射后的系统时间",
+            "reward_type": "奖励类型，V1固定为discount",
+            "discount_type": "折扣类型：fixed_amount/percent",
+            "discount_amount": "固定金额优惠，单位为店铺币种",
+            "discount_percent": "百分比优惠，单位为百分比",
+            "max_discount_type": "最大折扣金额类型：set_amount/no_limit",
+            "max_discount_amount": "百分比优惠最高抵扣金额，单位为店铺币种；无限制时为空",
+            "min_spend_amount": "最低消费金额，单位为店铺币种",
+            "usage_limit": "所有买家可使用总代金券数量",
+            "used_count": "已使用数量",
+            "per_buyer_limit": "每位买家可使用次数上限",
+            "display_type": "展示方式，专属代金券V1固定代码分享",
+            "applicable_scope": "适用商品范围：all_products/selected_products",
+            "selected_product_count": "已选择适用商品数量",
+            "audience_scope": "买家定向范围，V1固定私有码口径",
+            "audience_payload": "买家定向配置JSON，V1预留为空",
+            "sales_amount": "代金券归因销售额，单位为店铺币种",
+            "order_count": "代金券归因订单数",
+            "buyer_count": "使用代金券买家数",
+            "created_at": "创建时间",
+            "updated_at": "更新时间",
+        },
+        "shopee_private_voucher_items": {
+            "id": "专属代金券明细ID",
+            "campaign_id": "所属专属代金券活动ID",
+            "run_id": "所属对局ID",
+            "user_id": "所属卖家用户ID",
+            "listing_id": "商品listing ID",
+            "variant_id": "商品变体ID；单规格商品为空",
+            "product_id": "关联选品池商品ID",
+            "product_name_snapshot": "创建时商品名称快照",
+            "variant_name_snapshot": "创建时变体名称快照",
+            "sku_snapshot": "创建时SKU快照",
+            "image_url_snapshot": "创建时商品图片快照",
+            "category_key_snapshot": "创建时商品分类key快照",
+            "category_label_snapshot": "创建时商品分类标签快照",
+            "original_price_snapshot": "创建时商品原价快照",
+            "stock_snapshot": "创建时可用库存快照",
+            "sort_order": "页面展示排序",
+            "created_at": "创建时间",
+            "updated_at": "更新时间",
+        },
+        "shopee_live_voucher_campaigns": {
+            "id": "直播代金券活动ID",
+            "run_id": "所属对局ID",
+            "user_id": "所属卖家用户ID",
+            "voucher_type": "代金券类型，V1固定为live_voucher",
+            "voucher_name": "卖家可见的代金券名称",
+            "voucher_code": "完整代金券代码，如HOMELIVE1",
+            "code_prefix": "代金券代码前缀",
+            "code_suffix": "卖家输入的代码后缀",
+            "status": "状态：upcoming/ongoing/sold_out/ended/stopped",
+            "start_at": "代金券可使用开始游戏时间映射后的系统时间",
+            "end_at": "代金券可使用结束游戏时间映射后的系统时间",
+            "display_before_start": "是否提前展示代金券",
+            "display_start_at": "提前展示开始游戏时间映射后的系统时间；未提前展示时为空",
+            "reward_type": "奖励类型，V1固定为discount",
+            "discount_type": "折扣类型：fixed_amount/percent",
+            "discount_amount": "固定金额优惠，单位为店铺币种",
+            "discount_percent": "百分比优惠，单位为百分比",
+            "max_discount_type": "最大折扣金额类型：set_amount/no_limit",
+            "max_discount_amount": "百分比优惠最高抵扣金额，单位为店铺币种；无限制时为空",
+            "min_spend_amount": "最低消费金额，单位为店铺币种",
+            "usage_limit": "所有买家可使用总代金券数量",
+            "used_count": "已使用数量",
+            "per_buyer_limit": "每位买家可使用次数上限",
+            "display_type": "展示方式，直播代金券V1固定直播间展示",
+            "display_channels": "展示渠道配置JSON，V1固定shopee_live",
+            "applicable_scope": "适用商品范围：all_products/selected_products",
+            "selected_product_count": "已选择适用商品数量",
+            "live_scope": "直播适用范围，V1固定全部直播场次",
+            "live_payload": "直播场次绑定配置JSON，V1预留为空",
+            "sales_amount": "代金券归因销售额，单位为店铺币种",
+            "order_count": "代金券归因订单数",
+            "buyer_count": "使用代金券买家数",
+            "created_at": "创建时间",
+            "updated_at": "更新时间",
+        },
+        "shopee_live_voucher_items": {
+            "id": "直播代金券明细ID",
+            "campaign_id": "所属直播代金券活动ID",
+            "run_id": "所属对局ID",
+            "user_id": "所属卖家用户ID",
+            "listing_id": "商品listing ID",
+            "variant_id": "商品变体ID；单规格商品为空",
+            "product_id": "关联选品池商品ID",
+            "product_name_snapshot": "创建时商品名称快照",
+            "variant_name_snapshot": "创建时变体名称快照",
+            "sku_snapshot": "创建时SKU快照",
+            "image_url_snapshot": "创建时商品图片快照",
+            "category_key_snapshot": "创建时商品分类key快照",
+            "category_label_snapshot": "创建时商品分类标签快照",
+            "original_price_snapshot": "创建时商品原价快照",
+            "stock_snapshot": "创建时可用库存快照",
+            "sort_order": "页面展示排序",
+            "created_at": "创建时间",
+            "updated_at": "更新时间",
+        },
+        "shopee_video_voucher_campaigns": {
+            "id": "视频代金券活动ID",
+            "run_id": "所属对局ID",
+            "user_id": "所属卖家用户ID",
+            "voucher_type": "代金券类型，V1固定为video_voucher",
+            "voucher_name": "卖家可见的代金券名称",
+            "voucher_code": "后端生成的视频代金券内部唯一编号",
+            "status": "状态：upcoming/ongoing/sold_out/ended/stopped",
+            "start_at": "代金券可使用开始游戏时间映射后的系统时间",
+            "end_at": "代金券可使用结束游戏时间映射后的系统时间",
+            "display_before_start": "是否提前展示代金券",
+            "display_start_at": "提前展示开始游戏时间映射后的系统时间；未提前展示时为空",
+            "reward_type": "奖励类型，V1固定为discount",
+            "discount_type": "折扣类型：fixed_amount/percent",
+            "discount_amount": "固定金额优惠，单位为店铺币种",
+            "discount_percent": "百分比优惠，单位为百分比",
+            "max_discount_type": "最大折扣金额类型：set_amount/no_limit",
+            "max_discount_amount": "百分比优惠最高抵扣金额，单位为店铺币种；无限制时为空",
+            "min_spend_amount": "最低消费金额，单位为店铺币种",
+            "usage_limit": "所有买家可使用总代金券数量",
+            "used_count": "已使用数量",
+            "per_buyer_limit": "每位买家可使用次数上限",
+            "display_type": "展示方式，视频代金券V1固定Shopee视频展示",
+            "display_channels": "展示渠道配置JSON，V1固定shopee_video",
+            "applicable_scope": "适用商品范围：all_products/selected_products",
+            "selected_product_count": "已选择适用商品数量",
+            "video_scope": "视频适用范围，V1固定全部视频场景",
+            "video_payload": "视频内容绑定配置JSON，V1预留为空",
+            "sales_amount": "代金券归因销售额，单位为店铺币种",
+            "order_count": "代金券归因订单数",
+            "buyer_count": "使用代金券买家数",
+            "created_at": "创建时间",
+            "updated_at": "更新时间",
+        },
+        "shopee_video_voucher_items": {
+            "id": "视频代金券明细ID",
+            "campaign_id": "所属视频代金券活动ID",
+            "run_id": "所属对局ID",
+            "user_id": "所属卖家用户ID",
+            "listing_id": "商品listing ID",
+            "variant_id": "商品变体ID；单规格商品为空",
+            "product_id": "关联选品池商品ID",
+            "product_name_snapshot": "创建时商品名称快照",
+            "variant_name_snapshot": "创建时变体名称快照",
+            "sku_snapshot": "创建时SKU快照",
+            "image_url_snapshot": "创建时商品图片快照",
+            "category_key_snapshot": "创建时商品分类key快照",
+            "category_label_snapshot": "创建时商品分类标签快照",
+            "original_price_snapshot": "创建时商品原价快照",
+            "stock_snapshot": "创建时可用库存快照",
+            "sort_order": "页面展示排序",
+            "created_at": "创建时间",
+            "updated_at": "更新时间",
+        },
+        "shopee_follow_voucher_campaigns": {
+            "id": "关注礼代金券活动ID",
+            "run_id": "所属对局ID",
+            "user_id": "所属卖家用户ID",
+            "voucher_type": "代金券类型，V1固定为follow_voucher",
+            "voucher_name": "卖家可见的代金券名称",
+            "voucher_code": "后端生成的关注礼内部唯一编号",
+            "status": "状态：upcoming/ongoing/sold_out/ended/stopped",
+            "claim_start_at": "关注礼可领取开始游戏时间映射后的系统时间",
+            "claim_end_at": "关注礼可领取结束游戏时间映射后的系统时间",
+            "valid_days_after_claim": "买家领取后有效游戏天数，V1固定7",
+            "reward_type": "奖励类型，V1固定为discount",
+            "discount_type": "折扣类型：fixed_amount/percent",
+            "discount_amount": "固定金额优惠，单位为店铺币种",
+            "discount_percent": "百分比优惠，单位为百分比",
+            "max_discount_type": "最大折扣金额类型：set_amount/no_limit",
+            "max_discount_amount": "百分比优惠最高抵扣金额，单位为店铺币种；无限制时为空",
+            "min_spend_amount": "最低消费金额，单位为店铺币种",
+            "usage_limit": "最大可领取并使用代金券数量",
+            "claimed_count": "已发放/已领取数量",
+            "used_count": "已使用数量",
+            "per_buyer_limit": "每位买家可使用次数上限",
+            "trigger_type": "触发类型，V1固定关注店铺",
+            "display_type": "展示/发放方式，关注礼V1固定关注奖励",
+            "display_channels": "展示渠道配置JSON，V1固定follow_prize",
+            "applicable_scope": "适用范围，V1固定全部商品",
+            "sales_amount": "代金券归因销售额，单位为店铺币种",
+            "order_count": "代金券归因订单数",
+            "buyer_count": "使用代金券买家数",
+            "created_at": "创建时间",
+            "updated_at": "更新时间",
+        },
+        "shopee_buyer_follow_states": {
+            "id": "主键ID",
+            "run_id": "所属对局ID",
+            "user_id": "所属卖家用户ID",
+            "buyer_name": "模拟买家标识",
+            "is_following": "当前是否关注店铺",
+            "first_followed_at": "首次关注时间，对应订单模拟游戏tick",
+            "follow_source": "首次关注来源，关注礼场景为follow_voucher",
+            "source_campaign_id": "促成首次关注的关注礼活动ID",
+            "created_at": "创建时间",
+            "updated_at": "更新时间",
+        },
+        "shopee_auto_reply_settings": {
+            "id": "自动回复配置ID",
+            "run_id": "所属对局ID",
+            "user_id": "所属卖家用户ID",
+            "reply_type": "自动回复类型：default/off_work",
+            "enabled": "是否启用该自动回复",
+            "message": "自动回复消息内容",
+            "work_time_enabled": "是否启用工作时间判断",
+            "work_start_time": "工作开始时间，格式HH:mm",
+            "work_end_time": "工作结束时间，格式HH:mm",
+            "timezone": "时间解释口径，V1固定对局游戏时间",
+            "trigger_interval_minutes": "同买家触发间隔分钟数",
+            "trigger_once_per_game_day": "是否按游戏日限制每天一次",
+            "sent_count": "已触发发送次数",
+            "last_sent_game_at": "最近一次触发的游戏时间",
+            "created_at": "创建时间",
+            "updated_at": "更新时间",
+        },
+        "shopee_quick_reply_preferences": {
+            "id": "快捷回复偏好ID",
+            "run_id": "所属对局ID",
+            "user_id": "所属卖家用户ID",
+            "auto_hint_enabled": "是否开启输入时自动显示快捷回复提示",
+            "created_at": "创建时间",
+            "updated_at": "更新时间",
+        },
+        "shopee_quick_reply_groups": {
+            "id": "快捷回复分组ID",
+            "run_id": "所属对局ID",
+            "user_id": "所属卖家用户ID",
+            "group_name": "快捷回复分组名称",
+            "enabled": "分组是否启用",
+            "sort_order": "分组排序值",
+            "message_count": "分组内消息数量冗余计数",
+            "created_at": "创建时间",
+            "updated_at": "更新时间",
+        },
+        "shopee_quick_reply_messages": {
+            "id": "快捷回复消息ID",
+            "group_id": "所属快捷回复分组ID",
+            "run_id": "所属对局ID",
+            "user_id": "所属卖家用户ID",
+            "message": "快捷回复消息内容",
+            "tags_json": "标签JSON数组，最多3个",
+            "sort_order": "消息排序值",
+            "created_at": "创建时间",
+            "updated_at": "更新时间",
+        },
+        "shopee_shipping_fee_promotion_campaigns": {
+            "id": "运费促销活动ID",
+            "run_id": "所属对局ID",
+            "user_id": "所属卖家用户ID",
+            "promotion_name": "运费促销名称，仅卖家可见",
+            "status": "状态：upcoming/ongoing/ended/budget_exhausted/stopped",
+            "period_type": "期限类型：no_limit/selected",
+            "start_at": "活动开始游戏时间映射后的系统时间",
+            "end_at": "活动结束游戏时间映射后的系统时间；无期限为空",
+            "budget_type": "预算类型：no_limit/selected",
+            "budget_limit": "预算上限，单位RM；无预算限制为空",
+            "budget_used": "已使用预算，单位RM",
+            "order_count": "归因订单数",
+            "buyer_count": "归因买家数",
+            "sales_amount": "归因销售额，单位RM",
+            "shipping_discount_amount": "已产生运费优惠总额，单位RM",
+            "created_at": "创建时间",
+            "updated_at": "更新时间",
+        },
+        "shopee_shipping_fee_promotion_channels": {
+            "id": "主键ID",
+            "campaign_id": "所属运费促销活动ID",
+            "run_id": "所属对局ID",
+            "user_id": "所属卖家用户ID",
+            "channel_key": "物流渠道key：standard/bulky",
+            "channel_label": "物流渠道展示名",
+            "created_at": "创建时间",
+        },
+        "shopee_shipping_fee_promotion_tiers": {
+            "id": "主键ID",
+            "campaign_id": "所属运费促销活动ID",
+            "run_id": "所属对局ID",
+            "user_id": "所属卖家用户ID",
+            "tier_index": "层级序号，从1开始",
+            "min_spend_amount": "最低消费金额，单位RM",
+            "fee_type": "运费类型：fixed_fee/free_shipping",
+            "fixed_fee_amount": "固定运费金额，单位RM；免运费时为空",
             "created_at": "创建时间",
             "updated_at": "更新时间",
         },

@@ -1,6 +1,412 @@
 # Change Log
 
-最后更新：2026-04-30（营销中心 Shopee 广告空白页接入）
+最后更新：2026-05-12（新增 Shopee 售前商品细节追问独立实现设计）
+
+## 2026-05-12
+
+### 新增
+- 新增 Shopee 售前商品细节追问前后端数据库 Redis 实现设计文档。
+  - 涉及文件：`docs/设计文档/52-Shopee售前商品细节追问前后端数据库Redis实现设计.md`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：在虚拟客服 MVP 总设计基础上，单独拆出售前商品细节追问实现设计；明确商品上架后按游戏时间延迟、质量分、规格复杂度、描述完整度、概率、去重和未处理会话上限创建客服会话；设计会话列表、详情、发送消息、结束评分接口复用口径；补充 Redis 列表/详情缓存、商品触发锁、LLM 限流和模型配置缓存；定义商品准确性、响应完整度、服务态度、购买引导和平台合规评分重点；补充商品细节追问对话轮次为最少 5 条、推荐 7 条、最多 10 条消息；补充买家/LLM 复用我的产品商品详情、主图/图片 URL、AI 商品质量评分和 AI 主图/内容评分明细的上下文口径。
+  - 游戏时间口径：商品上架后的触发延迟、候选有效期、每日上限、消息时间和评分时间均使用对局游戏时间，不使用真实世界当前时间。
+  - 影响范围：仅新增后续实现设计与进度记录；本次不修改前端样式布局、后端接口、数据库结构或 Redis 代码。
+
+- 新增 Shopee 虚拟客服对话系统 MVP 设计文档。
+  - 涉及文件：`docs/设计文档/51-Shopee虚拟客服对话系统MVP设计.md`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：设计基于现有 Shopee Step05 店铺运营的虚拟客服对话系统，明确第一版仅保留商品细节追问、物流停滞催单、签收破损退款三个自动触发案例；Chat 抽屉与客服网页版共用同一套会话和消息数据；自动回复作为辅助；客服 LLM 模型单独配置；会话评分作为买家满意度并可轻微影响店铺表现；补充同一学生未处理会话达到 3 个时暂停新增，商品细节追问可跳过，物流停滞催单和签收破损退款进入待触发候选。
+  - 游戏时间口径：商品上架后的触发延迟、物流停滞判断、签收后触发窗口、候选事件过期、会话超时、满意度评分和统计均使用对局游戏时间，不使用真实世界当前时间。
+  - 影响范围：仅新增后续实现设计与进度记录；本次不修改前端接口、后端接口、数据库结构或 Redis 代码。
+
+## 2026-05-11
+
+### 修复
+- 修正 Shopee 快捷回复拖拽排序接口 422 问题。
+  - 涉及文件：`backend/apps/api-gateway/app/api/routes/shopee.py`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：将 `PUT /shopee/runs/{run_id}/customer-service/quick-reply-groups/reorder` 静态路由声明移动到 `PUT /shopee/runs/{run_id}/customer-service/quick-reply-groups/{group_id}` 动态路由之前，避免 FastAPI 将 `reorder` 误解析为整数 `group_id` 导致 422。
+  - 影响范围：影响 `/shopee/customer-service/chat-management/quick-reply` 分组拖拽排序后的后端同步保存。
+  - 验证结果：`python -m py_compile backend/apps/api-gateway/app/api/routes/shopee.py` 通过。
+
+### 新增
+- 补齐 Shopee 快捷回复分组编辑、删除和移动排序操作。
+  - 涉及文件：`backend/apps/api-gateway/app/api/routes/shopee.py`、`frontend/src/modules/shopee/ShopeePage.tsx`、`frontend/src/modules/shopee/components/Header.tsx`、`frontend/src/modules/shopee/views/QuickReplySettingsView.tsx`、`frontend/src/modules/shopee/views/QuickReplyCreateView.tsx`、`docs/设计文档/50-Shopee快捷回复前端接口后端数据库Redis打通设计.md`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：新增快捷回复分组编辑保存、删除分组、上移/下移排序接口和拖拽后批量保存排序接口；列表页将编辑、删除和移动图标接入真实操作，并在拖拽结束后把当前分组 ID 顺序同步到后端；编辑入口跳转到与创建页一致的 1360px 表单布局并回填已设置的分组名称、消息和标签，保存后更新原分组。
+  - 影响范围：影响 `/shopee/customer-service/chat-management/quick-reply` 列表页操作区和 `/shopee/customer-service/chat-management/quick-reply/edit?group_id=...` 编辑页；历史对局回溯模式继续禁用写操作。
+  - 验证结果：`python -m py_compile backend/apps/api-gateway/app/api/routes/shopee.py` 通过；`npm --prefix frontend run build` 通过。
+
+- 实现 Shopee 快捷回复配置 V1 前后端数据库 Redis 闭环。
+  - 涉及文件：`backend/apps/api-gateway/app/models.py`、`backend/apps/api-gateway/app/db.py`、`backend/apps/api-gateway/app/api/routes/shopee.py`、`frontend/src/modules/shopee/ShopeePage.tsx`、`frontend/src/modules/shopee/views/QuickReplySettingsView.tsx`、`frontend/src/modules/shopee/views/QuickReplyCreateView.tsx`、`docs/设计文档/50-Shopee快捷回复前端接口后端数据库Redis打通设计.md`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：新增快捷回复偏好、分组和消息 ORM，历史库索引保障、表注释和字段注释；新增快捷回复列表查询、提示开关更新、分组创建与分组启用状态更新接口；接入 Redis 列表缓存、读写限流和写入后缓存失效；前端快捷回复列表页加载真实配置，开关状态来自接口并保存到后端，创建页提交分组名称、消息内容和标签。
+  - 影响范围：影响 `/shopee/customer-service/chat-management/quick-reply` 与 `/shopee/customer-service/chat-management/quick-reply/create` 的数据来源、开关保存、分组创建和刷新持久化；本次仅实现配置持久化，不实现真实聊天输入框推荐弹窗、客服消息发送、编辑、删除或排序持久化。
+  - 验证结果：`python -m py_compile backend/apps/api-gateway/app/models.py backend/apps/api-gateway/app/db.py backend/apps/api-gateway/app/api/routes/shopee.py` 通过；`npm --prefix frontend run build` 通过。
+
+- 新增 Shopee 快捷回复前端接口后端数据库 Redis 打通设计文档。
+  - 涉及文件：`docs/设计文档/50-Shopee快捷回复前端接口后端数据库Redis打通设计.md`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：基于当前 `/shopee/customer-service/chat-management/quick-reply` 与 `/shopee/customer-service/chat-management/quick-reply/create` 前端布局，设计快捷回复提示开关、分组、消息、标签、创建页保存、数据库表、后端接口、Redis 列表/配置缓存、读写限流和后续聊天输入框关键词检索缓存预留口径。
+  - 影响范围：仅新增后续实现设计与进度记录；本次不修改前端接口、后端接口、数据库结构或 Redis 代码。
+
+- 实现 Shopee 自动回复配置 V1 前后端数据库 Redis 闭环。
+  - 涉及文件：`backend/apps/api-gateway/app/models.py`、`backend/apps/api-gateway/app/db.py`、`backend/apps/api-gateway/app/api/routes/shopee.py`、`frontend/src/modules/shopee/ShopeePage.tsx`、`frontend/src/modules/shopee/views/AutoReplySettingsView.tsx`、`docs/设计文档/49-Shopee自动回复前端接口后端数据库Redis打通设计.md`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：新增 `shopee_auto_reply_settings` ORM、历史库索引保障、表注释和字段注释；新增自动回复配置查询与按类型更新接口；接入 Redis 配置缓存、读写限流和更新后缓存失效；前端自动回复页加载真实配置，开关状态来自接口，点击开关后保存到后端，离线回复预览来自接口数据。
+  - 影响范围：影响 `/shopee/customer-service/chat-management/auto-reply` 自动回复配置页的数据来源、开关保存和刷新持久化；本次仅实现配置持久化，不实现真实客服自动回复触发、买家聊天消息写入或触发日志。
+  - 验证结果：`python -m py_compile backend/apps/api-gateway/app/models.py backend/apps/api-gateway/app/db.py backend/apps/api-gateway/app/api/routes/shopee.py` 通过；`npm --prefix frontend run build` 通过。
+
+- 新增 Shopee 自动回复前端接口后端数据库 Redis 打通设计文档。
+  - 涉及文件：`docs/设计文档/49-Shopee自动回复前端接口后端数据库Redis打通设计.md`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：基于当前 `/shopee/customer-service/chat-management/auto-reply` 前端布局，设计默认自动回复与离线自动回复的查询、更新、开关、数据库表、Redis 配置缓存、更新限流、后续触发频控和聊天模拟预留口径。
+  - 游戏时间口径：自动回复触发、24 小时频控、每游戏日频控、工作时间判断和后续统计均使用对局游戏时间，不使用浏览器或服务器真实当前时间作为业务判断来源。
+  - 影响范围：仅新增后续实现设计与进度记录；本次不修改前端接口、后端接口、数据库结构或 Redis 代码。
+
+- 接入 Shopee 快捷回复“新建快捷回复”空白页。
+  - 涉及文件：`frontend/src/modules/shopee/ShopeePage.tsx`、`frontend/src/modules/shopee/components/Header.tsx`、`frontend/src/modules/shopee/views/QuickReplySettingsView.tsx`、`frontend/src/modules/shopee/views/QuickReplyCreateView.tsx`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：新增 1360px 空白页面；接入 `/shopee/customer-service/chat-management/quick-reply/create` 前端路由识别、路径构建和页面渲染；快捷回复页“新建快捷回复”按钮跳转到该空白页；该页面不显示左侧菜单栏。
+  - 影响范围：仅新增快捷回复新建承载页及按钮跳转，不接入新建快捷回复表单、保存逻辑或后端接口。
+
+- 接入 Shopee 聊天管理“自动回复”和“快捷回复”空白页。
+  - 涉及文件：`frontend/src/modules/shopee/ShopeePage.tsx`、`frontend/src/modules/shopee/components/Header.tsx`、`frontend/src/modules/shopee/views/ChatManagementView.tsx`、`frontend/src/modules/shopee/views/AutoReplySettingsView.tsx`、`frontend/src/modules/shopee/views/QuickReplySettingsView.tsx`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：新增两个 1360px 空白页面；接入 `/shopee/customer-service/chat-management/auto-reply` 与 `/shopee/customer-service/chat-management/quick-reply` 前端路由识别、路径构建和页面渲染；聊天管理页“自动回复 > 开启”和“快捷回复 > 编辑”按钮分别跳转到对应页面；两个页面不显示左侧菜单栏。
+  - 影响范围：仅新增聊天管理下两个空白承载页及按钮跳转，不接入自动回复或快捷回复业务数据、表单与后端接口。
+
+- 接入 Shopee 左侧菜单“聊天管理”空白页。
+  - 涉及文件：`frontend/src/modules/shopee/ShopeePage.tsx`、`frontend/src/modules/shopee/components/Header.tsx`、`frontend/src/modules/shopee/components/Sidebar.tsx`、`frontend/src/modules/shopee/views/ChatManagementView.tsx`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：新增聊天管理空白页组件；接入 `/shopee/customer-service/chat-management` 前端路由识别、路径构建和页面渲染分支；左侧菜单“客户服务 > 聊天管理”点击后进入该页并高亮当前菜单；顶部面包屑显示“聊天管理”。
+  - 影响范围：仅影响左侧菜单聊天管理入口与新增空白承载页；页面布局沿用营销中心首页外层节奏，暂不接入客服业务数据或后端接口。
+
+- 新增 Shopee 客服 Chat 抽屉“网页版”空白跳转页。
+  - 涉及文件：`frontend/src/modules/shopee/ShopeePage.tsx`、`frontend/src/modules/shopee/components/ChatMessagesDrawer.tsx`、`frontend/src/modules/shopee/views/CustomerServiceWebView.tsx`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：新增客服网页版空白页组件；在 Shopee 页面路由中接入 `/shopee/customer-service/web`；将 Chat 抽屉右上角“网页版”从空链接改为内部页面跳转，点击后关闭抽屉；该路由下隐藏 Shopee 最右侧通知/Chat 竖栏，并将顶部标题调整为保留 Shopee logo、加粗显示“Chat”、隐藏“卖家中心”。
+  - 影响范围：仅影响 Chat 抽屉“网页版”入口、新增客服网页版页面展示、该页面右侧竖栏显隐和顶部标题，不改动已手动完成的抽屉布局样式，不新增客服业务接口。
+
+### 修复
+- 修正 Shopee 物流运费成本长距离异常放大问题。
+  - 涉及文件：`backend/apps/api-gateway/app/services/shopee_fulfillment.py`、`frontend/src/modules/shopee/views/MyIncomeView.tsx`、`docs/设计文档/47-Shopee运费促销创建前后端数据库Redis实现设计.md`、`docs/设计文档/48-Shopee运费促销接入订单模拟影响设计.md`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：确认 KL 仓到 Sabah 买家距离约 1623km，旧公式按全量公里数线性计费导致快捷快递展示约 RM231.72；现改为计费距离最多 80km，超过 300km/800km 时按渠道追加远程附加费，并同步待释放收入页前端试算公式与设计文档口径。
+  - 影响范围：影响修正后新生成或新结算 Shopee 订单的物流成本、平台运费补贴、净收入和运费促销前后运费展示；已生成订单的历史运费字段不会自动回填。
+  - 验证结果：已复核 `快捷快递` 1623.01km 从旧口径约 RM231.72 调整为 RM23.70；`MyIncomeView.tsx` 前端 LSP 错误诊断无新增错误。
+
+- 修正 Shopee 运费促销 `fixed_fee` 层级的订单模拟计算口径。
+  - 涉及文件：`backend/apps/api-gateway/app/services/shopee_order_simulator.py`、`backend/apps/api-gateway/app/api/routes/shopee.py`、`frontend/src/modules/shopee/views/ShippingFeePromotionCreateView.tsx`、`docs/设计文档/47-Shopee运费促销创建前后端数据库Redis实现设计.md`、`docs/设计文档/48-Shopee运费促销接入订单模拟影响设计.md`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：订单模拟中 `fixed_fee_amount` 按“运费减免金额”计算，而不是按“优惠后固定运费”计算；例如原始运费 RM8、配置 RM3 时，本单运费优惠为 RM3、优惠后运费为 RM5。创建页文案从“固定运费”改为“运费减免”，后端层级校验改为高门槛减免金额不能低于低门槛；同时将订单模拟中的 `快捷快递` 映射到标准快递 `standard`，避免只选标准快递的运费促销无法命中新生成订单，并同步设计文档口径。
+  - 影响范围：影响修正后新生成 Shopee 订单的运费促销命中金额、活动预算统计和结算明细扣减；已生成且运费促销优惠为 0 的历史订单不会自动回填。
+
+## 2026-05-10
+
+### 新增
+- 接入 Shopee 运费促销对订单模拟、订单结算和我的订单展示的影响。
+  - 涉及文件：`backend/apps/api-gateway/app/models.py`、`backend/apps/api-gateway/app/db.py`、`backend/apps/api-gateway/app/services/shopee_order_simulator.py`、`backend/apps/api-gateway/app/api/routes/shopee.py`、`frontend/src/modules/shopee/views/MyOrdersView.tsx`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：新增订单级运费促销命中字段与结算级运费促销优惠字段，历史库补字段、索引和字段注释同步维护；订单模拟按当前游戏 tick 加载可用运费促销，按物流渠道、订单商品小计和原始运费匹配最优活动，支持固定运费、免运费和预算不足部分抵扣；活动统计回写预算、订单数、买家数、销售额和运费优惠金额，预算耗尽后状态转为 `budget_exhausted`；订单列表和结算弹窗展示运费促销优惠。
+  - 游戏时间口径：活动加载、命中判断、预算扣减、统计回写和 `buyer_journeys` 调试日志均使用订单模拟 tick 的游戏时间，不使用真实世界当前时间。
+  - 验证结果：`python -m py_compile backend/apps/api-gateway/app/models.py backend/apps/api-gateway/app/db.py backend/apps/api-gateway/app/services/shopee_order_simulator.py backend/apps/api-gateway/app/api/routes/shopee.py` 通过；`MyOrdersView.tsx` 前端 LSP 诊断无错误。
+  - 影响范围：影响 Shopee 订单模拟生成订单时的运费促销归因、活动预算与统计、订单结算净收入、我的订单列表展示和结算详情；不改变商品行价格、基础物流成本、平台运费补贴、发货时限或运输时长。
+
+## 2026-05-09
+
+### 新增
+- 新增 Shopee 运费促销接入订单模拟影响设计文档。
+  - 涉及文件：`docs/设计文档/48-Shopee运费促销接入订单模拟影响设计.md`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：设计运费促销接入订单模拟的命中条件、渠道映射、活动选择、固定运费/免运费优惠计算、预算不足处理、订单字段、结算字段、活动统计回写、Redis 失效、前端展示和验收用例。
+  - 游戏时间口径：活动命中、预算扣减、统计回写和调试日志均使用订单模拟 tick 的游戏时间，不使用服务器真实当前时间。
+  - 验证结果：本次仅新增设计文档和进度记录，未修改前后端业务代码。
+  - 影响范围：仅影响后续运费促销接入订单模拟的实现口径；当前订单模拟、订单结算、我的订单页面和运费促销活动行为不变。
+
+### 修复
+- 修复 Shopee 运费促销创建页自定义期限结束时间默认值。
+  - 涉及文件：`backend/apps/api-gateway/app/api/routes/shopee.py`、`frontend/src/modules/shopee/views/ShippingFeePromotionCreateView.tsx`、`docs/设计文档/47-Shopee运费促销创建前后端数据库Redis实现设计.md`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：创建页 bootstrap 现在同时返回基于当前对局游戏时间生成的默认开始时间和默认结束时间；前端结束时间读取 `form.end_at`，并保留游戏时间字段兜底，避免自定义期限结束日期选择器为空。
+  - 游戏时间口径：自定义期限开始和结束日期选择器均展示后端返回的对局游戏时间，提交后仍由后端按游戏时间解析和判断。
+  - 影响范围：影响 `/shopee/marketing/shipping-fee-promotion/create` 自定义期限默认显示；不改变页面布局、样式、物流渠道、预算或层级规则。
+
+### 新增
+- 接入 Shopee 运费促销创建与列表前后端数据库 Redis 闭环。
+  - 涉及文件：`backend/apps/api-gateway/app/models.py`、`backend/apps/api-gateway/app/db.py`、`backend/apps/api-gateway/app/api/routes/shopee.py`、`frontend/src/modules/shopee/ShopeePage.tsx`、`frontend/src/modules/shopee/views/ShippingFeePromotionView.tsx`、`frontend/src/modules/shopee/views/ShippingFeePromotionCreateView.tsx`、`docs/设计文档/47-Shopee运费促销创建前后端数据库Redis实现设计.md`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：新增运费促销活动主表、适用物流渠道表和门槛层级表 ORM、历史库索引保障、表注释和字段注释；新增创建页 bootstrap、创建提交和列表接口；接入 Redis bootstrap/list 缓存、创建限流和创建成功后的列表/订单模拟活动缓存失效；前端在不调整用户手动样式布局的前提下，将创建页和列表页接入真实接口。
+  - 游戏时间口径：创建页默认开始时间、自定义期限提交与解析、活动状态判断和列表活动时间展示均使用对局游戏时间，不使用真实世界当前时间。
+  - 验证结果：`python -m py_compile backend/apps/api-gateway/app/models.py backend/apps/api-gateway/app/db.py backend/apps/api-gateway/app/api/routes/shopee.py` 通过；`ShippingFeePromotionView.tsx`、`ShippingFeePromotionCreateView.tsx`、`ShopeePage.tsx` 前端 LSP 诊断无错误。
+  - 影响范围：影响 `/shopee/marketing/shipping-fee-promotion/create` 运费促销创建和 `/shopee/marketing/shipping-fee-promotion` 列表展示；本次不实现编辑、结束、删除、复制和订单模拟真实运费减免生效。
+
+### 变更
+- 补充 Shopee 运费促销设计中与现有订单运费、平台补贴和运输时长链路的边界。
+  - 涉及文件：`docs/设计文档/47-Shopee运费促销创建前后端数据库Redis实现设计.md`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：明确现有“我的订单/发货”链路已通过 `shipping_channel`、`distance_km`、`calc_shipping_cost(...)`、`calc_eta(...)`、`shipping_cost_amount` 和 `shipping_subsidy_amount` 处理原始物流成本、平台补贴和运输时长；运费促销后续只在原始运费基础上计算买家侧减免、卖家促销预算消耗和订单归因，不改变发货时限、配送线路或运输时长。
+  - 游戏时间口径：运费促销活动期限、命中、预算扣减和统计回写仍使用对局游戏时间；原有运输时长继续按发货游戏时间与物流距离/渠道计算。
+  - 验证结果：本次仅更新设计文档和进度记录，未修改前后端业务代码。
+  - 影响范围：影响后续运费促销接入订单模拟和结算设计口径；当前订单运费、运输中展示、平台补贴和运费促销页面行为不变。
+
+### 新增
+- 新增 Shopee 运费促销创建前后端数据库 Redis 实现设计文档。
+  - 涉及文件：`docs/设计文档/47-Shopee运费促销创建前后端数据库Redis实现设计.md`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：在查看用户手动完成的 `ShippingFeePromotionView.tsx` 与 `ShippingFeePromotionCreateView.tsx` 前端布局后，设计运费促销列表、创建页 bootstrap、创建提交、数据库主表/渠道表/层级表、Redis 缓存、创建后缓存失效和后续订单模拟预留口径。
+  - 游戏时间口径：活动默认开始时间、自定义期限、状态判断、订单模拟命中和统计回写均使用对局游戏时间，不使用真实世界当前时间。
+  - 验证结果：已创建并检查设计文档路径；本次仅新增设计文档和进度记录，未修改前后端业务代码。
+  - 影响范围：仅新增运费促销后续实现设计与进度记录；当前运费促销页面、接口、数据库和订单模拟行为不变。
+
+### 优化
+- 接入 Shopee 代金券列表底部分页器功能。
+  - 涉及文件：`frontend/src/modules/shopee/views/ShopVoucherView.tsx`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：在不调整分页器样式和布局的前提下，新增页码状态、跳转页状态和接口分页参数；列表请求固定 `page_size=10`，上一页、下一页、页码按钮和 Go 跳转均重新加载对应页数据；切换状态标签和查询时回到第 1 页。
+  - 验证结果：`ShopVoucherView.tsx` 前端 LSP 诊断无错误；本次涉及文件 `git diff --check` 通过。
+  - 影响范围：影响 `/shopee/marketing/vouchers` 代金券列表数据分页展示；不改变代金券列表表格、卡片、筛选栏或分页器视觉样式。
+
+### 新增
+- 接入 Shopee 关注礼代金券对订单模拟的后端影响。
+  - 涉及文件：`backend/apps/api-gateway/app/models.py`、`backend/apps/api-gateway/app/db.py`、`backend/apps/api-gateway/app/services/shopee_order_simulator.py`、`frontend/src/modules/shopee/views/MyOrdersView.tsx`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：新增模拟买家关注状态表 `shopee_buyer_follow_states` 的 ORM、历史库保障、表注释和字段注释；订单模拟加载当前游戏 tick 下可领取的 `follow_voucher`，按买家画像模拟首次关注并写入关注状态，按 `valid_days_after_claim` 判断个人有效期，纳入统一最优券排序并写入订单级 voucher 归因、活动统计和我的订单代金券标注。
+  - 游戏时间口径：关注礼领取窗口、首次关注时间、个人有效期、订单创建时间、归因和统计回写均使用订单模拟 tick 的游戏时间，不使用服务器真实当前时间。
+  - 验证结果：`python -m py_compile backend/apps/api-gateway/app/models.py backend/apps/api-gateway/app/db.py backend/apps/api-gateway/app/services/shopee_order_simulator.py` 通过。
+  - 影响范围：影响 Shopee 订单模拟生成订单时关注礼代金券的下单概率、买家实付、订单级代金券归因、关注状态持久化、关注礼活动统计和订单列表展示；不新增真实 Shopee 关注接口或买家个人券实例表。
+
+### 变更
+- 补充 Shopee 关注礼代金券接入订单模拟影响设计中的买家关注状态表口径。
+  - 涉及文件：`docs/设计文档/46-Shopee关注礼代金券接入订单模拟影响设计.md`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：设计后续新增 `shopee_buyer_follow_states`，按 `(run_id, user_id, buyer_name)` 持久化模拟买家是否已关注、首次关注游戏时间、关注来源和来源活动；关注礼领取资格先查关注状态，未关注买家才按概率首次关注并领取，已关注买家不再重复作为新关注者领取关注礼。
+  - 游戏时间口径：首次关注时间、领取窗口、个人有效期、下单使用和统计回写均使用订单模拟 tick 的游戏时间。
+  - 验证结果：本次仅更新设计文档和进度记录，未修改前后端业务代码。
+  - 影响范围：影响后续关注礼接入订单模拟的数据库与资格判定设计；当前实现行为不变。
+
+### 新增
+- 新增 Shopee 关注礼代金券接入订单模拟影响设计文档。
+  - 涉及文件：`docs/设计文档/46-Shopee关注礼代金券接入订单模拟影响设计.md`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：设计 `follow_voucher` 后续接入订单模拟的逻辑口径，覆盖买家关注/领取资格模拟、领取后 `valid_days_after_claim` 个游戏天有效期、下单概率 bonus、订单实付扣减、订单级 voucher 归因、统计回写、Redis 缓存失效和日志字段。
+  - 游戏时间口径：领取窗口、个人有效期、下单使用和统计回写均使用订单模拟 tick 的游戏时间，不使用服务器真实当前时间。
+  - 验证结果：已创建并检查设计文档路径；本次仅文档设计，未运行前后端构建。
+  - 影响范围：仅新增设计文档与进度记录；尚未修改订单模拟、数据库、后端接口或前端页面。
+
+### 新增
+- 接入 Shopee 代金券订单页面前后端数据库 Redis 闭环。
+  - 涉及文件：`backend/apps/api-gateway/app/api/routes/shopee.py`、`frontend/src/modules/shopee/ShopeePage.tsx`、`frontend/src/modules/shopee/views/VoucherOrdersView.tsx`、`docs/设计文档/45-Shopee代金券订单页面前后端数据库Redis实现设计.md`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：新增代金券订单接口 `GET /shopee/runs/{run_id}/marketing/vouchers/{voucher_type}/{campaign_id}/orders`，返回活动基本信息、订单总数、订单列表和分页；复用 `shopee_orders` 订单级代金券归因字段与 `shopee_order_items` 商品快照，不新增数据库表；新增代金券订单 Redis 缓存并纳入订单缓存失效链路；前端在不改变用户手动布局的前提下将 `VoucherOrdersView` 接入真实接口数据。
+  - 游戏时间口径：代金券期限和订单创建时间均由后端按游戏时间格式化后返回，页面不使用真实世界时间展示。
+  - 验证结果：`VoucherOrdersView.tsx`、`ShopeePage.tsx` 前端 LSP 诊断无错误；`python -m py_compile backend/apps/api-gateway/app/api/routes/shopee.py` 通过；`git diff --check` 通过。
+  - 影响范围：影响 `/shopee/marketing/vouchers` 操作列“订单”入口、代金券订单数据接口和订单缓存失效；页面布局保留现有 1360px 无左侧菜单栏样式。
+
+### 新增
+- 接入 Shopee 代金券订单空白页。
+  - 涉及文件：`frontend/src/modules/shopee/ShopeePage.tsx`、`frontend/src/modules/shopee/components/Header.tsx`、`frontend/src/modules/shopee/views/ShopVoucherView.tsx`、`frontend/src/modules/shopee/views/VoucherOrdersView.tsx`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：新增 `VoucherOrdersView` 作为 1360px 宽空白内容页；代金券列表操作列“订单”点击后跳转到 `/shopee/marketing/vouchers/orders?voucher_type=...&campaign_id=...`；该页面不显示左侧菜单栏，并在顶部面包屑显示“营销中心 > 代金券 > 代金券订单”。
+  - 验证结果：收尾阶段执行前端 LSP 诊断与空白字符校验。
+  - 影响范围：影响 `/shopee/marketing/vouchers` 中已结束代金券操作列“订单”入口；仅新增空白承载页，不接入订单数据、后端接口或业务逻辑。
+
+## 2026-05-08
+
+### 新增
+- 接入 Shopee 代金券列表只读详情页。
+  - 涉及文件：`backend/apps/api-gateway/app/api/routes/shopee.py`、`frontend/src/modules/shopee/ShopeePage.tsx`、`frontend/src/modules/shopee/views/ShopVoucherView.tsx`、`frontend/src/modules/shopee/views/ShopVoucherCreateView.tsx`、`frontend/src/modules/shopee/views/ProductVoucherCreateView.tsx`、`frontend/src/modules/shopee/views/PrivateVoucherCreateView.tsx`、`frontend/src/modules/shopee/views/LiveVoucherCreateView.tsx`、`frontend/src/modules/shopee/views/VideoVoucherCreateView.tsx`、`frontend/src/modules/shopee/views/FollowVoucherCreateView.tsx`、`frontend/src/modules/shopee/views/ShopVoucherDetailView.tsx`、`frontend/src/modules/shopee/views/ProductVoucherDetailView.tsx`、`frontend/src/modules/shopee/views/PrivateVoucherDetailView.tsx`、`frontend/src/modules/shopee/views/LiveVoucherDetailView.tsx`、`frontend/src/modules/shopee/views/VideoVoucherDetailView.tsx`、`frontend/src/modules/shopee/views/FollowVoucherDetailView.tsx`、`frontend/src/modules/shopee/components/Header.tsx`、`frontend/src/modules/shopee/views/ShopeeAdsView.tsx`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：新增统一代金券详情接口，按 `voucher_type` 与活动 ID 返回创建时保存的表单字段、状态、统计和指定商品快照；代金券列表“详情”操作接入 `/shopee/marketing/vouchers/detail` 前端路由；新增 6 个券类型专属详情页，每个详情页复用对应创建页布局并灌入详情数据，强制只读且禁用输入、商品选择、提交按钮和日期变更；详情模式不显示“历史对局回溯模式”提示；顶部面包屑按券类型显示“店铺/商品/专属/直播/视频/关注礼代金券详情”。
+  - 验证结果：`ShopeePage.tsx`、6 个创建页与 6 个详情页前端 LSP 诊断无错误；`python -m py_compile backend/apps/api-gateway/app/api/routes/shopee.py` 通过；`git diff --check` 通过。
+  - 影响范围：影响 `/shopee/marketing/vouchers` 代金券列表操作列“详情”入口和新增详情接口；只读查看创建时填写内容，不接入编辑、删除、停止或复制。
+
+### 优化
+- 提高 Shopee 直播/视频代金券内容场景资格命中率。
+  - 涉及文件：`backend/apps/api-gateway/app/services/shopee_order_simulator.py`、`docs/设计文档/44-Shopee直播视频代金券接入订单模拟影响设计.md`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：在保留内容场景资格模拟口径的前提下，提高 `live_voucher` 与 `video_voucher` 的基础触达概率、画像权重和概率上下限；直播资格概率限制调整为 `clamp(score, 0.096, 0.66)`，视频资格概率限制调整为 `clamp(score, 0.084, 0.576)`，降低手动测试中连续未命中的概率。
+  - 验证结果：`python -m py_compile backend/apps/api-gateway/app/services/shopee_order_simulator.py` 通过；本次涉及文件 `git diff --check` 通过。
+  - 影响范围：影响订单模拟中直播/视频代金券进入可用候选池的概率；不改变活动时间、商品范围、门槛、每单最多一张最优券、订单字段归因或统计回写规则。
+
+### 新增
+- 接入 Shopee 直播/视频代金券对订单模拟的后端影响。
+  - 涉及文件：`backend/apps/api-gateway/app/services/shopee_order_simulator.py`、`frontend/src/modules/shopee/views/MyOrdersView.tsx`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：订单模拟加载当前游戏 tick 下进行中的 `live_voucher` 与 `video_voucher`，按买家画像和优惠力度模拟直播/视频内容场景触达资格并在单次模拟中缓存结果；直播/视频券支持全部商品/指定商品适用范围、买家限用、总用量、门槛、限时抢购排除，并与店铺/商品/专属券进入统一最优券候选池；订单生成时扣减买家实付、保存订单级 voucher 快照、回写对应活动统计，并在 `buyer_journeys` 顶层保留预览候选、资格、命中和优惠日志。
+  - 游戏时间口径：直播/视频券开始/结束判断使用订单模拟传入的 `tick_time` 游戏时间，不使用真实世界当前时间判断活动是否生效；资格判定、用券发生、日志和统计回写均随本次订单模拟 tick。
+  - 验证结果：`python -m py_compile backend/apps/api-gateway/app/services/shopee_order_simulator.py` 通过；`MyOrdersView.tsx` 前端 LSP 诊断无错误；本次涉及文件 `git diff --check` 通过。
+  - 影响范围：影响 Shopee 订单模拟生成订单时直播/视频代金券的下单概率、买家实付、订单级代金券归因、直播/视频券活动统计和订单列表展示；不新增买家个人券实例、直播/视频观看记录、领取记录或真实 Shopee 直播/视频接口。
+
+
+### 新增
+- 新增 Shopee 直播/视频代金券接入订单模拟影响设计文档。
+  - 涉及文件：`docs/设计文档/44-Shopee直播视频代金券接入订单模拟影响设计.md`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：合并设计 `live_voucher` 与 `video_voucher` 接入订单模拟的内容场景口径，明确第一版不做真实直播/视频观看、领券记录或个人券实例，而是按买家画像模拟直播/视频内容触达资格；所有开始/结束、资格判定、用券发生、日志和统计回写均使用订单模拟 tick 的游戏时间；直播/视频券与店铺、商品、专属券进入统一最优券候选池，同额优先级为商品代金券 > 直播代金券 > 视频代金券 > 专属代金券 > 店铺代金券。
+  - 验证结果：已创建并检查设计文档路径；本次仅文档设计，未运行前后端构建。
+  - 影响范围：仅新增设计文档与进度记录；尚未改动订单模拟、数据库字段、后端接口或前端展示。
+
+### 新增
+- 接入 Shopee 专属代金券对订单模拟的后端影响。
+  - 涉及文件：`backend/apps/api-gateway/app/services/shopee_order_simulator.py`、`frontend/src/modules/shopee/views/MyOrdersView.tsx`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：订单模拟加载当前游戏 tick 下进行中的 `private_voucher`，按模拟指定人群方案判断买家专属资格并在单次模拟中缓存结果；专属券支持全部商品/指定商品适用范围、买家限用、总用量、门槛、限时抢购排除，并与店铺/商品券进入统一最优券候选池；订单生成时扣减买家实付、保存订单级 voucher 快照、回写专属券统计，并在 `buyer_journeys` 中记录资格、候选、命中和优惠信息；我的订单买家实付列补充“专属代金券”标注。
+  - 游戏时间口径：专属券开始/结束判断使用订单模拟传入的 `tick_time` 游戏时间，不使用真实世界当前时间判断活动是否生效；资格判定、用券发生、日志和统计回写均随本次订单模拟 tick。
+  - 验证结果：`python -m py_compile backend/apps/api-gateway/app/services/shopee_order_simulator.py` 通过；`MyOrdersView.tsx` 前端 LSP 诊断无错误；已用 Grep 检查 `private_voucher`、`private_access_cache`、游戏 tick 传参和订单列表标注接入点；本次涉及文件 `git diff --check` 通过。
+  - 影响范围：影响 Shopee 订单模拟生成订单时专属代金券的下单概率、买家实付、订单级代金券归因、专属券活动统计和订单列表展示；不新增买家个人券实例、手动买家名单、买家分组、领取记录或真实 Shopee 领券接口。
+
+### 新增
+- 新增 Shopee 专属代金券接入订单模拟影响设计文档。
+  - 涉及文件：`docs/设计文档/43-Shopee专属代金券接入订单模拟影响设计.md`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：设计 `private_voucher` 接入订单模拟的逻辑口径，明确专属券需先判断买家资格；第一版采用方案 A，不新增个人券实例、不做手动买家名单/买家分组/发券记录，按买家画像、优惠力度模拟被私域触达的指定人群，并在单次模拟 tick 内稳定判定资格；专属券与店铺/商品券进入统一最优券候选池，每单最多使用一张券且存在可用券时必须使用最优券；同额优先级为商品代金券 > 专属代金券 > 店铺代金券。
+  - 验证结果：已创建并检查设计文档路径；本次仅文档设计，未运行前后端构建。
+  - 影响范围：仅新增设计文档与进度记录；尚未改动订单模拟、数据库字段、后端接口或前端展示。
+
+### 优化
+- 在 Shopee 我的订单列表买家实付列展示已使用代金券标注。
+  - 涉及文件：`backend/apps/api-gateway/app/api/routes/shopee.py`、`frontend/src/modules/shopee/views/MyOrdersView.tsx`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：订单列表与订单详情响应补充订单级 voucher 字段；前端订单列表 `OrderRow` 增加代金券字段，并在买家实付列按既有营销活动标注样式展示“店铺代金券/商品代金券：名称 -抵扣金额”。
+  - 影响范围：影响 `/shopee/orders` 我的订单列表中已用券订单的买家实付列展示，不改变订单模拟、实付计算或代金券统计逻辑。
+
+### 新增
+- 接入 Shopee 店铺/商品代金券对订单模拟的后端影响。
+  - 涉及文件：`backend/apps/api-gateway/app/models.py`、`backend/apps/api-gateway/app/db.py`、`backend/apps/api-gateway/app/services/shopee_order_simulator.py`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：新增 `ShopeeOrder` 订单级 voucher 字段与历史库补字段/字段注释逻辑；订单模拟加载当前游戏 tick 下进行中的店铺代金券和商品代金券，按买家限用、用量、门槛和商品范围选择最优可用券；代金券提升价格敏感买家的下单概率，订单生成时每单最多使用一张券且存在可用券时必须使用一张最优可用券；订单实付扣减代金券优惠并保存 voucher 快照，同时回写代金券 `used_count/order_count/sales_amount/buyer_count` 和 buyer_journeys 日志。
+  - 验证结果：`python -m py_compile backend/apps/api-gateway/app/models.py backend/apps/api-gateway/app/db.py backend/apps/api-gateway/app/services/shopee_order_simulator.py` 通过；已用 Grep 检查关键 voucher 字段、补字段函数与订单模拟接入点；自查修正了加价购预览小计变化时 voucher bonus 可能重复叠加的问题；已修复 `buyer_journeys` 中代金券候选携带 `datetime` 导致 `json.dumps(debug_payload)` 报错的问题，并用本地 run_id=6/user_id=3/tick=2026-05-08 10:32:03 验证可生成用券订单。
+  - 影响范围：影响 Shopee 订单模拟生成订单时的下单概率、买家实付、订单级代金券归因和店铺/商品代金券统计；限时抢购订单仍不叠加代金券；前端订单展示暂未新增代金券字段展示。
+
+### 新增
+- 新增 Shopee 店铺/商品代金券接入订单模拟影响设计文档。
+  - 涉及文件：`docs/设计文档/42-Shopee店铺商品代金券接入订单模拟影响设计.md`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：设计 `shop_voucher` 与 `product_voucher` 接入订单模拟的逻辑口径，明确活动开始、结束、命中和使用统计均以对局游戏时间 tick 判断；定义订单级优惠、不改商品行单价、每单最多使用一张券且存在可用券时必须使用一张最优可用券、商品券 listing/variant 匹配、买家限用、下单概率 bonus、订单级 voucher 快照字段、统计回写和日志记录方案。
+  - 口径修正：代金券提升价格敏感买家的下单意愿；下单概率 bonus 只影响是否下单，一旦订单生成，若存在生效可用券，则必须使用一张最优可用券，不再随机判断是否用券。
+  - 验证结果：已创建并检查设计文档路径；本次仅文档设计，未运行前后端构建。
+  - 影响范围：仅新增设计文档与进度记录；尚未改动订单模拟、数据库字段、后端接口或前端展示。
+
+## 2026-05-07
+
+### 新增
+- 接入 Shopee 关注礼代金券创建前后端数据库 Redis 闭环。
+  - 涉及文件：`backend/apps/api-gateway/app/models.py`、`backend/apps/api-gateway/app/db.py`、`backend/apps/api-gateway/app/api/routes/shopee.py`、`frontend/src/modules/shopee/ShopeePage.tsx`、`frontend/src/modules/shopee/views/FollowVoucherCreateView.tsx`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：新增 `shopee_follow_voucher_campaigns` ORM、表注释、字段注释和历史库补字段逻辑；新增关注礼代金券创建页 bootstrap 与创建提交接口；扩展统一代金券列表兼容 `follow_voucher`；接入 Redis bootstrap/列表缓存失效与创建限流；前端关注礼代金券创建页在保留用户手动布局和右侧预览轮播的前提下接入后端 bootstrap、游戏时间领取期限、表单校验和创建提交。
+  - 验证结果：`python -m py_compile backend/apps/api-gateway/app/models.py backend/apps/api-gateway/app/db.py backend/apps/api-gateway/app/api/routes/shopee.py` 通过；`FollowVoucherCreateView.tsx` 与 `ShopeePage.tsx` 前端 LSP 诊断无错误；`npm run build --prefix frontend` 通过（Vite 仅提示既有 chunk 体积 warning）；本次涉及文件 `git diff --check` 通过。全仓 `git diff --check` 受既有 `ShopeeAdsView.tsx` 尾随空格影响未通过。
+  - 影响范围：影响 `/shopee/marketing/vouchers/follow-create` 关注礼代金券创建流程和 `/shopee/marketing/vouchers` 列表展示；本次不接入买家关注发券、买家个人 7 个游戏天有效期滚动计算、订单命中、归因、详情/编辑/删除/停止/复制。
+
+### 新增
+- 新增 Shopee 关注礼代金券创建前后端数据库 Redis 实现设计文档。
+  - 涉及文件：`docs/设计文档/41-Shopee关注礼代金券创建前后端数据库Redis实现设计.md`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：设计 `/shopee/marketing/vouchers/follow-create` 关注礼代金券创建能力，明确前端样式和布局沿用用户现有页面；领取期限必须由后端按对局游戏时间初始化，前端 `DateTimePicker` 展示和提交游戏时间，不展示真实世界时间；有效期限固定为领取后 7 个游戏天；同步设计前端 bootstrap/创建提交接口、后端接口、数据库表 `shopee_follow_voucher_campaigns` 与 Redis 缓存/限流/失效策略。
+  - 验证结果：已创建并检查设计文档路径；本次仅文档设计，未运行前后端构建。
+  - 影响范围：仅新增设计文档与进度记录；尚未改动关注礼代金券前后端业务代码、数据库或 Redis 实现。
+
+### 新增
+- 接入 Shopee 右侧栏 Chat Messages 空白抽屉。
+  - 涉及文件：`frontend/src/modules/shopee/components/RightSidebar.tsx`、`frontend/src/modules/shopee/components/ChatMessagesDrawer.tsx`、`frontend/src/modules/shopee/ShopeePage.tsx`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：新增 Chat Messages 右侧空白抽屉，样式模仿现有通知抽屉的展开宽度、标题区、刷新/收起图标和空状态；右侧栏 Chat Messages 图标改为可点击按钮，点击后打开对应抽屉并与通知抽屉互斥展开。
+  - 验证结果：`RightSidebar.tsx`、`ChatMessagesDrawer.tsx`、`ShopeePage.tsx` 前端 LSP 诊断无错误；收尾阶段执行 `git diff --check`。
+  - 影响范围：仅影响 Shopee 页面右侧栏 Chat Messages 图标点击后的前端空白抽屉展示；不接入聊天数据、未读数或后端接口。
+
+### 新增
+- 接入 Shopee 视频代金券创建前后端数据库 Redis 闭环。
+  - 涉及文件：`backend/apps/api-gateway/app/models.py`、`backend/apps/api-gateway/app/db.py`、`backend/apps/api-gateway/app/api/routes/shopee.py`、`frontend/src/modules/shopee/ShopeePage.tsx`、`frontend/src/modules/shopee/views/VideoVoucherCreateView.tsx`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：新增 `shopee_video_voucher_campaigns` 与 `shopee_video_voucher_items` ORM、表注释、字段注释和历史库补字段逻辑；新增视频代金券创建页 bootstrap、可选商品、创建提交接口；扩展代金券列表兼容 `video_voucher`；接入 Redis bootstrap/可选商品/列表缓存失效与创建限流；前端视频代金券创建页接入后端 bootstrap、商品选择弹窗、已选商品表格、游戏时间初始化和创建提交，视频代金券内部编号由后端生成，不要求前端输入代金券代码。
+  - 验证结果：`python -m py_compile backend/apps/api-gateway/app/models.py backend/apps/api-gateway/app/db.py backend/apps/api-gateway/app/api/routes/shopee.py` 通过；`VideoVoucherCreateView.tsx` 与 `ShopeePage.tsx` 前端 LSP 诊断无错误；收尾阶段执行 `git diff --check`。
+  - 影响范围：影响 `/shopee/marketing/vouchers/video-create` 视频代金券创建流程和 `/shopee/marketing/vouchers` 列表展示；本次不接入 Shopee Video 领券、视频场景下单命中、订单归因、详情/编辑/删除/停止/复制或上传商品列表。
+
+### 新增
+- 新增 Shopee 视频代金券创建前后端数据库 Redis 实现设计文档。
+  - 涉及文件：`docs/设计文档/40-Shopee视频代金券创建前后端数据库Redis实现设计.md`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：设计 `/shopee/marketing/vouchers/video-create` 视频代金券创建能力，明确前端样式和布局沿用用户现有页面；代金券使用期限和提前展示时间必须由后端按对局游戏时间初始化，前端 `DateTimePicker` 展示和提交游戏时间；“添加商品”参考商品代金券、专属代金券和直播代金券的商品选择弹窗、已选商品表格和多变体展开提交逻辑；同步设计前端 bootstrap/可选商品/创建提交接口、后端接口、数据库表 `shopee_video_voucher_campaigns`/`shopee_video_voucher_items` 与 Redis 缓存/限流/失效策略。
+  - 影响范围：仅新增设计文档与进度记录；尚未改动视频代金券前后端业务代码、数据库或 Redis 实现。
+
+### 新增
+- 接入 Shopee 直播代金券创建前后端数据库 Redis 闭环。
+  - 涉及文件：`backend/apps/api-gateway/app/models.py`、`backend/apps/api-gateway/app/db.py`、`backend/apps/api-gateway/app/api/routes/shopee.py`、`frontend/src/modules/shopee/ShopeePage.tsx`、`frontend/src/modules/shopee/views/LiveVoucherCreateView.tsx`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：新增 `shopee_live_voucher_campaigns` 与 `shopee_live_voucher_items` ORM、表注释、字段注释和历史库补字段逻辑；新增直播代金券创建页 bootstrap、可选商品、创建提交接口；扩展代金券代码检查与列表兼容 `live_voucher`；接入 Redis bootstrap/可选商品/代码检查/列表缓存失效与创建限流；前端直播代金券创建页接入后端 bootstrap、代码校验、商品选择弹窗、已选商品表格、游戏时间初始化和创建提交。
+  - 验证结果：`LiveVoucherCreateView.tsx` 与 `ShopeePage.tsx` 前端 LSP 诊断无错误；后端语法与空白字符校验见本次最终验证。
+  - 影响范围：影响 `/shopee/marketing/vouchers/live-create` 直播代金券创建流程、`/shopee/marketing/vouchers` 列表展示和代金券代码检查接口；本次不接入直播间领券、直播场景下单命中、订单归因、详情/编辑/删除/停止/复制或上传商品列表。
+
+### 新增
+- 新增 Shopee 直播代金券创建前后端数据库 Redis 实现设计文档。
+  - 涉及文件：`docs/设计文档/39-Shopee直播代金券创建前后端数据库Redis实现设计.md`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：设计 `/shopee/marketing/vouchers/live-create` 直播代金券创建能力，明确前端样式和布局沿用用户现有页面；代金券使用期限和提前展示时间必须由后端按对局游戏时间初始化，前端 `DateTimePicker` 展示和提交游戏时间；“添加商品”参考商品代金券当前按钮、商品选择弹窗、已选商品表格和多变体展开提交逻辑；同步设计前端 bootstrap/可选商品/代码检查/创建提交接口、后端接口、数据库表 `shopee_live_voucher_campaigns`/`shopee_live_voucher_items` 与 Redis 缓存/限流/失效策略。
+  - 影响范围：仅新增设计文档与进度记录；尚未改动直播代金券前后端业务代码、数据库或 Redis 实现。
+
+### 新增
+- 接入 Shopee 营销中心运费促销空白页与创建空白页。
+  - 涉及文件：`frontend/src/modules/shopee/ShopeePage.tsx`、`frontend/src/modules/shopee/components/Header.tsx`、`frontend/src/modules/shopee/components/Sidebar.tsx`、`frontend/src/modules/shopee/views/MarketingCentreView.tsx`、`frontend/src/modules/shopee/views/ShippingFeePromotionView.tsx`、`frontend/src/modules/shopee/views/ShippingFeePromotionCreateView.tsx`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：新增 `/shopee/marketing/shipping-fee-promotion` 前端路由和运费促销空白页；营销中心“运费促销”工具卡可进入该页面；页面按用户手动优化后的运费促销列表布局保留 Create Now 入口；点击 Create Now 可进入 `/shopee/marketing/shipping-fee-promotion/create` 创建空白页，创建页使用 1360px 宽度且不显示左侧菜单栏；顶部面包屑显示“营销中心 > 运费促销 > 创建运费促销”。
+  - 验证结果：`ShopeePage.tsx`、`Header.tsx`、`Sidebar.tsx`、`MarketingCentreView.tsx`、`ShippingFeePromotionView.tsx`、`ShippingFeePromotionCreateView.tsx` 前端 LSP 诊断无错误；`git diff --check` 通过。按用户要求未执行 `npm run build`，未执行 init。
+  - 影响范围：仅新增 `/shopee/marketing/shipping-fee-promotion` 与 `/shopee/marketing/shipping-fee-promotion/create` 前端占位页和导航入口；不接入后端接口、数据库、Redis 或营销业务逻辑。
+
+### 新增
+- 接入 Shopee 专属代金券创建前后端数据库 Redis 闭环。
+  - 涉及文件：`backend/apps/api-gateway/app/models.py`、`backend/apps/api-gateway/app/db.py`、`backend/apps/api-gateway/app/api/routes/shopee.py`、`frontend/src/modules/shopee/ShopeePage.tsx`、`frontend/src/modules/shopee/views/PrivateVoucherCreateView.tsx`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：新增 `shopee_private_voucher_campaigns` 与 `shopee_private_voucher_items` ORM、表注释、字段注释和历史库补字段逻辑；新增专属代金券创建页 bootstrap、可选商品、创建提交接口；扩展代金券代码检查与列表兼容 `private_voucher`；接入 Redis bootstrap/可选商品/代码检查/列表缓存失效与创建限流；前端专属代金券创建页接入后端 bootstrap、代码校验、商品选择弹窗、已选商品表格、游戏时间初始化和创建提交。
+  - 验证结果：`python -m py_compile backend/apps/api-gateway/app/models.py backend/apps/api-gateway/app/db.py backend/apps/api-gateway/app/api/routes/shopee.py` 通过；`PrivateVoucherCreateView.tsx` 与 `ShopeePage.tsx` 前端 LSP 诊断无错误；`git diff --check` 通过。按用户要求未执行 `npm run build`，未执行 init。
+  - 影响范围：影响 `/shopee/marketing/vouchers/private-create` 专属代金券创建流程、`/shopee/marketing/vouchers` 列表展示和代金券代码检查接口；本次不接入订单模拟命中专属代金券、买家领取、详情/编辑/删除/停止/复制或上传商品列表。
+
+### 新增
+- 新增 Shopee 专属代金券创建前后端数据库 Redis 实现设计文档。
+  - 涉及文件：`docs/设计文档/38-Shopee专属代金券创建前后端数据库Redis实现设计.md`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：设计 `/shopee/marketing/vouchers/private-create` 专属代金券创建能力，明确前端样式和布局沿用现有页面；代金券使用期限必须由后端按对局游戏时间初始化，前端日期选择器不显示真实世界当前时间；“添加商品”参考商品代金券当前按钮、弹窗、已选商品表格和多变体展开提交逻辑；同步设计前端接口、后端 bootstrap/可选商品/创建接口、统一代码检查、数据库表 `shopee_private_voucher_campaigns`/`shopee_private_voucher_items` 与 Redis 缓存/限流/失效策略。
+  - 影响范围：仅新增设计文档与进度记录；尚未改动专属代金券前后端业务代码、数据库或 Redis 实现。
+
+### 修复
+- 补充 Shopee 商品代金券明细表 `product_id` 历史库漂移修复。
+  - 涉及文件：`backend/apps/api-gateway/app/db.py`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：核查本地 Docker MySQL `cbec_sim.shopee_product_voucher_items` 实际表结构，确认当前表已存在 `product_id` 字段；同时在 `_ensure_shopee_product_voucher_tables()` 中补充旧库缺少 `product_id` 时的自动增补逻辑，避免其他环境商品代金券明细缺少源商品 ID 字段。
+  - 验证结果：`python -m py_compile backend/apps/api-gateway/app/models.py backend/apps/api-gateway/app/db.py backend/apps/api-gateway/app/api/routes/shopee.py` 通过。
+  - 影响范围：仅影响商品代金券明细表历史库结构补齐逻辑；不改变当前已存在字段的 Docker MySQL 表，也不改变前端页面或创建接口入参。
+
+### 优化
+- 优化 Shopee 商品代金券创建页适用商品展示。
+  - 涉及文件：`frontend/src/modules/shopee/views/ProductVoucherCreateView.tsx`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：商品代金券添加商品后，适用商品区域不再只在按钮上显示数量，而是展示商品表格；表格包含商品主图、名称、ID/变体数量、原价、库存和删除操作，表头对齐官方 `Products / Original Price / Stock / Action` 结构；保留右侧 `Add Products` 入口用于继续追加商品。
+  - 验证结果：`npm run build --prefix frontend` 通过（Vite 仅提示既有 chunk 体积 warning）。
+  - 影响范围：仅影响 `/shopee/marketing/vouchers/product-create` 已选适用商品展示与删除交互；不改变商品选择弹窗、后端创建接口或订单模拟逻辑。
+
+### 修复
+- 修正 Shopee 商品代金券选中主商品后未提交变体与库存快照字段不兼容的问题。
+  - 涉及文件：`backend/apps/api-gateway/app/models.py`、`backend/apps/api-gateway/app/db.py`、`backend/apps/api-gateway/app/api/routes/shopee.py`、`frontend/src/modules/shopee/views/ProductVoucherCreateView.tsx`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：商品代金券可选商品接口返回主商品行时携带全部可售变体 ID；前端确认添加商品后，创建提交会将主商品自动展开为所有可售变体，避免只提交 `variant_id=null` 导致多变体商品创建失败；商品代金券明细库存快照 ORM、初始化补字段和字段注释改回兼容现有数据库的 `stock_snapshot` 字段，避免插入时报 `Field 'stock_snapshot' doesn't have a default value`。
+  - 验证结果：`python -m py_compile backend/apps/api-gateway/app/models.py backend/apps/api-gateway/app/db.py backend/apps/api-gateway/app/api/routes/shopee.py` 通过；`npm run build --prefix frontend` 通过（Vite 仅提示既有 chunk 体积 warning）。
+  - 影响范围：影响 `/shopee/marketing/vouchers/product-create` 添加商品与创建提交；不改变店铺代金券、商品代金券列表展示或订单模拟逻辑。
+
+### 修复
+- 修正 Shopee 代金券提前展示时间默认值使用真实时间的问题。
+  - 涉及文件：`frontend/src/modules/shopee/views/ShopVoucherCreateView.tsx`、`frontend/src/modules/shopee/views/ProductVoucherCreateView.tsx`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：店铺代金券与商品代金券创建页勾选“提前展示代金券”时，如后端未返回 `display_start_at`，前端不再让日期选择器回落到浏览器真实当前时间，而是基于后端返回的对局游戏开始时间向前 1 小时生成游戏时间默认值；提前展示时间选择器继续以代金券开始游戏时间作为上限。
+  - 验证结果：`npm run build --prefix frontend` 通过（Vite 仅提示既有 chunk 体积 warning）。
+  - 影响范围：影响 `/shopee/marketing/vouchers/create` 与 `/shopee/marketing/vouchers/product-create` 的提前展示时间默认显示与提交口径；不改变后端解析、活动起止时间或订单模拟逻辑。
+
+### 新增
+- 接入 Shopee 商品代金券创建前后端数据库 Redis 闭环。
+  - 涉及文件：`backend/apps/api-gateway/app/models.py`、`backend/apps/api-gateway/app/db.py`、`backend/apps/api-gateway/app/api/routes/shopee.py`、`frontend/src/modules/shopee/views/ProductVoucherCreateView.tsx`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：对齐 `shopee_product_voucher_campaigns` 与 `shopee_product_voucher_items` ORM、表字段注释和历史库补字段逻辑；新增商品代金券创建页 bootstrap、可选商品、创建提交接口；扩展代金券代码检查为店铺/商品代金券共享唯一性校验；扩展代金券列表兼容商品代金券；接入 Redis 可选商品缓存、代码检查缓存、列表缓存失效与创建限流；前端商品代金券创建页在保留现有布局前提下接入接口数据、代码校验、表单校验和创建提交。
+  - 验证结果：`python -m py_compile backend/apps/api-gateway/app/models.py backend/apps/api-gateway/app/db.py backend/apps/api-gateway/app/api/routes/shopee.py` 通过；`npm run build --prefix frontend` 通过（Vite 仅提示既有 chunk 体积 warning）。
+  - 影响范围：影响 `/shopee/marketing/vouchers/product-create` 商品代金券创建流程、`/shopee/marketing/vouchers` 代金券列表展示和代金券代码检查接口；本次不接入订单模拟命中商品代金券、买家领取、详情/编辑/删除/停止/复制或上传商品列表。
+
+## 2026-05-06
+
+### 新增
+- 接入 Shopee 专属及内容代金券创建空白页。
+  - 涉及文件：`frontend/src/modules/shopee/ShopeePage.tsx`、`frontend/src/modules/shopee/components/Header.tsx`、`frontend/src/modules/shopee/components/Sidebar.tsx`、`frontend/src/modules/shopee/views/ShopVoucherView.tsx`、`frontend/src/modules/shopee/views/PrivateVoucherCreateView.tsx`、`frontend/src/modules/shopee/views/LiveVoucherCreateView.tsx`、`frontend/src/modules/shopee/views/VideoVoucherCreateView.tsx`、`frontend/src/modules/shopee/views/FollowVoucherCreateView.tsx`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：新增 `/shopee/marketing/vouchers/private-create`、`/shopee/marketing/vouchers/live-create`、`/shopee/marketing/vouchers/video-create`、`/shopee/marketing/vouchers/follow-create` 前端路由；代金券页对应“专属代金券 / 直播代金券 / 视频代金券 / 关注礼代金券”的“创建”按钮可进入各自独立页面；4 个新页面统一复用店铺代金券创建页的布局节奏，保留基础信息、奖励设置、展示与适用商品、底部操作区和右侧预览。
+  - 影响范围：仅新增四个代金券创建空白页与导航入口；暂不实现各类型专属表单字段、真实提交、后端接口、数据库或订单模拟影响。
+
+### 新增
+- 新增 Shopee 商品代金券创建前后端数据库 Redis 实现设计文档。
+  - 涉及文件：`docs/设计文档/37-Shopee商品代金券创建前后端数据库Redis实现设计.md`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：设计 `/shopee/marketing/vouchers/product-create` 商品代金券创建能力的前端接口对接、后端 bootstrap/可选商品/代码检查/创建/列表兼容接口、数据库表 `shopee_product_voucher_campaigns` 与 `shopee_product_voucher_items`、Redis bootstrap/可选商品/代码检查/列表缓存与创建限流；明确前端布局不再修改，所有创建页时间显示和提交均使用对局游戏时间，不展示真实世界时间。
+  - 影响范围：仅新增设计文档与进度记录；尚未改动商品代金券后端接口、数据库、Redis 或创建提交逻辑。
+
+### 新增
+- 接入 Shopee 商品代金券创建空白页与商品选择弹窗。
+  - 涉及文件：`frontend/src/modules/shopee/ShopeePage.tsx`、`frontend/src/modules/shopee/components/Header.tsx`、`frontend/src/modules/shopee/components/Sidebar.tsx`、`frontend/src/modules/shopee/views/ShopVoucherView.tsx`、`frontend/src/modules/shopee/views/ProductVoucherCreateView.tsx`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：新增 `/shopee/marketing/vouchers/product-create` 前端路由和商品代金券创建页；代金券页“商品代金券”的“创建”按钮可进入该页；页面对齐当前店铺代金券创建页布局，隐藏左侧菜单栏；“添加商品”按钮复用限时抢购创建页商品选择弹窗界面，包含选择商品/上传商品列表 Tab、分类下拉、搜索、仅显示可参与活动商品、商品表格、空状态和确认/取消，并临时记录已选商品数量。
+  - 影响范围：影响 `/shopee/marketing/vouchers/product-create` 前端页面和商品选择弹窗展示；商品数据暂复用现有单品折扣可选商品接口，不新增商品代金券后端接口、数据库、Redis、创建提交或订单模拟影响。
+
+### 新增
+- 接入 Shopee 店铺代金券创建前后端数据库 Redis 闭环。
+  - 涉及文件：`backend/apps/api-gateway/app/models.py`、`backend/apps/api-gateway/app/db.py`、`backend/apps/api-gateway/app/api/routes/shopee.py`、`frontend/src/modules/shopee/ShopeePage.tsx`、`frontend/src/modules/shopee/views/ShopVoucherCreateView.tsx`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：新增 `shopee_shop_voucher_campaigns` ORM/表字段注释；实现店铺代金券列表、创建页 bootstrap、代码可用性检查和创建提交接口；接入 Redis bootstrap/代码检查/列表缓存、创建限流和缓存失效；前端创建页改为读取后端游戏时间默认值、受控表单、代码校验和提交落库，并将提前展示具体时间提交到后端；代金券列表和表现面板改为读取真实接口数据。
+  - 影响范围：影响 `/shopee/marketing/vouchers` 与 `/shopee/marketing/vouchers/create` 店铺代金券管理和创建流程；代金券使用期限按对局游戏时间展示和提交，不再使用硬编码真实世界时间。订单模拟代金券归因仍待后续接入。
+
+### 优化
+- 同步 Shopee 店铺代金券创建设计文档中的奖励设置与新增接口。
+  - 涉及文件：`docs/设计文档/36-Shopee店铺代金券创建前后端数据库Redis实现设计.md`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：根据当前创建页奖励设置，补充固定金额/百分比折扣、百分比最大折扣金额“设置金额/无限制”、展示设置 `all_pages/specific_channels/code_only` 与特定渠道 `checkout_page`；新增 `GET /shopee/runs/{run_id}/marketing/vouchers/code/check` 代金券代码可用性检查接口设计，并同步请求/响应、校验规则、前端状态和初始化流程。
+  - 影响范围：仅影响店铺代金券实现设计文档与进度记录；尚未改动前后端业务代码或数据库结构。
+
+### 新增
+- 新增 Shopee 店铺代金券创建前后端数据库 Redis 实现设计文档。
+  - 涉及文件：`docs/设计文档/36-Shopee店铺代金券创建前后端数据库Redis实现设计.md`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：设计店铺代金券创建能力的前端接口对接、后端 bootstrap/创建/列表接口、数据库表 `shopee_shop_voucher_campaigns`、Redis bootstrap/列表/表现缓存与创建限流，以及后续订单模拟归因接入口径；明确前端样式和布局基本不改，重点完成接口与数据闭环。
+  - 影响范围：仅新增设计文档与进度记录；尚未改动前端业务逻辑、后端接口、数据库或 Redis 代码。
+
+### 优化
+- 调整 Shopee 店铺代金券创建页日期选择器样式。
+  - 涉及文件：`frontend/src/modules/shopee/views/ShopVoucherCreateView.tsx`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：将 `/shopee/marketing/vouchers/create` 页面的“代金券使用期限”从原生 `datetime-local` 输入改为复用 Shopee 现有 `DateTimePicker`，保持与创建单品折扣页一致的输入框宽度、弹层和“至”分隔样式。
+  - 影响范围：仅影响店铺代金券创建页日期选择器前端展示；不改变代金券创建逻辑、数据提交或接口。
+
+### 新增
+- 接入 Shopee 店铺代金券创建空白页。
+  - 涉及文件：`frontend/src/modules/shopee/ShopeePage.tsx`、`frontend/src/modules/shopee/components/Header.tsx`、`frontend/src/modules/shopee/components/Sidebar.tsx`、`frontend/src/modules/shopee/views/ShopVoucherView.tsx`、`frontend/src/modules/shopee/views/ShopVoucherCreateView.tsx`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：新增 `/shopee/marketing/vouchers/create` 前端路由和店铺代金券创建空白页；代金券页“店铺代金券”的“创建”按钮可进入该页；页面沿用单品折扣创建页布局节奏，隐藏左侧菜单栏，预留基础信息、店铺代金券设置和底部操作区；顶部面包屑显示“营销中心 > 代金券 > 创建店铺代金券”。
+  - 验证结果：`ShopeePage.tsx`、`Header.tsx`、`ShopVoucherView.tsx`、`ShopVoucherCreateView.tsx` LSP 诊断无错误。
+  - 影响范围：仅新增店铺代金券创建空白页与入口跳转；暂不实现创建表单字段校验、真实提交、接口或订单模拟影响。
 
 ## 2026-04-30
 

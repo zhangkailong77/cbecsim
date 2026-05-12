@@ -1,13 +1,20 @@
 import { useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 
-type ShopeeView = 'dashboard' | 'my-orders' | 'my-products' | 'new-product' | 'my-income' | 'my-balance' | 'bank-accounts' | 'marketing-centre' | 'marketing-discount' | 'marketing-discount-create' | 'marketing-discount-detail' | 'marketing-discount-data'
+type ShopeeView = 'dashboard' | 'my-orders' | 'my-products' | 'new-product' | 'my-income' | 'my-balance' | 'bank-accounts' | 'customer-service-web' | 'customer-service-chat-management' | 'marketing-centre' | 'marketing-discount' | 'marketing-discount-create' | 'marketing-discount-detail' | 'marketing-discount-data'
   | 'marketing-addon-orders'
   | 'marketing-bundle-orders'
   | 'marketing-shop-flash-sale'
   | 'marketing-shop-flash-sale-create'
   | 'marketing-shopee-ads'
-  | 'marketing-vouchers';
+  | 'marketing-shipping-fee-promotion'
+  | 'marketing-vouchers'
+  | 'marketing-voucher-create'
+  | 'marketing-private-voucher-create'
+  | 'marketing-live-voucher-create'
+  | 'marketing-video-voucher-create'
+  | 'marketing-follow-voucher-create'
+  | 'marketing-product-voucher-create';
 
 const menuItems = [
   {
@@ -116,6 +123,9 @@ export default function Sidebar({ activeView, onSelectView }: SidebarProps) {
                       if (child === '代金券') {
                         onSelectView('marketing-vouchers');
                       }
+                      if (child === '聊天管理') {
+                        onSelectView('customer-service-chat-management');
+                      }
                     }}
                     className={`w-full text-left pl-10 pr-6 py-2 text-[14px] transition-colors font-normal ${
                       ((child === '我的订单' && activeView === 'my-orders') ||
@@ -128,7 +138,8 @@ export default function Sidebar({ activeView, onSelectView }: SidebarProps) {
                         (child === 'Shopee广告' && activeView === 'marketing-shopee-ads') ||
                         (child === '折扣' && (activeView === 'marketing-discount' || activeView === 'marketing-discount-create' || activeView === 'marketing-discount-detail' || activeView === 'marketing-discount-data' || activeView === 'marketing-addon-orders' || activeView === 'marketing-bundle-orders')) ||
                         (child === '我的店铺限时抢购' && (activeView === 'marketing-shop-flash-sale' || activeView === 'marketing-shop-flash-sale-create')) ||
-                        (child === '代金券' && activeView === 'marketing-vouchers'))
+                        (child === '代金券' && (activeView === 'marketing-vouchers' || activeView === 'marketing-voucher-create' || activeView === 'marketing-product-voucher-create')) ||
+                        (child === '聊天管理' && activeView === 'customer-service-chat-management'))
                         ? 'text-[#ee4d2d] border-l-2 border-[#ee4d2d] bg-[#fff7f5]'
                         : 'text-[#333333] hover:text-[#ee4d2d]'
                     }`}

@@ -75,13 +75,16 @@ function formatMoney(amount: number) {
 }
 
 function calcShippingCost(distanceKm: number, shippingChannel?: string): number {
-  const channelBase: Record<string, [number, number]> = {
-    快捷快递: [4.5, 0.14],
-    标准大件: [8.0, 0.11],
-    标准快递: [6.0, 0.12],
+  const channelBase: Record<string, [number, number, [number, number, number]]> = {
+    快捷快递: [4.5, 0.14, [0, 4, 8]],
+    标准大件: [8.0, 0.11, [0, 6, 18]],
+    标准快递: [6.0, 0.12, [0, 4, 10]],
   };
-  const [base, perKm] = channelBase[shippingChannel || ''] ?? channelBase['标准快递'];
-  return Number((base + Math.max(0, distanceKm || 0) * perKm).toFixed(2));
+  const [base, perKm, remoteSurcharges] = channelBase[shippingChannel || ''] ?? channelBase['标准快递'];
+  const distance = Math.max(0, distanceKm || 0);
+  const billableDistance = Math.min(distance, 80);
+  const remoteSurcharge = distance > 800 ? remoteSurcharges[2] : distance > 300 ? remoteSurcharges[1] : remoteSurcharges[0];
+  return Number((base + billableDistance * perKm + remoteSurcharge).toFixed(2));
 }
 
 function calcPendingNetIncome(order: PendingOrderRow): number {

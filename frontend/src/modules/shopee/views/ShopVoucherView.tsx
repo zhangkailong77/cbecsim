@@ -1,7 +1,51 @@
-import React, { useState } from 'react';
+import { useEffect, useState } from 'react';
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000';
+const ACCESS_TOKEN_KEY = 'cbec_access_token';
 
 interface ShopVoucherViewProps {
+  runId: number | null;
   readOnly?: boolean;
+  onCreateShopVoucher: () => void;
+  onCreatePrivateVoucher: () => void;
+  onCreateLiveVoucher: () => void;
+  onCreateVideoVoucher: () => void;
+  onCreateFollowVoucher: () => void;
+  onCreateProductVoucher: () => void;
+  onOpenVoucherDetail: (voucherType: string, campaignId: number) => void;
+  onOpenVoucherOrders: (voucherType: string, campaignId: number) => void;
+}
+
+interface VoucherListRow {
+  id: number;
+  voucher_name: string;
+  voucher_code: string;
+  voucher_type: string;
+  voucher_type_label: string;
+  discount_type: string;
+  discount_label: string;
+  status: string;
+  status_label: string;
+  scope_label: string;
+  usage_limit: number;
+  used_count: number;
+  period: string;
+}
+
+interface VoucherListResponse {
+  summary: {
+    sales_amount: number;
+    order_count: number;
+    usage_rate: number;
+    buyer_count: number;
+  };
+  tabs: Array<{ key: string; label: string; count: number }>;
+  list: {
+    page: number;
+    page_size: number;
+    total: number;
+    items: VoucherListRow[];
+  };
 }
 
 // ---------------- 常用图标组件 ----------------
@@ -41,80 +85,93 @@ const IconVideo = () => (
 );
 const IconFollow = () => <svg width="20" height="20" viewBox="0 0 24 24" fill="#ee4d2d"><path d="M15 12c2.2 0 4-1.8 4-4s-1.8-4-4-4-4 1.8-4 4 1.8 4 4 4zm-9-2V7H4v3H1v2h3v3h2v-3h3v-2H6zm9 4c-2.7 0-8 1.3-8 4v2h16v-2c0-2.7-5.3-4-8-4z"></path></svg>;
 
-export default function ShopVoucherView({ readOnly = false }: ShopVoucherViewProps) {
-  const[activeTab, setActiveTab] = useState('全部');
-  const[isVoucherTypesExpanded, setIsVoucherTypesExpanded] = useState(false);
+export default function ShopVoucherView({ runId, readOnly = false, onCreateShopVoucher, onCreatePrivateVoucher, onCreateLiveVoucher, onCreateVideoVoucher, onCreateFollowVoucher, onCreateProductVoucher, onOpenVoucherDetail, onOpenVoucherOrders }: ShopVoucherViewProps) {
+  const [activeTab, setActiveTab] = useState('全部');
+  const [isVoucherTypesExpanded, setIsVoucherTypesExpanded] = useState(false);
+  const [keyword, setKeyword] = useState('');
+  const [queryKeyword, setQueryKeyword] = useState('');
+  const [page, setPage] = useState(1);
+  const [jumpPage, setJumpPage] = useState('1');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [voucherData, setVoucherData] = useState<VoucherListResponse | null>(null);
 
-  // ---------------- 模拟数据 ----------------
-  const metrics =[
-    { label: '销售额', value: 'RM 0', change: '0.00%' },
-    { label: '订单数', value: '0', change: '0.00%' },
-    { label: '使用率', value: '0.00 %', change: '0.00%' },
-    { label: '买家数', value: '0', change: '0.00%' },
-  ];
+  const statusMap: Record<string, string> = {
+    '全部': 'all',
+    '进行中': 'ongoing',
+    '即将开始': 'upcoming',
+    '已结束': 'ended',
+  };
 
-  const mockVouchers =[
-    {
-      id: 'HOME9018',
-      type: 'Product Voucher', // 后续渲染翻译为: 商品代金券
-      typeLabel: '商品代金券',
-      discountType: 'percent', // 决定图标是 % 还是金额符号
-      discountValue: '90%',
-      discountLabel: '90%OFF',
-      status: 'Expired',
-      statusLabel: '已结束',
-      scope: '1 个商品',
-      limit: 20000,
-      used: 2,
-      period: '18/03/2026 14:24 - 31/03/2026 15:24',
-      actions:['详情', '订单']
-    },
-    {
-      id: 'HOME9003H',
-      type: 'Product Voucher',
-      typeLabel: '商品代金券',
-      discountType: 'percent',
-      discountValue: '90%',
-      discountLabel: '90%OFF',
-      status: 'Expired',
-      statusLabel: '已结束',
-      scope: '4 个商品',
-      limit: 20000,
-      used: 3,
-      period: '13/03/2026 16:37 - 16/03/2026 19:19',
-      actions: ['详情', '订单']
-    },
-    {
-      id: 'SFP-1372839232696320',
-      type: 'Follow Prize Voucher',
-      typeLabel: '关注礼',
-      discountType: 'percent',
-      discountValue: '5%',
-      discountLabel: '5%OFF',
-      status: 'Ongoing',
-      statusLabel: '进行中',
-      scope: '所有商品',
-      limit: 10000,
-      used: 1,
-      period: '10/03/2026 10:55 - 13/09/2026 10:55',
-      actions:['编辑', '订单', '结束']
-    },
-    {
-      id: 'HOME4515H',
-      type: 'Shop Voucher',
-      typeLabel: '店铺代金券',
-      discountType: 'fixed',
-      discountValue: '1500-45', // 满1500减45
-      discountLabel: 'RM 45',
-      status: 'Ongoing',
-      statusLabel: '进行中',
-      scope: '所有商品',
-      limit: 100000,
-      used: 0,
-      period: '02/03/2026 08:40 - 02/06/2026 09:40',
-      actions:['编辑', '分享', '更多']
+  useEffect(() => {
+    if (!runId) return;
+    const token = localStorage.getItem(ACCESS_TOKEN_KEY);
+    if (!token) {
+      setError('登录状态失效，请重新登录。');
+      return;
     }
+    let cancelled = false;
+    const loadVouchers = async () => {
+      setLoading(true);
+      setError('');
+      try {
+        const params = new URLSearchParams({
+          status: statusMap[activeTab] || 'all',
+          keyword: queryKeyword.trim(),
+          page: String(page),
+          page_size: '10',
+        });
+        const response = await fetch(`${API_BASE_URL}/shopee/runs/${runId}/marketing/vouchers?${params.toString()}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!response.ok) throw new Error('vouchers failed');
+        const result = (await response.json()) as VoucherListResponse;
+        if (!cancelled) {
+          setVoucherData(result);
+          setJumpPage(String(result.list.page || page));
+        }
+      } catch {
+        if (!cancelled) setError('代金券列表加载失败，请稍后重试。');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    void loadVouchers();
+    return () => {
+      cancelled = true;
+    };
+  }, [runId, activeTab, queryKeyword, page]);
+
+  const metrics = [
+    { label: '销售额', value: `RM ${(voucherData?.summary.sales_amount ?? 0).toFixed(2)}`, change: '0.00%' },
+    { label: '订单数', value: String(voucherData?.summary.order_count ?? 0), change: '0.00%' },
+    { label: '使用率', value: `${(voucherData?.summary.usage_rate ?? 0).toFixed(2)} %`, change: '0.00%' },
+    { label: '买家数', value: String(voucherData?.summary.buyer_count ?? 0), change: '0.00%' },
   ];
+
+  const totalPages = Math.max(1, Math.ceil((voucherData?.list.total ?? 0) / 10));
+  const firstVisiblePage = Math.min(Math.max(1, page - 2), Math.max(1, totalPages - 4));
+  const visiblePages = Array.from({ length: Math.min(5, totalPages) }, (_, index) => firstVisiblePage + index);
+  const lastVisiblePage = visiblePages[visiblePages.length - 1] ?? 1;
+  const shouldShowLastPage = totalPages > 5 && !visiblePages.includes(totalPages);
+  const shouldShowEllipsis = shouldShowLastPage && lastVisiblePage < totalPages - 1;
+
+  const vouchers = (voucherData?.list.items || []).map((row) => ({
+    campaignId: row.id,
+    id: row.voucher_code,
+    voucherType: row.voucher_type,
+    typeLabel: row.voucher_type_label,
+    discountType: row.discount_type === 'percent' ? 'percent' : 'fixed',
+    discountValue: row.voucher_name,
+    discountLabel: row.discount_label,
+    status: row.status,
+    statusLabel: row.status_label,
+    scope: row.scope_label,
+    limit: row.usage_limit,
+    used: row.used_count,
+    period: row.period,
+    actions: row.status === 'ended' ? ['详情', '订单'] : ['编辑', '分享', '更多'],
+  }));
 
   return (
     <div className="flex-1 overflow-y-auto bg-[#f6f6f6] px-9 py-6 custom-scrollbar text-[#333]">
@@ -143,7 +200,7 @@ export default function ShopVoucherView({ readOnly = false }: ShopVoucherViewPro
                   <div className="text-[13px] text-[#888] leading-tight pr-10">适用于您店铺内所有商品的代金券，提升全店销量</div>
                 </div>
                 <div className="flex justify-end mt-2">
-                  <button disabled={readOnly} className="border border-[#ee4d2d] text-[#ee4d2d] px-6 py-1.5 rounded-sm text-[13px] hover:bg-[#fff6f4] disabled:opacity-50 disabled:cursor-not-allowed">创建</button>
+                  <button type="button" onClick={onCreateShopVoucher} disabled={readOnly} className="border border-[#ee4d2d] text-[#ee4d2d] px-6 py-1.5 rounded-sm text-[13px] hover:bg-[#fff6f4] disabled:opacity-50 disabled:cursor-not-allowed">创建</button>
                 </div>
               </div>
               <div className="bg-white border border-[#ebebeb] p-5 rounded-[2px] flex flex-col justify-between h-[140px]">
@@ -152,7 +209,7 @@ export default function ShopVoucherView({ readOnly = false }: ShopVoucherViewPro
                   <div className="text-[13px] text-[#888] leading-tight pr-10">适用于选定商品的代金券，开展专属商品促销</div>
                 </div>
                 <div className="flex justify-end mt-2">
-                  <button disabled={readOnly} className="border border-[#ee4d2d] text-[#ee4d2d] px-6 py-1.5 rounded-sm text-[13px] hover:bg-[#fff6f4] disabled:opacity-50 disabled:cursor-not-allowed">创建</button>
+                  <button type="button" onClick={onCreateProductVoucher} disabled={readOnly} className="border border-[#ee4d2d] text-[#ee4d2d] px-6 py-1.5 rounded-sm text-[13px] hover:bg-[#fff6f4] disabled:opacity-50 disabled:cursor-not-allowed">创建</button>
                 </div>
               </div>
             </div>
@@ -168,7 +225,7 @@ export default function ShopVoucherView({ readOnly = false }: ShopVoucherViewPro
                   <div className="text-[13px] text-[#888] leading-tight pr-4">仅通过分享兑换码发放给指定买家的代金券</div>
                 </div>
                 <div className="flex justify-end mt-2">
-                  <button disabled={readOnly} className="border border-[#ee4d2d] text-[#ee4d2d] px-6 py-1.5 rounded-sm text-[13px] hover:bg-[#fff6f4] disabled:opacity-50 disabled:cursor-not-allowed">创建</button>
+                  <button type="button" onClick={onCreatePrivateVoucher} disabled={readOnly} className="border border-[#ee4d2d] text-[#ee4d2d] px-6 py-1.5 rounded-sm text-[13px] hover:bg-[#fff6f4] disabled:opacity-50 disabled:cursor-not-allowed">创建</button>
                 </div>
               </div>
               <div className="bg-white border border-[#ebebeb] p-5 rounded-[2px] flex flex-col justify-between h-[140px]">
@@ -177,7 +234,7 @@ export default function ShopVoucherView({ readOnly = false }: ShopVoucherViewPro
                   <div className="text-[13px] text-[#888] leading-tight pr-4">仅在直播间展示并可用的代金券，提升直播转化</div>
                 </div>
                 <div className="flex justify-end mt-2">
-                  <button disabled={readOnly} className="border border-[#ee4d2d] text-[#ee4d2d] px-6 py-1.5 rounded-sm text-[13px] hover:bg-[#fff6f4] disabled:opacity-50 disabled:cursor-not-allowed">创建</button>
+                  <button type="button" onClick={onCreateLiveVoucher} disabled={readOnly} className="border border-[#ee4d2d] text-[#ee4d2d] px-6 py-1.5 rounded-sm text-[13px] hover:bg-[#fff6f4] disabled:opacity-50 disabled:cursor-not-allowed">创建</button>
                 </div>
               </div>
               <div className="bg-white border border-[#ebebeb] p-5 rounded-[2px] flex flex-col justify-between h-[140px]">
@@ -186,7 +243,7 @@ export default function ShopVoucherView({ readOnly = false }: ShopVoucherViewPro
                   <div className="text-[13px] text-[#888] leading-tight pr-4">适用于您视频中展示的商品，增加视频带货销量</div>
                 </div>
                 <div className="flex justify-end mt-2">
-                  <button disabled={readOnly} className="border border-[#ee4d2d] text-[#ee4d2d] px-6 py-1.5 rounded-sm text-[13px] hover:bg-[#fff6f4] disabled:opacity-50 disabled:cursor-not-allowed">创建</button>
+                  <button type="button" onClick={onCreateVideoVoucher} disabled={readOnly} className="border border-[#ee4d2d] text-[#ee4d2d] px-6 py-1.5 rounded-sm text-[13px] hover:bg-[#fff6f4] disabled:opacity-50 disabled:cursor-not-allowed">创建</button>
                 </div>
               </div>
             </div>
@@ -207,7 +264,7 @@ export default function ShopVoucherView({ readOnly = false }: ShopVoucherViewPro
                     <div className="text-[13px] text-[#888] leading-tight pr-4">奖励代金券给新关注者，鼓励买家关注您的店铺。</div>
                   </div>
                   <div className="flex justify-end mt-2">
-                    <button disabled={readOnly} className="border border-[#ee4d2d] text-[#ee4d2d] px-6 py-1.5 rounded-sm text-[13px] hover:bg-[#fff6f4] disabled:opacity-50 disabled:cursor-not-allowed">创建</button>
+                    <button type="button" onClick={onCreateFollowVoucher} disabled={readOnly} className="border border-[#ee4d2d] text-[#ee4d2d] px-6 py-1.5 rounded-sm text-[13px] hover:bg-[#fff6f4] disabled:opacity-50 disabled:cursor-not-allowed">创建</button>
                   </div>
                 </div>
               </div>
@@ -238,7 +295,7 @@ export default function ShopVoucherView({ readOnly = false }: ShopVoucherViewPro
           <div className="px-6 py-4 flex justify-between items-center border-b border-[#ebebeb]">
             <div className="flex items-center gap-3">
               <h2 className="text-[18px] font-medium text-[#333]">代金券表现</h2>
-              <span className="text-[13px] text-[#999]">(数据截至于 23-04-2026 至 30-04-2026 GMT+7)</span>
+              <span className="text-[13px] text-[#999]">(按当前对局游戏时间统计)</span>
             </div>
             <button className="text-[14px] text-[#05a] hover:underline">更多 &gt;</button>
           </div>
@@ -266,7 +323,11 @@ export default function ShopVoucherView({ readOnly = false }: ShopVoucherViewPro
             {['全部', '进行中', '即将开始', '已结束'].map((tab) => (
               <div
                 key={tab}
-                onClick={() => setActiveTab(tab)}
+                onClick={() => {
+                  setActiveTab(tab);
+                  setPage(1);
+                  setJumpPage('1');
+                }}
                 className={`mr-8 pb-3 cursor-pointer relative transition-colors ${activeTab === tab ? 'text-[#ee4d2d] font-medium' : 'text-[#333] hover:text-[#ee4d2d]'}`}
               >
                 {tab}
@@ -280,9 +341,13 @@ export default function ShopVoucherView({ readOnly = false }: ShopVoucherViewPro
             <span className="text-[#333]">搜索</span>
             <div className="flex border border-[#d9d9d9] rounded-sm overflow-hidden h-[34px] w-[400px]">
                <div className="px-3 bg-[#fafafa] border-r border-[#d9d9d9] flex items-center text-[#666] cursor-pointer">代金券名称 <svg className="w-3 h-3 ml-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 12 15 18 9"></polyline></svg></div>
-               <input type="text" className="flex-1 px-3 outline-none text-[13px]" />
+               <input type="text" value={keyword} onChange={(e) => setKeyword(e.target.value)} className="flex-1 px-3 outline-none text-[13px]" />
             </div>
-            <button className="border border-[#ee4d2d] text-[#ee4d2d] px-5 h-[34px] rounded-sm hover:bg-[#fff6f4] transition-colors">查询</button>
+            <button type="button" onClick={() => {
+              setPage(1);
+              setJumpPage('1');
+              setQueryKeyword(keyword);
+            }} className="border border-[#ee4d2d] text-[#ee4d2d] px-5 h-[34px] rounded-sm hover:bg-[#fff6f4] transition-colors">查询</button>
           </div>
 
           {/* Table */}
@@ -303,9 +368,12 @@ export default function ShopVoucherView({ readOnly = false }: ShopVoucherViewPro
 
               {/* Body */}
               <div className="text-[13px] text-[#333]">
-                {mockVouchers.map((row, i) => {
+                {loading && <div className="px-4 py-8 text-center text-[#999]">正在加载代金券...</div>}
+                {!loading && error && <div className="px-4 py-8 text-center text-red-500">{error}</div>}
+                {!loading && !error && vouchers.length === 0 && <div className="px-4 py-8 text-center text-[#999]">暂无代金券</div>}
+                {!loading && !error && vouchers.map((row, i) => {
                   const isPercent = row.discountType === 'percent';
-                  const isOngoing = row.status === 'Ongoing';
+                  const isOngoing = row.status === 'ongoing';
 
                   return (
                     <div key={i} className="grid grid-cols-[1.6fr_1fr_1fr_1fr_1fr_0.8fr_1.8fr_0.8fr] border-b border-[#ebebeb] last:border-b-0 px-4 py-4 items-start hover:bg-[#fafafa] transition-colors">
@@ -337,7 +405,17 @@ export default function ShopVoucherView({ readOnly = false }: ShopVoucherViewPro
                       {/* 操作列 */}
                       <div className="flex flex-col gap-1.5 items-start">
                         {row.actions.map(act => (
-                          <button key={act} className="text-[#05a] hover:underline leading-none">{act}</button>
+                          <button
+                            key={act}
+                            type="button"
+                            onClick={() => {
+                              if (act === '详情') onOpenVoucherDetail(row.voucherType, row.campaignId);
+                              if (act === '订单') onOpenVoucherOrders(row.voucherType, row.campaignId);
+                            }}
+                            className="text-[#05a] hover:underline leading-none"
+                          >
+                            {act}
+                          </button>
                         ))}
                       </div>
                     </div>
@@ -349,20 +427,21 @@ export default function ShopVoucherView({ readOnly = false }: ShopVoucherViewPro
 
             {/* 分页器 Placeholder */}
             <div className="flex items-center justify-end mt-5 text-[13px] text-[#666] gap-2">
-              <button className="p-1 text-[#ccc] cursor-not-allowed">&lt;</button>
-              <button className="px-2 text-[#ee4d2d]">1</button>
-              <button className="px-2 hover:text-[#ee4d2d]">2</button>
-              <button className="px-2 hover:text-[#ee4d2d]">3</button>
-              <button className="px-2 hover:text-[#ee4d2d]">4</button>
-              <button className="px-2 hover:text-[#ee4d2d]">5</button>
-              <span>...</span>
-              <button className="px-2 hover:text-[#ee4d2d]">20</button>
-              <button className="p-1 hover:text-[#ee4d2d]">&gt;</button>
+              <button className={`p-1 ${page <= 1 ? 'text-[#ccc] cursor-not-allowed' : 'hover:text-[#ee4d2d]'}`} disabled={page <= 1} onClick={() => setPage((prev) => Math.max(1, prev - 1))}>&lt;</button>
+              {visiblePages.map((item) => (
+                <button key={item} className={`px-2 ${item === page ? 'text-[#ee4d2d]' : 'hover:text-[#ee4d2d]'}`} onClick={() => setPage(item)}>{item}</button>
+              ))}
+              {shouldShowEllipsis && <span>...</span>}
+              {shouldShowLastPage && <button className={`px-2 ${totalPages === page ? 'text-[#ee4d2d]' : 'hover:text-[#ee4d2d]'}`} onClick={() => setPage(totalPages)}>{totalPages}</button>}
+              <button className={`p-1 ${page >= totalPages ? 'text-[#ccc] cursor-not-allowed' : 'hover:text-[#ee4d2d]'}`} disabled={page >= totalPages} onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))}>&gt;</button>
               <div className="flex items-center ml-2">
                 <span className="mr-2">跳转至</span>
-                <input type="text" defaultValue="1" className="border border-[#e5e5e5] w-10 h-7 text-center rounded-sm outline-none focus:border-[#ccc]" />
+                <input type="text" value={jumpPage} onChange={(event) => setJumpPage(event.target.value)} className="border border-[#e5e5e5] w-10 h-7 text-center rounded-sm outline-none focus:border-[#ccc]" />
                 <span className="ml-2">页</span>
-                <button className="ml-3 border border-[#e5e5e5] px-3 h-7 rounded-sm hover:bg-[#fafafa]">Go</button>
+                <button className="ml-3 border border-[#e5e5e5] px-3 h-7 rounded-sm hover:bg-[#fafafa]" onClick={() => {
+                  const nextPage = Number(jumpPage);
+                  if (Number.isFinite(nextPage)) setPage(Math.min(totalPages, Math.max(1, Math.floor(nextPage))));
+                }}>Go</button>
               </div>
             </div>
 

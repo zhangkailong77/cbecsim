@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 import json
+import os
 import random
 from typing import Any
 from uuid import uuid4
@@ -9,21 +10,33 @@ from uuid import uuid4
 from sqlalchemy import func
 from sqlalchemy.orm import Session, selectinload
 
+from app.core.cache import cache_delete_prefix
 from app.models import (
     InventoryStockMovement,
     ShopeeAddonCampaign,
     ShopeeDiscountCampaign,
     ShopeeFlashSaleCampaign,
     ShopeeFlashSaleCampaignItem,
+    ShopeeBuyerFollowState,
     ShopeeFlashSaleTrafficEvent,
+    ShopeeFollowVoucherCampaign,
+    ShopeeLiveVoucherCampaign,
+    ShopeePrivateVoucherCampaign,
+    ShopeeProductVoucherCampaign,
+    ShopeeShopVoucherCampaign,
+    ShopeeVideoVoucherCampaign,
     ShopeeListing,
     ShopeeListingVariant,
     ShopeeOrder,
     ShopeeOrderGenerationLog,
     ShopeeOrderItem,
+    ShopeeShippingFeePromotionCampaign,
     SimBuyerProfile,
+    WarehouseLandmark,
+    WarehouseStrategy,
 )
 from app.services.inventory_lot_sync import get_lot_available_qty, release_reserved_inventory_lots, reserve_inventory_lots
+from app.services.shopee_fulfillment import calc_shipping_cost, haversine_km
 
 BACKORDER_GRACE_GAME_HOURS = 48
 FLASH_SALE_PROBABILITY_CAP = 0.85
@@ -45,6 +58,24 @@ FLASH_SALE_VIEW_PROB_CAP = 0.75
 FLASH_SALE_CLICK_PROB_CAP = 0.45
 FLASH_SALE_TRAFFIC_MAX_ITEMS_PER_BUYER = 3
 FLASH_SALE_TRAFFIC_MAX_EVENTS_PER_TICK = 200
+REDIS_PREFIX = os.getenv("REDIS_PREFIX", "cbec")
+SHIPPING_FEE_PROMOTION_CHANNEL_MAP = {
+    "标准快递": "standard",
+    "快捷快递": "standard",
+    "标准大件": "bulky",
+}
+BUYER_CITY_COORDS = {
+    "MY-KUL": (3.1390, 101.6869),
+    "MY-SGR": (3.0738, 101.5183),
+    "MY-PNG": (5.4141, 100.3288),
+    "MY-JHB": (1.4927, 103.7414),
+    "MY-IPH": (4.5975, 101.0901),
+    "MY-MLK": (2.1896, 102.2501),
+    "MY-KDH": (6.1184, 100.3685),
+    "MY-SBH": (5.9804, 116.0735),
+    "MY-SWK": (1.5533, 110.3592),
+    "MY-SAM": (3.0733, 101.5185),
+}
 
 
 def _clamp(num: float, low: float, high: float) -> float:
@@ -144,6 +175,51 @@ def _resolve_price_score(*, price: float, target_price: float, price_sensitivity
     else:
         price_score = _clamp(1 + abs(price_gap) * (0.5 - sensitivity * 0.5), 0.0, 1.0)
     return price_score, price_gap
+
+
+def _align_compare_time(current_tick: datetime, value: datetime) -> datetime:
+    if current_tick.tzinfo is None and value.tzinfo is not None:
+        return value.replace(tzinfo=None)
+    if current_tick.tzinfo is not None and value.tzinfo is None:
+        return value.replace(tzinfo=current_tick.tzinfo)
+    return value
+
+
+def _resolve_buyer_latlng(db: Session, buyer: SimBuyerProfile, destination: str | None) -> tuple[float, float]:
+    if buyer.lat is not None and buyer.lng is not None:
+        return float(buyer.lat), float(buyer.lng)
+    if buyer.city_code and buyer.city_code in BUYER_CITY_COORDS:
+        return BUYER_CITY_COORDS[buyer.city_code]
+    for code, coords in BUYER_CITY_COORDS.items():
+        if destination and code.endswith(destination[:3].upper()):
+            return coords
+    return BUYER_CITY_COORDS["MY-KUL"]
+
+
+def _resolve_warehouse_latlng(db: Session, *, run_id: int, user_id: int) -> tuple[float, float]:
+    strategy = (
+        db.query(WarehouseStrategy)
+        .filter(WarehouseStrategy.run_id == run_id, WarehouseStrategy.user_id == user_id)
+        .order_by(WarehouseStrategy.id.desc())
+        .first()
+    )
+    if strategy:
+        point = (
+            db.query(WarehouseLandmark)
+            .filter(
+                WarehouseLandmark.market == (strategy.market or "MY"),
+                WarehouseLandmark.warehouse_mode == strategy.warehouse_mode,
+                WarehouseLandmark.warehouse_location == strategy.warehouse_location,
+                WarehouseLandmark.is_active == True,
+            )
+            .first()
+        )
+        if point:
+            return float(point.lat), float(point.lng)
+    fallback = db.query(WarehouseLandmark).filter(WarehouseLandmark.market == "MY", WarehouseLandmark.is_active == True).order_by(WarehouseLandmark.sort_order.asc(), WarehouseLandmark.id.asc()).first()
+    if fallback:
+        return float(fallback.lat), float(fallback.lng)
+    return BUYER_CITY_COORDS["MY-KUL"]
 
 
 def _load_ongoing_discount_map(db: Session, *, run_id: int, user_id: int, tick_time: datetime) -> dict[tuple[int, int | None], dict[str, Any]]:
@@ -297,6 +373,694 @@ def _simulate_flash_sale_traffic_for_buyer(
             remaining_event_slots -= 1
 
     return {"view_count": view_count, "click_count": click_count}
+
+
+def _serialize_voucher(
+    row: ShopeeShopVoucherCampaign | ShopeeProductVoucherCampaign | ShopeePrivateVoucherCampaign | ShopeeLiveVoucherCampaign | ShopeeVideoVoucherCampaign | ShopeeFollowVoucherCampaign,
+    voucher_type: str,
+) -> dict[str, Any]:
+    payload = {
+        "voucher_type": voucher_type,
+        "campaign_id": int(row.id),
+        "voucher_name": row.voucher_name,
+        "voucher_code": row.voucher_code,
+        "discount_type": row.discount_type,
+        "discount_amount": float(row.discount_amount or 0),
+        "discount_percent": float(row.discount_percent or 0),
+        "max_discount_type": row.max_discount_type,
+        "max_discount_amount": float(row.max_discount_amount or 0),
+        "min_spend_amount": float(row.min_spend_amount or 0),
+        "usage_limit": int(row.usage_limit or 0),
+        "used_count": int(row.used_count or 0),
+        "claimed_count": int(getattr(row, "claimed_count", 0) or 0),
+        "per_buyer_limit": int(row.per_buyer_limit or 1),
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+    }
+    if voucher_type in {"private_voucher", "live_voucher", "video_voucher", "follow_voucher"}:
+        payload["applicable_scope"] = str(getattr(row, "applicable_scope", "all_products") or "all_products")
+    if voucher_type == "follow_voucher":
+        payload["claim_start_at"] = row.claim_start_at.isoformat() if row.claim_start_at else None
+        payload["claim_end_at"] = row.claim_end_at.isoformat() if row.claim_end_at else None
+        payload["valid_days_after_claim"] = int(row.valid_days_after_claim or 7)
+    return payload
+
+
+def _load_ongoing_voucher_context(db: Session, *, run_id: int, user_id: int, tick_time: datetime) -> dict[str, Any]:
+    shop_rows = (
+        db.query(ShopeeShopVoucherCampaign)
+        .filter(
+            ShopeeShopVoucherCampaign.run_id == run_id,
+            ShopeeShopVoucherCampaign.user_id == user_id,
+            ShopeeShopVoucherCampaign.reward_type == "discount",
+        )
+        .order_by(ShopeeShopVoucherCampaign.id.asc())
+        .all()
+    )
+    product_rows = (
+        db.query(ShopeeProductVoucherCampaign)
+        .options(selectinload(ShopeeProductVoucherCampaign.items))
+        .filter(
+            ShopeeProductVoucherCampaign.run_id == run_id,
+            ShopeeProductVoucherCampaign.user_id == user_id,
+            ShopeeProductVoucherCampaign.reward_type == "discount",
+        )
+        .order_by(ShopeeProductVoucherCampaign.id.asc())
+        .all()
+    )
+    private_rows = (
+        db.query(ShopeePrivateVoucherCampaign)
+        .options(selectinload(ShopeePrivateVoucherCampaign.items))
+        .filter(
+            ShopeePrivateVoucherCampaign.run_id == run_id,
+            ShopeePrivateVoucherCampaign.user_id == user_id,
+            ShopeePrivateVoucherCampaign.reward_type == "discount",
+        )
+        .order_by(ShopeePrivateVoucherCampaign.id.asc())
+        .all()
+    )
+    live_rows = (
+        db.query(ShopeeLiveVoucherCampaign)
+        .options(selectinload(ShopeeLiveVoucherCampaign.items))
+        .filter(
+            ShopeeLiveVoucherCampaign.run_id == run_id,
+            ShopeeLiveVoucherCampaign.user_id == user_id,
+            ShopeeLiveVoucherCampaign.reward_type == "discount",
+        )
+        .order_by(ShopeeLiveVoucherCampaign.id.asc())
+        .all()
+    )
+    video_rows = (
+        db.query(ShopeeVideoVoucherCampaign)
+        .options(selectinload(ShopeeVideoVoucherCampaign.items))
+        .filter(
+            ShopeeVideoVoucherCampaign.run_id == run_id,
+            ShopeeVideoVoucherCampaign.user_id == user_id,
+            ShopeeVideoVoucherCampaign.reward_type == "discount",
+        )
+        .order_by(ShopeeVideoVoucherCampaign.id.asc())
+        .all()
+    )
+    follow_rows = (
+        db.query(ShopeeFollowVoucherCampaign)
+        .filter(
+            ShopeeFollowVoucherCampaign.run_id == run_id,
+            ShopeeFollowVoucherCampaign.user_id == user_id,
+            ShopeeFollowVoucherCampaign.reward_type == "discount",
+        )
+        .order_by(ShopeeFollowVoucherCampaign.id.asc())
+        .all()
+    )
+    shop_vouchers: list[dict[str, Any]] = []
+    product_vouchers_by_listing: dict[tuple[int, int | None], list[dict[str, Any]]] = {}
+    private_vouchers: list[dict[str, Any]] = []
+    private_vouchers_by_listing: dict[tuple[int, int | None], list[dict[str, Any]]] = {}
+    live_vouchers: list[dict[str, Any]] = []
+    live_vouchers_by_listing: dict[tuple[int, int | None], list[dict[str, Any]]] = {}
+    video_vouchers: list[dict[str, Any]] = []
+    video_vouchers_by_listing: dict[tuple[int, int | None], list[dict[str, Any]]] = {}
+    follow_vouchers: list[dict[str, Any]] = []
+    campaign_by_key: dict[
+        tuple[str, int],
+        ShopeeShopVoucherCampaign | ShopeeProductVoucherCampaign | ShopeePrivateVoucherCampaign | ShopeeLiveVoucherCampaign | ShopeeVideoVoucherCampaign | ShopeeFollowVoucherCampaign,
+    ] = {}
+
+    for row in shop_rows:
+        if _align_compare_time(tick_time, row.start_at) > tick_time or _align_compare_time(tick_time, row.end_at) <= tick_time:
+            continue
+        if int(row.used_count or 0) >= int(row.usage_limit or 0):
+            continue
+        voucher = _serialize_voucher(row, "shop_voucher")
+        shop_vouchers.append(voucher)
+        campaign_by_key[("shop_voucher", int(row.id))] = row
+
+    for row in product_rows:
+        if _align_compare_time(tick_time, row.start_at) > tick_time or _align_compare_time(tick_time, row.end_at) <= tick_time:
+            continue
+        if int(row.used_count or 0) >= int(row.usage_limit or 0):
+            continue
+        voucher = _serialize_voucher(row, "product_voucher")
+        for item in sorted(row.items or [], key=lambda item_row: item_row.id):
+            key = (int(item.listing_id), int(item.variant_id) if item.variant_id is not None else None)
+            product_vouchers_by_listing.setdefault(key, []).append(voucher)
+        campaign_by_key[("product_voucher", int(row.id))] = row
+
+    for row in private_rows:
+        if _align_compare_time(tick_time, row.start_at) > tick_time or _align_compare_time(tick_time, row.end_at) <= tick_time:
+            continue
+        if int(row.used_count or 0) >= int(row.usage_limit or 0):
+            continue
+        voucher = _serialize_voucher(row, "private_voucher")
+        if str(row.applicable_scope or "all_products") == "selected_products":
+            for item in sorted(row.items or [], key=lambda item_row: item_row.id):
+                key = (int(item.listing_id), int(item.variant_id) if item.variant_id is not None else None)
+                private_vouchers_by_listing.setdefault(key, []).append(voucher)
+        else:
+            private_vouchers.append(voucher)
+        campaign_by_key[("private_voucher", int(row.id))] = row
+
+    for row in live_rows:
+        if _align_compare_time(tick_time, row.start_at) > tick_time or _align_compare_time(tick_time, row.end_at) <= tick_time:
+            continue
+        if int(row.used_count or 0) >= int(row.usage_limit or 0):
+            continue
+        voucher = _serialize_voucher(row, "live_voucher")
+        if str(row.applicable_scope or "all_products") == "selected_products":
+            for item in sorted(row.items or [], key=lambda item_row: item_row.id):
+                key = (int(item.listing_id), int(item.variant_id) if item.variant_id is not None else None)
+                live_vouchers_by_listing.setdefault(key, []).append(voucher)
+        else:
+            live_vouchers.append(voucher)
+        campaign_by_key[("live_voucher", int(row.id))] = row
+
+    for row in video_rows:
+        if _align_compare_time(tick_time, row.start_at) > tick_time or _align_compare_time(tick_time, row.end_at) <= tick_time:
+            continue
+        if int(row.used_count or 0) >= int(row.usage_limit or 0):
+            continue
+        voucher = _serialize_voucher(row, "video_voucher")
+        if str(row.applicable_scope or "all_products") == "selected_products":
+            for item in sorted(row.items or [], key=lambda item_row: item_row.id):
+                key = (int(item.listing_id), int(item.variant_id) if item.variant_id is not None else None)
+                video_vouchers_by_listing.setdefault(key, []).append(voucher)
+        else:
+            video_vouchers.append(voucher)
+        campaign_by_key[("video_voucher", int(row.id))] = row
+
+    for row in follow_rows:
+        if str(row.status or "") == "stopped":
+            continue
+        if _align_compare_time(tick_time, row.claim_start_at) > tick_time:
+            continue
+        if int(row.used_count or 0) >= int(row.usage_limit or 0):
+            continue
+        if str(row.applicable_scope or "all_products") != "all_products":
+            continue
+        follow_vouchers.append(_serialize_voucher(row, "follow_voucher"))
+        campaign_by_key[("follow_voucher", int(row.id))] = row
+
+    return {
+        "shop_vouchers": shop_vouchers,
+        "product_vouchers_by_listing": product_vouchers_by_listing,
+        "private_vouchers": private_vouchers,
+        "private_vouchers_by_listing": private_vouchers_by_listing,
+        "live_vouchers": live_vouchers,
+        "live_vouchers_by_listing": live_vouchers_by_listing,
+        "video_vouchers": video_vouchers,
+        "video_vouchers_by_listing": video_vouchers_by_listing,
+        "follow_vouchers": follow_vouchers,
+        "campaign_by_key": campaign_by_key,
+    }
+
+
+def _calculate_voucher_discount(voucher: dict[str, Any], order_subtotal: float) -> float:
+    if order_subtotal < float(voucher.get("min_spend_amount") or 0):
+        return 0.0
+    if str(voucher.get("discount_type") or "") == "percent":
+        discount = order_subtotal * float(voucher.get("discount_percent") or 0) / 100
+        if str(voucher.get("max_discount_type") or "") == "set_amount":
+            max_discount = float(voucher.get("max_discount_amount") or 0)
+            if max_discount > 0:
+                discount = min(discount, max_discount)
+    else:
+        discount = float(voucher.get("discount_amount") or 0)
+    return round(max(0.0, min(discount, max(order_subtotal - 1, 0.0))), 2)
+
+
+def _candidate_product_vouchers(voucher_context: dict[str, Any], *, listing_id: int, variant_id: int | None) -> list[dict[str, Any]]:
+    product_map = voucher_context.get("product_vouchers_by_listing") or {}
+    return list(product_map.get((listing_id, variant_id), [])) + list(product_map.get((listing_id, None), []))
+
+
+def _candidate_private_vouchers(voucher_context: dict[str, Any], *, listing_id: int, variant_id: int | None) -> list[dict[str, Any]]:
+    private_map = voucher_context.get("private_vouchers_by_listing") or {}
+    return (
+        list(voucher_context.get("private_vouchers") or [])
+        + list(private_map.get((listing_id, variant_id), []))
+        + list(private_map.get((listing_id, None), []))
+    )
+
+
+def _candidate_content_vouchers(voucher_context: dict[str, Any], *, voucher_type: str, listing_id: int, variant_id: int | None) -> list[dict[str, Any]]:
+    if voucher_type == "live_voucher":
+        voucher_map = voucher_context.get("live_vouchers_by_listing") or {}
+        all_product_vouchers = list(voucher_context.get("live_vouchers") or [])
+    else:
+        voucher_map = voucher_context.get("video_vouchers_by_listing") or {}
+        all_product_vouchers = list(voucher_context.get("video_vouchers") or [])
+    return all_product_vouchers + list(voucher_map.get((listing_id, variant_id), [])) + list(voucher_map.get((listing_id, None), []))
+
+
+def _buyer_has_private_voucher_access(
+    *,
+    buyer: SimBuyerProfile | None,
+    voucher: dict[str, Any],
+    order_subtotal: float,
+    private_access_cache: dict[tuple[str, int], dict[str, Any]],
+    rng: random.Random,
+) -> dict[str, Any]:
+    buyer_name = str(getattr(buyer, "nickname", "") or "")
+    campaign_id = int(voucher.get("campaign_id") or 0)
+    key = (buyer_name, campaign_id)
+    if key in private_access_cache:
+        return private_access_cache[key]
+
+    price_sensitivity = _clamp(float(getattr(buyer, "price_sensitivity", 0.5) or 0.5), 0.0, 1.0)
+    impulse_level = _clamp(float(getattr(buyer, "impulse_level", 0.3) or 0.3), 0.0, 1.0)
+    base_intent = _clamp(float(getattr(buyer, "base_buy_intent", 0.2) or 0.2), 0.0, 1.0)
+    preview_discount = _calculate_voucher_discount(voucher, max(float(order_subtotal or 0), 1.0))
+    voucher_savings_rate = preview_discount / max(float(order_subtotal or 0), 1.0)
+    access_prob = _clamp(
+        0.10 + price_sensitivity * 0.18 + base_intent * 0.12 + impulse_level * 0.15 + voucher_savings_rate * 0.20,
+        0.05,
+        0.45,
+    )
+    hit = rng.random() <= access_prob
+    result = {
+        "private_access_checked": True,
+        "private_access_hit": hit,
+        "private_access_prob": round(access_prob, 4),
+        "private_access_reason": "simulated_private_audience" if hit else "not_private_access",
+    }
+    private_access_cache[key] = result
+    return result
+
+
+def _buyer_has_follow_voucher_access(
+    *,
+    db: Session,
+    run_id: int,
+    user_id: int,
+    buyer: SimBuyerProfile | None,
+    voucher: dict[str, Any],
+    order_subtotal: float,
+    tick_time: datetime,
+    follow_state_by_buyer: dict[str, ShopeeBuyerFollowState],
+    follow_access_cache: dict[tuple[str, int], dict[str, Any]],
+    campaign_by_key: dict[tuple[str, int], Any],
+    rng: random.Random,
+) -> dict[str, Any]:
+    buyer_name = str(getattr(buyer, "nickname", "") or "")
+    campaign_id = int(voucher.get("campaign_id") or 0)
+    key = (buyer_name, campaign_id)
+    if key in follow_access_cache:
+        return follow_access_cache[key]
+
+    state = follow_state_by_buyer.get(buyer_name)
+    already_following = bool(state and state.is_following)
+    valid_until = None
+    if state and state.first_followed_at:
+        valid_until = state.first_followed_at + timedelta(days=int(voucher.get("valid_days_after_claim") or 7))
+    if already_following:
+        follow_hit = int(state.source_campaign_id or 0) == campaign_id and valid_until is not None and _align_compare_time(tick_time, valid_until) > tick_time
+        result = {
+            "follow_access_checked": True,
+            "follow_access_hit": follow_hit,
+            "follow_access_prob": None,
+            "already_following_before_tick": True,
+            "claim_game_time": state.first_followed_at.isoformat() if state.first_followed_at else None,
+            "valid_until_game_time": valid_until.isoformat() if valid_until else None,
+            "follow_access_reason": "existing_follow_voucher_valid" if follow_hit else "already_following",
+        }
+        follow_access_cache[key] = result
+        return result
+
+    price_sensitivity = _clamp(float(getattr(buyer, "price_sensitivity", 0.5) or 0.5), 0.0, 1.0)
+    impulse_level = _clamp(float(getattr(buyer, "impulse_level", 0.3) or 0.3), 0.0, 1.0)
+    base_intent = _clamp(float(getattr(buyer, "base_buy_intent", 0.2) or 0.2), 0.0, 1.0)
+    preview_discount = _calculate_voucher_discount(voucher, max(float(order_subtotal or 0), 1.0))
+    voucher_savings_rate = preview_discount / max(float(order_subtotal or 0), 1.0)
+    access_prob = _clamp(
+        0.08 + price_sensitivity * 0.20 + base_intent * 0.12 + impulse_level * 0.16 + voucher_savings_rate * 0.18,
+        0.03,
+        0.48,
+    )
+    claim_window_open = _align_compare_time(tick_time, datetime.fromisoformat(str(voucher.get("claim_end_at")))) > tick_time if voucher.get("claim_end_at") else True
+    can_claim = claim_window_open and int(voucher.get("claimed_count") or 0) < int(voucher.get("usage_limit") or 0)
+    follow_hit = can_claim and rng.random() <= access_prob
+    valid_until = tick_time + timedelta(days=int(voucher.get("valid_days_after_claim") or 7)) if follow_hit else None
+    if follow_hit:
+        state = ShopeeBuyerFollowState(
+            run_id=run_id,
+            user_id=user_id,
+            buyer_name=buyer_name,
+            is_following=True,
+            first_followed_at=tick_time,
+            follow_source="follow_voucher",
+            source_campaign_id=campaign_id,
+        )
+        db.add(state)
+        follow_state_by_buyer[buyer_name] = state
+        campaign = campaign_by_key.get(("follow_voucher", campaign_id))
+        if campaign is not None:
+            campaign.claimed_count = int(campaign.claimed_count or 0) + 1
+        voucher["claimed_count"] = int(voucher.get("claimed_count") or 0) + 1
+    result = {
+        "follow_access_checked": True,
+        "follow_access_hit": follow_hit,
+        "follow_access_prob": round(access_prob, 4),
+        "already_following_before_tick": False,
+        "claim_game_time": tick_time.isoformat() if follow_hit else None,
+        "valid_until_game_time": valid_until.isoformat() if valid_until else None,
+        "follow_access_reason": "simulated_new_follower" if follow_hit else ("claim_window_closed" if not claim_window_open else "usage_limit_reached" if not can_claim else "not_followed"),
+    }
+    follow_access_cache[key] = result
+    return result
+
+
+
+def _buyer_has_content_voucher_access(
+    *,
+    buyer: SimBuyerProfile | None,
+    voucher: dict[str, Any],
+    order_subtotal: float,
+    content_access_cache: dict[tuple[str, str, int], dict[str, Any]],
+    rng: random.Random,
+) -> dict[str, Any]:
+    buyer_name = str(getattr(buyer, "nickname", "") or "")
+    voucher_type = str(voucher.get("voucher_type") or "")
+    campaign_id = int(voucher.get("campaign_id") or 0)
+    key = (buyer_name, voucher_type, campaign_id)
+    if key in content_access_cache:
+        return content_access_cache[key]
+
+    scene = "live" if voucher_type == "live_voucher" else "video"
+    price_sensitivity = _clamp(float(getattr(buyer, "price_sensitivity", 0.5) or 0.5), 0.0, 1.0)
+    impulse_level = _clamp(float(getattr(buyer, "impulse_level", 0.3) or 0.3), 0.0, 1.0)
+    base_intent = _clamp(float(getattr(buyer, "base_buy_intent", 0.2) or 0.2), 0.0, 1.0)
+    preview_discount = _calculate_voucher_discount(voucher, max(float(order_subtotal or 0), 1.0))
+    voucher_savings_rate = preview_discount / max(float(order_subtotal or 0), 1.0)
+    if voucher_type == "live_voucher":
+        access_prob = _clamp(0.192 + impulse_level * 0.24 + price_sensitivity * 0.144 + base_intent * 0.12 + voucher_savings_rate * 0.216, 0.096, 0.66)
+    else:
+        access_prob = _clamp(0.156 + impulse_level * 0.168 + price_sensitivity * 0.144 + base_intent * 0.12 + voucher_savings_rate * 0.216, 0.084, 0.576)
+    hit = rng.random() <= access_prob
+    result = {
+        "content_access_checked": True,
+        "content_access_hit": hit,
+        "content_access_prob": round(access_prob, 4),
+        "content_scene": scene,
+        "content_access_reason": f"simulated_{scene}_viewer" if hit else "not_content_access",
+    }
+    content_access_cache[key] = result
+    return result
+
+
+def _resolve_best_voucher_for_order(
+    *,
+    db: Session,
+    run_id: int,
+    user_id: int,
+    tick_time: datetime,
+    voucher_context: dict[str, Any],
+    buyer: SimBuyerProfile,
+    buyer_name: str,
+    listing_id: int,
+    variant_id: int | None,
+    order_subtotal: float,
+    buyer_voucher_usage_counts: dict[tuple[str, str, int], int],
+    private_access_cache: dict[tuple[str, int], dict[str, Any]],
+    content_access_cache: dict[tuple[str, str, int], dict[str, Any]],
+    follow_state_by_buyer: dict[str, ShopeeBuyerFollowState],
+    follow_access_cache: dict[tuple[str, int], dict[str, Any]],
+    campaign_by_key: dict[tuple[str, int], Any],
+    rng: random.Random,
+    flash_sale_hit: bool,
+) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+    candidates: list[dict[str, Any]] = []
+    all_vouchers = (
+        list(voucher_context.get("shop_vouchers") or [])
+        + _candidate_product_vouchers(voucher_context, listing_id=listing_id, variant_id=variant_id)
+        + _candidate_content_vouchers(voucher_context, voucher_type="live_voucher", listing_id=listing_id, variant_id=variant_id)
+        + _candidate_content_vouchers(voucher_context, voucher_type="video_voucher", listing_id=listing_id, variant_id=variant_id)
+        + _candidate_private_vouchers(voucher_context, listing_id=listing_id, variant_id=variant_id)
+        + list(voucher_context.get("follow_vouchers") or [])
+    )
+    if flash_sale_hit:
+        for voucher in all_vouchers:
+            candidates.append({**voucher, "eligible": False, "reason": "flash_sale_excluded", "discount_amount": 0.0, "savings_rate": 0.0})
+        return None, candidates
+
+    for voucher in all_vouchers:
+        voucher_type = str(voucher["voucher_type"])
+        campaign_id = int(voucher["campaign_id"])
+        reason = "eligible"
+        discount = 0.0
+        access_result: dict[str, Any] = {}
+        if voucher_type == "private_voucher":
+            access_result = _buyer_has_private_voucher_access(
+                buyer=buyer,
+                voucher=voucher,
+                order_subtotal=order_subtotal,
+                private_access_cache=private_access_cache,
+                rng=rng,
+            )
+        elif voucher_type in {"live_voucher", "video_voucher"}:
+            access_result = _buyer_has_content_voucher_access(
+                buyer=buyer,
+                voucher=voucher,
+                order_subtotal=order_subtotal,
+                content_access_cache=content_access_cache,
+                rng=rng,
+            )
+        elif voucher_type == "follow_voucher":
+            access_result = _buyer_has_follow_voucher_access(
+                db=db,
+                run_id=run_id,
+                user_id=user_id,
+                buyer=buyer,
+                voucher=voucher,
+                order_subtotal=order_subtotal,
+                tick_time=tick_time,
+                follow_state_by_buyer=follow_state_by_buyer,
+                follow_access_cache=follow_access_cache,
+                campaign_by_key=campaign_by_key,
+                rng=rng,
+            )
+        if voucher_type == "follow_voucher" and int(voucher.get("claimed_count") or 0) >= int(voucher.get("usage_limit") or 0) and not bool(access_result.get("follow_access_hit")):
+            reason = "usage_limit_reached"
+        elif int(voucher.get("used_count") or 0) >= int(voucher.get("usage_limit") or 0):
+            reason = "usage_limit_reached"
+        elif buyer_voucher_usage_counts.get((buyer_name, voucher_type, campaign_id), 0) >= int(voucher.get("per_buyer_limit") or 1):
+            reason = "buyer_limit_reached"
+        elif voucher_type == "private_voucher" and not bool(access_result.get("private_access_hit")):
+            reason = "not_private_access"
+        elif voucher_type in {"live_voucher", "video_voucher"} and not bool(access_result.get("content_access_hit")):
+            reason = "not_content_access"
+        elif voucher_type == "follow_voucher" and not bool(access_result.get("follow_access_hit")):
+            reason = str(access_result.get("follow_access_reason") or "not_followed")
+        elif order_subtotal < float(voucher.get("min_spend_amount") or 0):
+            reason = "below_min_spend"
+        else:
+            discount = _calculate_voucher_discount(voucher, order_subtotal)
+            if discount <= 0:
+                reason = "below_min_spend"
+        candidates.append({
+            **voucher,
+            **access_result,
+            "eligible": reason == "eligible",
+            "reason": reason,
+            "discount_amount": discount,
+            "savings_rate": round(discount / max(order_subtotal, 1.0), 4),
+        })
+    eligible = [row for row in candidates if row.get("eligible")]
+    if not eligible:
+        return None, candidates
+    selected = sorted(
+        eligible,
+        key=lambda row: (
+            -float(row.get("discount_amount") or 0),
+            {"product_voucher": 0, "live_voucher": 1, "video_voucher": 2, "private_voucher": 3, "follow_voucher": 4, "shop_voucher": 5}.get(str(row.get("voucher_type") or ""), 6),
+            row.get("created_at") or "",
+            int(row.get("campaign_id") or 0),
+        ),
+    )[0]
+    return selected, candidates
+
+
+def _apply_voucher_stats(
+    *,
+    voucher_context: dict[str, Any],
+    selected_voucher: dict[str, Any] | None,
+    buyer_name: str,
+    buyer_payment: float,
+    buyer_voucher_usage_counts: dict[tuple[str, str, int], int],
+) -> None:
+    if not selected_voucher:
+        return
+    voucher_type = str(selected_voucher["voucher_type"])
+    campaign_id = int(selected_voucher["campaign_id"])
+    key = (voucher_type, campaign_id)
+    campaign = (voucher_context.get("campaign_by_key") or {}).get(key)
+    if not campaign:
+        return
+    buyer_key = (buyer_name, voucher_type, campaign_id)
+    previous_count = buyer_voucher_usage_counts.get(buyer_key, 0)
+    campaign.used_count = int(campaign.used_count or 0) + 1
+    campaign.order_count = int(campaign.order_count or 0) + 1
+    campaign.sales_amount = float(campaign.sales_amount or 0) + float(buyer_payment)
+    if previous_count <= 0:
+        campaign.buyer_count = int(campaign.buyer_count or 0) + 1
+    buyer_voucher_usage_counts[buyer_key] = previous_count + 1
+    selected_voucher["used_count"] = int(selected_voucher.get("used_count") or 0) + 1
+
+
+def _load_ongoing_shipping_fee_promotion_context(db: Session, *, run_id: int, user_id: int, tick_time: datetime) -> dict[str, Any]:
+    campaigns = (
+        db.query(ShopeeShippingFeePromotionCampaign)
+        .options(
+            selectinload(ShopeeShippingFeePromotionCampaign.channels),
+            selectinload(ShopeeShippingFeePromotionCampaign.tiers),
+        )
+        .filter(
+            ShopeeShippingFeePromotionCampaign.run_id == run_id,
+            ShopeeShippingFeePromotionCampaign.user_id == user_id,
+            ShopeeShippingFeePromotionCampaign.status.in_(("ongoing", "upcoming")),
+        )
+        .all()
+    )
+    active_campaigns = []
+    for campaign in campaigns:
+        if str(campaign.status or "") == "stopped":
+            continue
+        start_at = _align_compare_time(tick_time, campaign.start_at)
+        end_at = _align_compare_time(tick_time, campaign.end_at) if campaign.end_at else None
+        if tick_time < start_at or (end_at is not None and tick_time >= end_at):
+            continue
+        budget_limit = float(campaign.budget_limit or 0)
+        budget_used = float(campaign.budget_used or 0)
+        if str(campaign.budget_type or "") == "selected" and budget_used >= budget_limit:
+            campaign.status = "budget_exhausted"
+            continue
+        channel_keys = {str(row.channel_key or "") for row in campaign.channels or [] if row.channel_key}
+        tiers = sorted(
+            [row for row in campaign.tiers or [] if float(row.min_spend_amount or 0) >= 0],
+            key=lambda row: (float(row.min_spend_amount or 0), int(row.tier_index or 0), int(row.id or 0)),
+        )
+        if channel_keys and tiers:
+            active_campaigns.append({"campaign": campaign, "channel_keys": channel_keys, "tiers": tiers})
+    return {"campaigns": active_campaigns}
+
+
+def _resolve_best_shipping_fee_promotion_for_order(
+    *,
+    shipping_promotion_context: dict[str, Any],
+    shipping_channel: str,
+    order_subtotal: float,
+    original_shipping_fee: float,
+) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+    matched_channel_key = SHIPPING_FEE_PROMOTION_CHANNEL_MAP.get(shipping_channel)
+    candidates: list[dict[str, Any]] = []
+    if not matched_channel_key:
+        return None, [{"reason": "shipping_channel_not_matched", "shipping_channel": shipping_channel}]
+    if not (shipping_promotion_context.get("campaigns") or []):
+        return None, [{"reason": "no_active_shipping_fee_promotion", "shipping_channel": shipping_channel}]
+
+    for row in shipping_promotion_context.get("campaigns") or []:
+        campaign = row["campaign"]
+        if matched_channel_key not in row["channel_keys"]:
+            candidates.append({
+                "campaign_id": campaign.id,
+                "promotion_name": campaign.promotion_name,
+                "matched_channel": False,
+                "reason": "shipping_channel_not_matched",
+            })
+            continue
+        matched_tiers = [tier for tier in row["tiers"] if order_subtotal >= float(tier.min_spend_amount or 0)]
+        if not matched_tiers:
+            candidates.append({
+                "campaign_id": campaign.id,
+                "promotion_name": campaign.promotion_name,
+                "matched_channel": True,
+                "reason": "order_subtotal_below_min_spend",
+            })
+            continue
+        tier = sorted(matched_tiers, key=lambda item: (float(item.min_spend_amount or 0), int(item.tier_index or 0), int(item.id or 0)), reverse=True)[0]
+        if str(tier.fee_type or "") == "free_shipping":
+            shipping_fee_after = 0.0
+            discount = round(max(0.0, original_shipping_fee), 2)
+        else:
+            discount = round(min(original_shipping_fee, float(tier.fixed_fee_amount or 0)), 2)
+            shipping_fee_after = round(original_shipping_fee - discount, 2)
+        remaining_budget = None
+        if str(campaign.budget_type or "") == "selected":
+            remaining_budget = max(0.0, float(campaign.budget_limit or 0) - float(campaign.budget_used or 0))
+            discount = round(min(discount, remaining_budget), 2)
+            shipping_fee_after = round(original_shipping_fee - discount, 2)
+        reason = "eligible" if discount > 0 else "zero_discount"
+        candidates.append({
+            "campaign_id": campaign.id,
+            "promotion_name": campaign.promotion_name,
+            "matched_channel": True,
+            "matched_tier_index": int(tier.tier_index or 0),
+            "min_spend_amount": float(tier.min_spend_amount or 0),
+            "fee_type": tier.fee_type,
+            "fixed_fee_amount": float(tier.fixed_fee_amount) if tier.fixed_fee_amount is not None else None,
+            "original_shipping_fee": original_shipping_fee,
+            "shipping_fee_after_promotion": shipping_fee_after,
+            "shipping_discount_amount": discount,
+            "remaining_budget": remaining_budget,
+            "eligible": reason == "eligible",
+            "reason": reason,
+            "campaign": campaign,
+            "tier": tier,
+        })
+    eligible = [row for row in candidates if row.get("eligible")]
+    if not eligible:
+        return None, candidates or [{"reason": "no_active_shipping_fee_promotion"}]
+    selected = sorted(
+        eligible,
+        key=lambda row: (
+            -float(row.get("shipping_discount_amount") or 0),
+            -float(row.get("min_spend_amount") or 0),
+            str(getattr(row.get("campaign"), "created_at", "") or ""),
+            int(row.get("campaign_id") or 0),
+        ),
+    )[0]
+    return selected, candidates
+
+
+def _apply_shipping_fee_promotion_stats(
+    *,
+    selected_shipping_promotion: dict[str, Any] | None,
+    buyer_name: str,
+    order_subtotal: float,
+    buyer_shipping_promotion_usage_counts: dict[tuple[str, int], int],
+) -> None:
+    if not selected_shipping_promotion:
+        return
+    campaign = selected_shipping_promotion.get("campaign")
+    if not campaign:
+        return
+    discount = round(float(selected_shipping_promotion.get("shipping_discount_amount") or 0), 2)
+    if discount <= 0:
+        return
+    campaign_id = int(selected_shipping_promotion.get("campaign_id") or 0)
+    buyer_key = (buyer_name, campaign_id)
+    previous_count = buyer_shipping_promotion_usage_counts.get(buyer_key, 0)
+    campaign.budget_used = round(float(campaign.budget_used or 0) + discount, 2)
+    campaign.order_count = int(campaign.order_count or 0) + 1
+    if previous_count <= 0:
+        campaign.buyer_count = int(campaign.buyer_count or 0) + 1
+    buyer_shipping_promotion_usage_counts[buyer_key] = previous_count + 1
+    campaign.sales_amount = round(float(campaign.sales_amount or 0) + float(order_subtotal or 0), 2)
+    campaign.shipping_discount_amount = round(float(campaign.shipping_discount_amount or 0) + discount, 2)
+    if str(campaign.budget_type or "") == "selected" and campaign.budget_limit is not None and float(campaign.budget_used or 0) >= float(campaign.budget_limit or 0):
+        campaign.status = "budget_exhausted"
+    selected_shipping_promotion["budget_used_after"] = float(campaign.budget_used or 0)
+    selected_shipping_promotion["buyer_name"] = buyer_name
+
+
+def _sanitize_shipping_fee_promotion_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {key: value for key, value in row.items() if key not in {"campaign", "tier"}}
+        for row in candidates
+    ]
+
+
+def _invalidate_shipping_fee_promotion_simulation_cache(*, run_id: int, user_id: int) -> None:
+    cache_delete_prefix(f"{REDIS_PREFIX}:cache:shopee:shipping_fee_promotion:list:{run_id}:{user_id}:")
+    cache_delete_prefix(f"{REDIS_PREFIX}:cache:shopee:shipping_fee_promotion:active:{run_id}:{user_id}:")
+    cache_delete_prefix(f"{REDIS_PREFIX}:cache:shopee:orders:list:{run_id}:{user_id}:")
 
 
 def _load_ongoing_flash_sale_map(db: Session, *, run_id: int, user_id: int, tick_time: datetime) -> dict[tuple[int, int | None], dict[str, Any]]:
@@ -983,6 +1747,9 @@ def simulate_orders_for_run(
     addon_map = _load_ongoing_addon_map(db, run_id=run_id, user_id=user_id, tick_time=now)
     bundle_map = _load_ongoing_bundle_map(db, run_id=run_id, user_id=user_id, tick_time=now)
     flash_sale_map = _load_ongoing_flash_sale_map(db, run_id=run_id, user_id=user_id, tick_time=now)
+    voucher_context = _load_ongoing_voucher_context(db, run_id=run_id, user_id=user_id, tick_time=now)
+    shipping_promotion_context = _load_ongoing_shipping_fee_promotion_context(db, run_id=run_id, user_id=user_id, tick_time=now)
+    warehouse_latlng = _resolve_warehouse_latlng(db, run_id=run_id, user_id=user_id)
 
     skip_reasons: dict[str, int] = {}
     if not live_products:
@@ -1122,6 +1889,80 @@ def simulate_orders_for_run(
             (str(buyer_name or ""), int(campaign_id), int(listing_id), int(variant_id) if variant_id is not None else None): int(qty or 0)
             for buyer_name, campaign_id, listing_id, variant_id, qty in flash_sale_rows
             if campaign_id is not None and listing_id is not None
+        }
+
+    all_voucher_rows = (
+        list(voucher_context.get("shop_vouchers") or [])
+        + [voucher for vouchers in (voucher_context.get("product_vouchers_by_listing") or {}).values() for voucher in vouchers]
+        + list(voucher_context.get("private_vouchers") or [])
+        + [voucher for vouchers in (voucher_context.get("private_vouchers_by_listing") or {}).values() for voucher in vouchers]
+        + list(voucher_context.get("live_vouchers") or [])
+        + [voucher for vouchers in (voucher_context.get("live_vouchers_by_listing") or {}).values() for voucher in vouchers]
+        + list(voucher_context.get("video_vouchers") or [])
+        + [voucher for vouchers in (voucher_context.get("video_vouchers_by_listing") or {}).values() for voucher in vouchers]
+        + list(voucher_context.get("follow_vouchers") or [])
+    )
+    voucher_campaign_ids = {
+        int(voucher["campaign_id"])
+        for voucher in all_voucher_rows
+        if int(voucher.get("campaign_id") or 0) > 0
+    }
+    buyer_voucher_usage_counts: dict[tuple[str, str, int], int] = {}
+    private_access_cache: dict[tuple[str, int], dict[str, Any]] = {}
+    content_access_cache: dict[tuple[str, str, int], dict[str, Any]] = {}
+    follow_access_cache: dict[tuple[str, int], dict[str, Any]] = {}
+    buyer_shipping_promotion_usage_counts: dict[tuple[str, int], int] = {}
+    follow_state_rows = (
+        db.query(ShopeeBuyerFollowState)
+        .filter(
+            ShopeeBuyerFollowState.run_id == run_id,
+            ShopeeBuyerFollowState.user_id == user_id,
+        )
+        .all()
+    )
+    follow_state_by_buyer: dict[str, ShopeeBuyerFollowState] = {
+        str(row.buyer_name or ""): row
+        for row in follow_state_rows
+        if row.buyer_name
+    }
+    shipping_promotion_campaign_ids = {
+        int(row["campaign"].id)
+        for row in shipping_promotion_context.get("campaigns") or []
+        if row.get("campaign") and int(row["campaign"].id or 0) > 0
+    }
+    if shipping_promotion_campaign_ids:
+        shipping_promotion_rows = (
+            db.query(ShopeeOrder.buyer_name, ShopeeOrder.shipping_promotion_campaign_id, func.count(ShopeeOrder.id))
+            .filter(
+                ShopeeOrder.run_id == run_id,
+                ShopeeOrder.user_id == user_id,
+                ShopeeOrder.shipping_promotion_campaign_id.in_(shipping_promotion_campaign_ids),
+            )
+            .group_by(ShopeeOrder.buyer_name, ShopeeOrder.shipping_promotion_campaign_id)
+            .all()
+        )
+        buyer_shipping_promotion_usage_counts = {
+            (str(buyer_name or ""), int(campaign_id)): int(order_count or 0)
+            for buyer_name, campaign_id, order_count in shipping_promotion_rows
+            if campaign_id is not None
+        }
+
+    if voucher_campaign_ids:
+        voucher_rows = (
+            db.query(ShopeeOrder.buyer_name, ShopeeOrder.voucher_campaign_type, ShopeeOrder.voucher_campaign_id, func.count(ShopeeOrder.id))
+            .filter(
+                ShopeeOrder.run_id == run_id,
+                ShopeeOrder.user_id == user_id,
+                ShopeeOrder.voucher_campaign_type.in_(("shop_voucher", "product_voucher", "private_voucher", "live_voucher", "video_voucher", "follow_voucher")),
+                ShopeeOrder.voucher_campaign_id.in_(voucher_campaign_ids),
+            )
+            .group_by(ShopeeOrder.buyer_name, ShopeeOrder.voucher_campaign_type, ShopeeOrder.voucher_campaign_id)
+            .all()
+        )
+        buyer_voucher_usage_counts = {
+            (str(buyer_name or ""), str(voucher_type or ""), int(campaign_id)): int(order_count or 0)
+            for buyer_name, voucher_type, campaign_id, order_count in voucher_rows
+            if voucher_type and campaign_id is not None
         }
 
     flash_sale_listing_ids = {int(item.get("listing_id") or 0) for item in flash_sale_map.values() if int(item.get("listing_id") or 0) > 0}
@@ -1442,6 +2283,53 @@ def simulate_orders_for_run(
                 or float(candidate_gift["gift_order_bonus"]) > float(gift_decision["gift_order_bonus"])
             ):
                 gift_decision = candidate_gift
+        preview_voucher_subtotal = float(unit_price * max(1, int(quantity or min_qty)))
+        preview_voucher, preview_voucher_candidates = _resolve_best_voucher_for_order(
+            db=db,
+            run_id=run_id,
+            user_id=user_id,
+            tick_time=now,
+            voucher_context=voucher_context,
+            buyer=buyer,
+            buyer_name=str(buyer.nickname or ""),
+            listing_id=int(best_listing.id),
+            variant_id=int(variant.id) if variant else None,
+            order_subtotal=preview_voucher_subtotal,
+            buyer_voucher_usage_counts=buyer_voucher_usage_counts,
+            private_access_cache=private_access_cache,
+            content_access_cache=content_access_cache,
+            follow_state_by_buyer=follow_state_by_buyer,
+            follow_access_cache=follow_access_cache,
+            campaign_by_key=voucher_context.get("campaign_by_key") or {},
+            rng=rng,
+            flash_sale_hit=bool(flash_sale_hit),
+        )
+        voucher_order_bonus = 0.0
+        if preview_voucher:
+            voucher_type = str(preview_voucher.get("voucher_type") or "")
+            voucher_savings_rate = float(preview_voucher.get("discount_amount") or 0) / max(preview_voucher_subtotal, 1.0)
+            if voucher_type == "follow_voucher":
+                voucher_order_bonus = _clamp(
+                    0.02 + float(buyer.price_sensitivity or 0.5) * 0.06 + voucher_savings_rate * 0.12,
+                    0.01,
+                    0.16,
+                )
+            elif voucher_type in {"live_voucher", "video_voucher"}:
+                scene_base = 0.02 if voucher_type == "live_voucher" else 0.014
+                scene_multiplier = 1.10 if voucher_type == "live_voucher" else 0.85
+                voucher_order_bonus = _clamp(
+                    scene_base + voucher_savings_rate * 0.08 * scene_multiplier + impulse * voucher_savings_rate * 0.08,
+                    0.0,
+                    0.085 if voucher_type == "live_voucher" else 0.065,
+                )
+            else:
+                voucher_order_bonus = _clamp(
+                    0.02 + voucher_savings_rate * 0.10 + float(buyer.price_sensitivity or 0.5) * voucher_savings_rate * 0.08,
+                    0.0,
+                    0.08,
+                )
+            order_prob = _clamp(order_prob + voucher_order_bonus, order_prob, 0.92)
+
         if gift_decision and not bundle_applied:
             order_prob = _clamp(order_prob + float(gift_decision["gift_order_bonus"]), order_prob, 0.92)
 
@@ -1468,6 +2356,60 @@ def simulate_orders_for_run(
                     addon_decision = candidate_addon
             if addon_decision:
                 order_prob = _clamp(order_prob + float(addon_decision["addon_order_bonus"]), order_prob, 0.92)
+
+        if addon_decision:
+            addon_reward = addon_decision.get("reward_item") or {}
+            preview_after_addon_subtotal = preview_voucher_subtotal + float(addon_reward.get("addon_price") or 0)
+            preview_after_addon_voucher, preview_after_addon_candidates = _resolve_best_voucher_for_order(
+                db=db,
+                run_id=run_id,
+                user_id=user_id,
+                tick_time=now,
+                voucher_context=voucher_context,
+                buyer=buyer,
+                buyer_name=str(buyer.nickname or ""),
+                listing_id=int(best_listing.id),
+                variant_id=int(variant.id) if variant else None,
+                order_subtotal=preview_after_addon_subtotal,
+                buyer_voucher_usage_counts=buyer_voucher_usage_counts,
+                private_access_cache=private_access_cache,
+                content_access_cache=content_access_cache,
+                follow_state_by_buyer=follow_state_by_buyer,
+                follow_access_cache=follow_access_cache,
+                campaign_by_key=voucher_context.get("campaign_by_key") or {},
+                rng=rng,
+                flash_sale_hit=bool(flash_sale_hit),
+            )
+            if preview_after_addon_voucher and (
+                not preview_voucher
+                or float(preview_after_addon_voucher.get("discount_amount") or 0) > float(preview_voucher.get("discount_amount") or 0)
+            ):
+                old_voucher_order_bonus = voucher_order_bonus
+                preview_voucher = preview_after_addon_voucher
+                preview_voucher_candidates = preview_after_addon_candidates
+                voucher_type = str(preview_voucher.get("voucher_type") or "")
+                voucher_savings_rate = float(preview_voucher.get("discount_amount") or 0) / max(preview_after_addon_subtotal, 1.0)
+                if voucher_type == "follow_voucher":
+                    voucher_order_bonus = _clamp(
+                        0.02 + float(buyer.price_sensitivity or 0.5) * 0.06 + voucher_savings_rate * 0.12,
+                        0.01,
+                        0.16,
+                    )
+                elif voucher_type in {"live_voucher", "video_voucher"}:
+                    scene_base = 0.02 if voucher_type == "live_voucher" else 0.014
+                    scene_multiplier = 1.10 if voucher_type == "live_voucher" else 0.85
+                    voucher_order_bonus = _clamp(
+                        scene_base + voucher_savings_rate * 0.08 * scene_multiplier + impulse * voucher_savings_rate * 0.08,
+                        0.0,
+                        0.085 if voucher_type == "live_voucher" else 0.065,
+                    )
+                else:
+                    voucher_order_bonus = _clamp(
+                        0.02 + voucher_savings_rate * 0.10 + float(buyer.price_sensitivity or 0.5) * voucher_savings_rate * 0.08,
+                        0.0,
+                        0.08,
+                    )
+                order_prob = _clamp(order_prob + max(0.0, voucher_order_bonus - old_voucher_order_bonus), order_prob, 0.92)
 
         order_roll = rng.random()
         journey["selected_candidate"] = {
@@ -1509,8 +2451,20 @@ def simulate_orders_for_run(
             "gift_campaign_id": gift_decision["campaign"]["campaign_id"] if gift_decision else None,
             "gift_order_bonus": round(float(gift_decision["gift_order_bonus"]), 4) if gift_decision else 0.0,
             "gift_threshold_shortfall": round(float(gift_decision["gift_threshold_shortfall"]), 2) if gift_decision else None,
+            "voucher_candidates": preview_voucher_candidates,
+            "voucher_hit": bool(preview_voucher),
+            "voucher_campaign_type": preview_voucher["voucher_type"] if preview_voucher else None,
+            "voucher_campaign_id": preview_voucher["campaign_id"] if preview_voucher else None,
+            "voucher_discount_amount": round(float(preview_voucher.get("discount_amount") or 0), 2) if preview_voucher else 0.0,
+            "voucher_order_bonus": round(voucher_order_bonus, 4),
             "score": round(bundle_score if bundle_applied and bundle_score is not None else best_score, 4),
         }
+        journey["voucher_candidates"] = preview_voucher_candidates
+        journey["voucher_hit"] = bool(preview_voucher)
+        journey["voucher_campaign_type"] = preview_voucher["voucher_type"] if preview_voucher else None
+        journey["voucher_campaign_id"] = preview_voucher["campaign_id"] if preview_voucher else None
+        journey["voucher_discount_amount"] = round(float(preview_voucher.get("discount_amount") or 0), 2) if preview_voucher else 0.0
+        journey["voucher_order_bonus"] = round(voucher_order_bonus, 4)
         journey["order_prob"] = round(order_prob, 4)
         journey["order_roll"] = round(order_roll, 4)
         if order_roll > order_prob:
@@ -1639,7 +2593,41 @@ def simulate_orders_for_run(
             elif gift_applied and gift_decision:
                 applied_campaign = gift_decision["campaign"]
 
-        payment = int(sum(int(line["unit_price"]) * int(line["quantity"]) for line in order_lines))
+        order_subtotal = float(sum(int(line["unit_price"]) * int(line["quantity"]) for line in order_lines))
+        selected_voucher, voucher_candidates = _resolve_best_voucher_for_order(
+            db=db,
+            run_id=run_id,
+            user_id=user_id,
+            tick_time=now,
+            voucher_context=voucher_context,
+            buyer=buyer,
+            buyer_name=str(buyer.nickname or ""),
+            listing_id=int(best_listing.id),
+            variant_id=int(variant.id) if variant else None,
+            order_subtotal=order_subtotal,
+            buyer_voucher_usage_counts=buyer_voucher_usage_counts,
+            private_access_cache=private_access_cache,
+            content_access_cache=content_access_cache,
+            follow_state_by_buyer=follow_state_by_buyer,
+            follow_access_cache=follow_access_cache,
+            campaign_by_key=voucher_context.get("campaign_by_key") or {},
+            rng=rng,
+            flash_sale_hit=bool(flash_sale_hit),
+        )
+        voucher_discount_amount = round(float(selected_voucher.get("discount_amount") or 0), 2) if selected_voucher else 0.0
+        payment = int(round(order_subtotal - voucher_discount_amount))
+        shipping_channel = _resolve_shipping_channel(best_listing, rng)
+        buyer_destination = buyer.city or "吉隆坡"
+        distance_km = haversine_km(warehouse_latlng, _resolve_buyer_latlng(db, buyer, buyer_destination))
+        shipping_fee_before_promotion = calc_shipping_cost(distance_km, shipping_channel)
+        selected_shipping_promotion, shipping_promotion_candidates = _resolve_best_shipping_fee_promotion_for_order(
+            shipping_promotion_context=shipping_promotion_context,
+            shipping_channel=shipping_channel,
+            order_subtotal=order_subtotal,
+            original_shipping_fee=shipping_fee_before_promotion,
+        )
+        shipping_promotion_discount_amount = round(float(selected_shipping_promotion.get("shipping_discount_amount") or 0), 2) if selected_shipping_promotion else 0.0
+        shipping_fee_after_promotion = round(shipping_fee_before_promotion - shipping_promotion_discount_amount, 2)
         total_shortfall_qty = int(sum(max(0, int(line["shortfall_qty"])) for line in order_lines))
         total_quantity = int(sum(max(0, int(line["quantity"])) for line in order_lines))
         flash_sale_item: ShopeeFlashSaleCampaignItem | None = None
@@ -1710,18 +2698,32 @@ def simulate_orders_for_run(
             type_bucket="toship",
             process_status="processing",
             shipping_priority="today",
-            shipping_channel=_resolve_shipping_channel(best_listing, rng),
-            destination=buyer.city or "吉隆坡",
+            shipping_channel=shipping_channel,
+            destination=buyer_destination,
             countdown_text="请在24小时内处理",
             action_text="查看详情",
             ship_by_date=now + timedelta(days=1),
             ship_by_at=now + timedelta(days=1),
+            distance_km=distance_km,
             stock_fulfillment_status="backorder" if total_shortfall_qty > 0 else "in_stock",
             backorder_qty=total_shortfall_qty,
             must_restock_before_at=(now + timedelta(hours=BACKORDER_GRACE_GAME_HOURS)) if total_shortfall_qty > 0 else None,
             marketing_campaign_type=applied_campaign["campaign_type"] if applied_campaign else None,
             marketing_campaign_id=applied_campaign["campaign_id"] if applied_campaign else None,
             marketing_campaign_name_snapshot=applied_campaign["campaign_name"] if applied_campaign else None,
+            order_subtotal_amount=order_subtotal,
+            voucher_campaign_type=selected_voucher["voucher_type"] if selected_voucher else None,
+            voucher_campaign_id=int(selected_voucher["campaign_id"]) if selected_voucher else None,
+            voucher_name_snapshot=selected_voucher["voucher_name"] if selected_voucher else None,
+            voucher_code_snapshot=selected_voucher["voucher_code"] if selected_voucher else None,
+            voucher_discount_amount=voucher_discount_amount,
+            shipping_promotion_campaign_id=int(selected_shipping_promotion["campaign_id"]) if selected_shipping_promotion else None,
+            shipping_promotion_name_snapshot=selected_shipping_promotion["promotion_name"] if selected_shipping_promotion else None,
+            shipping_promotion_tier_index=int(selected_shipping_promotion["matched_tier_index"]) if selected_shipping_promotion else None,
+            shipping_fee_before_promotion=shipping_fee_before_promotion,
+            shipping_fee_after_promotion=shipping_fee_after_promotion,
+            shipping_promotion_discount_amount=shipping_promotion_discount_amount,
+            created_at=now,
         )
         db.add(order)
         db.flush()
@@ -1767,6 +2769,21 @@ def simulate_orders_for_run(
                 )
             )
         generated_order_count += 1
+        _apply_voucher_stats(
+            voucher_context=voucher_context,
+            selected_voucher=selected_voucher,
+            buyer_name=str(buyer.nickname or ""),
+            buyer_payment=float(payment),
+            buyer_voucher_usage_counts=buyer_voucher_usage_counts,
+        )
+        _apply_shipping_fee_promotion_stats(
+            selected_shipping_promotion=selected_shipping_promotion,
+            buyer_name=str(buyer.nickname or ""),
+            order_subtotal=order_subtotal,
+            buyer_shipping_promotion_usage_counts=buyer_shipping_promotion_usage_counts,
+        )
+        if selected_shipping_promotion:
+            _invalidate_shipping_fee_promotion_simulation_cache(run_id=run_id, user_id=user_id)
         if bundle_applied and bundle_hit:
             buyer_bundle_key = (str(buyer.nickname or ""), int(bundle_hit["campaign_id"]))
             buyer_bundle_order_counts[buyer_bundle_key] = buyer_bundle_order_counts.get(buyer_bundle_key, 0) + 1
@@ -1790,6 +2807,22 @@ def simulate_orders_for_run(
             "quantity": total_quantity,
             "unit_price": unit_price,
             "buyer_payment": payment,
+            "order_subtotal": round(order_subtotal, 2),
+            "buyer_payment_after_voucher": payment,
+            "voucher_candidates": voucher_candidates,
+            "voucher_hit": bool(selected_voucher),
+            "voucher_campaign_type": selected_voucher["voucher_type"] if selected_voucher else None,
+            "voucher_campaign_id": selected_voucher["campaign_id"] if selected_voucher else None,
+            "voucher_discount_amount": voucher_discount_amount,
+            "voucher_order_bonus": round(voucher_order_bonus, 4),
+            "shipping_fee_promotion_candidates": _sanitize_shipping_fee_promotion_candidates(shipping_promotion_candidates),
+            "selected_shipping_fee_promotion": (
+                {key: value for key, value in selected_shipping_promotion.items() if key not in {"campaign", "tier"}}
+                if selected_shipping_promotion else None
+            ),
+            "shipping_fee_before_promotion": shipping_fee_before_promotion,
+            "shipping_fee_after_promotion": shipping_fee_after_promotion,
+            "shipping_promotion_discount_amount": shipping_promotion_discount_amount,
             "effective_price": effective_price,
             "price_gap": round(selected_price_gap, 4),
             "price_score": round(selected_price_score, 4),

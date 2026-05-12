@@ -1,13 +1,25 @@
 import { BookOpen, ArrowLeft } from 'lucide-react';
 import shopeeLogo from '../assets/shopee-logo.svg';
 
+type VoucherDetailType = 'shop_voucher' | 'product_voucher' | 'private_voucher' | 'live_voucher' | 'video_voucher' | 'follow_voucher';
+
+const voucherDetailLabels: Record<VoucherDetailType, string> = {
+  shop_voucher: '店铺代金券详情',
+  product_voucher: '商品代金券详情',
+  private_voucher: '专属代金券详情',
+  live_voucher: '直播代金券详情',
+  video_voucher: '视频代金券详情',
+  follow_voucher: '关注礼代金券详情',
+};
+
 interface HeaderProps {
   playerName: string;
   runId: number | null;
   onBackToSetup: () => void;
   onBackToDashboard: () => void;
-  onNavigateToView: (view: 'dashboard' | 'my-orders' | 'my-products' | 'new-product' | 'my-income' | 'my-balance' | 'bank-accounts' | 'marketing-centre' | 'marketing-discount' | 'marketing-discount-create' | 'marketing-discount-detail' | 'marketing-discount-data' | 'marketing-addon-orders' | 'marketing-bundle-orders' | 'marketing-shop-flash-sale' | 'marketing-shop-flash-sale-create' | 'marketing-shop-flash-sale-detail' | 'marketing-shop-flash-sale-data' | 'marketing-shopee-ads' | 'marketing-vouchers') => void;
-  activeView: 'dashboard' | 'my-orders' | 'my-products' | 'new-product' | 'my-income' | 'my-balance' | 'bank-accounts' | 'marketing-centre' | 'marketing-discount' | 'marketing-discount-create' | 'marketing-discount-detail' | 'marketing-discount-data' | 'marketing-addon-orders' | 'marketing-bundle-orders' | 'marketing-shop-flash-sale' | 'marketing-shop-flash-sale-create' | 'marketing-shop-flash-sale-detail' | 'marketing-shop-flash-sale-data' | 'marketing-shopee-ads' | 'marketing-vouchers';
+  onNavigateToView: (view: 'dashboard' | 'my-orders' | 'my-products' | 'new-product' | 'my-income' | 'my-balance' | 'bank-accounts' | 'customer-service-web' | 'customer-service-chat-management' | 'customer-service-auto-reply' | 'customer-service-quick-reply' | 'customer-service-quick-reply-create' | 'customer-service-quick-reply-edit' | 'marketing-centre' | 'marketing-discount' | 'marketing-discount-create' | 'marketing-discount-detail' | 'marketing-discount-data' | 'marketing-addon-orders' | 'marketing-bundle-orders' | 'marketing-shop-flash-sale' | 'marketing-shop-flash-sale-create' | 'marketing-shop-flash-sale-detail' | 'marketing-shop-flash-sale-data' | 'marketing-shopee-ads' | 'marketing-shipping-fee-promotion' | 'marketing-shipping-fee-promotion-create' | 'marketing-vouchers' | 'marketing-voucher-create' | 'marketing-private-voucher-create' | 'marketing-live-voucher-create' | 'marketing-video-voucher-create' | 'marketing-follow-voucher-create' | 'marketing-product-voucher-create' | 'marketing-voucher-detail' | 'marketing-voucher-orders') => void;
+  activeView: 'dashboard' | 'my-orders' | 'my-products' | 'new-product' | 'my-income' | 'my-balance' | 'bank-accounts' | 'customer-service-web' | 'customer-service-chat-management' | 'customer-service-auto-reply' | 'customer-service-quick-reply' | 'customer-service-quick-reply-create' | 'customer-service-quick-reply-edit' | 'marketing-centre' | 'marketing-discount' | 'marketing-discount-create' | 'marketing-discount-detail' | 'marketing-discount-data' | 'marketing-addon-orders' | 'marketing-bundle-orders' | 'marketing-shop-flash-sale' | 'marketing-shop-flash-sale-create' | 'marketing-shop-flash-sale-detail' | 'marketing-shop-flash-sale-data' | 'marketing-shopee-ads' | 'marketing-shipping-fee-promotion' | 'marketing-shipping-fee-promotion-create' | 'marketing-vouchers' | 'marketing-voucher-create' | 'marketing-private-voucher-create' | 'marketing-live-voucher-create' | 'marketing-video-voucher-create' | 'marketing-follow-voucher-create' | 'marketing-product-voucher-create' | 'marketing-voucher-detail' | 'marketing-voucher-orders';
+  voucherDetailType?: string;
   marketingCreateType?: 'discount' | 'bundle' | 'add_on';
   isOrderDetail?: boolean;
   isProductDetail?: boolean;
@@ -20,12 +32,46 @@ export default function Header({
   onBackToDashboard,
   onNavigateToView,
   activeView,
+  voucherDetailType,
   marketingCreateType = 'discount',
   isOrderDetail = false,
   isProductDetail = false,
 }: HeaderProps) {
   const renderBreadcrumb = () => {
     if (activeView === 'dashboard') return null;
+    if (activeView === 'customer-service-web') return null;
+    if (activeView === 'customer-service-chat-management' || activeView === 'customer-service-auto-reply' || activeView === 'customer-service-quick-reply' || activeView === 'customer-service-quick-reply-create' || activeView === 'customer-service-quick-reply-edit') {
+      return (
+        <div className="flex items-center gap-2 text-[14px]">
+          <span className="text-gray-300">{'>'}</span>
+          <button
+            type="button"
+            onClick={() => onNavigateToView('customer-service-chat-management')}
+            className="text-gray-700 hover:text-[#ee4d2d]"
+          >
+            聊天管理
+          </button>
+          {activeView !== 'customer-service-chat-management' ? (
+            <>
+              <span className="text-gray-300">{'>'}</span>
+              <button
+                type="button"
+                onClick={() => onNavigateToView(activeView === 'customer-service-auto-reply' ? 'customer-service-auto-reply' : 'customer-service-quick-reply')}
+                className="text-gray-700 hover:text-[#ee4d2d]"
+              >
+                {activeView === 'customer-service-auto-reply' ? '自动回复' : '快捷回复'}
+              </button>
+              {activeView === 'customer-service-quick-reply-create' || activeView === 'customer-service-quick-reply-edit' ? (
+                <>
+                  <span className="text-gray-300">{'>'}</span>
+                  <span className="text-gray-700">{activeView === 'customer-service-quick-reply-edit' ? '编辑快捷回复' : '新建快捷回复'}</span>
+                </>
+              ) : null}
+            </>
+          ) : null}
+        </div>
+      );
+    }
     if (activeView === 'my-orders') {
       return (
         <div className="flex items-center gap-2 text-[14px]">
@@ -80,7 +126,7 @@ export default function Header({
         </div>
       );
     }
-    if (activeView === 'marketing-shopee-ads' || activeView === 'marketing-vouchers') {
+    if (activeView === 'marketing-shopee-ads' || activeView === 'marketing-shipping-fee-promotion' || activeView === 'marketing-shipping-fee-promotion-create' || activeView === 'marketing-vouchers' || activeView === 'marketing-voucher-create' || activeView === 'marketing-private-voucher-create' || activeView === 'marketing-live-voucher-create' || activeView === 'marketing-video-voucher-create' || activeView === 'marketing-follow-voucher-create' || activeView === 'marketing-product-voucher-create' || activeView === 'marketing-voucher-detail' || activeView === 'marketing-voucher-orders') {
       return (
         <div className="flex items-center gap-2 text-[14px]">
           <span className="text-gray-300">{'>'}</span>
@@ -94,11 +140,38 @@ export default function Header({
           <span className="text-gray-300">{'>'}</span>
           <button
             type="button"
-            onClick={() => onNavigateToView(activeView)}
+            onClick={() => onNavigateToView(activeView === 'marketing-shipping-fee-promotion-create' ? 'marketing-shipping-fee-promotion' : activeView === 'marketing-voucher-create' || activeView === 'marketing-private-voucher-create' || activeView === 'marketing-live-voucher-create' || activeView === 'marketing-video-voucher-create' || activeView === 'marketing-follow-voucher-create' || activeView === 'marketing-product-voucher-create' || activeView === 'marketing-voucher-detail' || activeView === 'marketing-voucher-orders' ? 'marketing-vouchers' : activeView)}
             className="text-gray-700 hover:text-[#ee4d2d]"
           >
-            {activeView === 'marketing-shopee-ads' ? 'Shopee 广告' : '代金券'}
+            {activeView === 'marketing-shopee-ads' ? 'Shopee 广告' : activeView === 'marketing-shipping-fee-promotion' || activeView === 'marketing-shipping-fee-promotion-create' ? '运费促销' : '代金券'}
           </button>
+          {activeView === 'marketing-shipping-fee-promotion-create' ? (
+            <>
+              <span className="text-gray-300">{'>'}</span>
+              <span className="text-gray-700">创建运费促销</span>
+            </>
+          ) : activeView === 'marketing-voucher-create' || activeView === 'marketing-private-voucher-create' || activeView === 'marketing-live-voucher-create' || activeView === 'marketing-video-voucher-create' || activeView === 'marketing-follow-voucher-create' || activeView === 'marketing-product-voucher-create' || activeView === 'marketing-voucher-detail' || activeView === 'marketing-voucher-orders' ? (
+            <>
+              <span className="text-gray-300">{'>'}</span>
+              <span className="text-gray-700">
+                {activeView === 'marketing-voucher-detail'
+                  ? voucherDetailLabels[voucherDetailType as VoucherDetailType] || '店铺代金券详情'
+                  : activeView === 'marketing-voucher-orders'
+                    ? '代金券订单'
+                    : activeView === 'marketing-product-voucher-create'
+                    ? '创建商品代金券'
+                    : activeView === 'marketing-private-voucher-create'
+                      ? '创建专属代金券'
+                      : activeView === 'marketing-live-voucher-create'
+                        ? '创建直播代金券'
+                        : activeView === 'marketing-video-voucher-create'
+                          ? '创建视频代金券'
+                          : activeView === 'marketing-follow-voucher-create'
+                            ? '创建关注礼代金券'
+                            : '创建店铺代金券'}
+              </span>
+            </>
+          ) : null}
         </div>
       );
     }
@@ -177,15 +250,30 @@ export default function Header({
   return (
     <header className="h-[60px] bg-white border-b border-gray-200 flex items-center justify-between px-6 sticky top-0 z-50">
       <div className="flex items-center gap-3">
-        <button type="button" onClick={onBackToDashboard} className="flex items-center gap-2">
-          <img 
-            src={shopeeLogo}
-            alt="Shopee Logo" 
-            className="h-8"
-          />
-          <span className="text-[17px] font-normal text-[#333333] ml-1 hover:text-[#ee4d2d]">卖家中心</span>
-        </button>
-        {renderBreadcrumb()}
+        {activeView === 'customer-service-web' ? (
+          <>
+            <button type="button" onClick={onBackToDashboard} className="flex items-center">
+              <img
+                src={shopeeLogo}
+                alt="Shopee Logo"
+                className="h-8"
+              />
+            </button>
+            <span className="text-[17px] font-bold text-[#333333]">Chat</span>
+          </>
+        ) : (
+          <>
+            <button type="button" onClick={onBackToDashboard} className="flex items-center gap-2">
+              <img
+                src={shopeeLogo}
+                alt="Shopee Logo"
+                className="h-8"
+              />
+              <span className="text-[17px] font-normal text-[#333333] ml-1 hover:text-[#ee4d2d]">卖家中心</span>
+            </button>
+            {renderBreadcrumb()}
+          </>
+        )}
       </div>
       
       <div className="flex items-center gap-6">
