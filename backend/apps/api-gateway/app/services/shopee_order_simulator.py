@@ -25,6 +25,10 @@ from app.models import (
     ShopeeProductVoucherCampaign,
     ShopeeShopVoucherCampaign,
     ShopeeVideoVoucherCampaign,
+    ShopeeCustomerServiceConversation,
+    ShopeeCustomerServiceMessage,
+    ShopeeCustomerServiceModelSetting,
+    ShopeeCustomerServiceScenario,
     ShopeeListing,
     ShopeeListingVariant,
     ShopeeOrder,
@@ -58,6 +62,12 @@ FLASH_SALE_VIEW_PROB_CAP = 0.75
 FLASH_SALE_CLICK_PROB_CAP = 0.45
 FLASH_SALE_TRAFFIC_MAX_ITEMS_PER_BUYER = 3
 FLASH_SALE_TRAFFIC_MAX_EVENTS_PER_TICK = 200
+CUSTOMER_SERVICE_SCENARIO_PRODUCT_DETAIL = "product_detail_inquiry"
+CUSTOMER_SERVICE_OPEN_STATUSES = {"open", "waiting_seller"}
+CUSTOMER_SERVICE_MAX_OPEN_CONVERSATIONS = 3
+CUSTOMER_SERVICE_MAX_DAILY_CONVERSATIONS = 5
+CUSTOMER_SERVICE_INQUIRY_PROBABILITY = 0.35
+CUSTOMER_SERVICE_INQUIRY_PROBABILITY_CAP = 0.75
 REDIS_PREFIX = os.getenv("REDIS_PREFIX", "cbec")
 SHIPPING_FEE_PROMOTION_CHANNEL_MAP = {
     "标准快递": "standard",
@@ -115,6 +125,143 @@ def _safe_load_str_list(raw: str) -> list[str]:
         if text:
             values.append(text)
     return values
+
+
+def _ensure_customer_service_scenario(db: Session) -> ShopeeCustomerServiceScenario:
+    row = db.query(ShopeeCustomerServiceScenario).filter(ShopeeCustomerServiceScenario.scenario_code == CUSTOMER_SERVICE_SCENARIO_PRODUCT_DETAIL).first()
+    if row:
+        return row
+    row = ShopeeCustomerServiceScenario(
+        scenario_code=CUSTOMER_SERVICE_SCENARIO_PRODUCT_DETAIL,
+        name="售前商品细节追问",
+        trigger_type="pre_order_intent",
+        enabled=True,
+        base_probability=CUSTOMER_SERVICE_INQUIRY_PROBABILITY,
+        cooldown_game_hours=48,
+        buyer_persona_prompt="买家已产生下单意愿，但下单前还想确认商品细节；回复要像真实买家，可以先表达理解、犹豫、认可或补充个人偏好。",
+        scenario_prompt="围绕商品规格、图片、库存、适用场景等售前问题进行追问；可用生活化语言复述客服解释并逐步澄清需求，避免问卷式连续短答。",
+        rubric_json=json.dumps({"响应完整度": 30, "商品准确性": 25, "服务态度": 20, "购买引导": 15, "平台合规": 10}, ensure_ascii=False),
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def _get_customer_service_model_setting(db: Session, *, run_id: int, user_id: int) -> ShopeeCustomerServiceModelSetting | None:
+    row = db.query(ShopeeCustomerServiceModelSetting).filter(ShopeeCustomerServiceModelSetting.run_id == run_id, ShopeeCustomerServiceModelSetting.user_id == user_id).first()
+    if row is not None:
+        return row
+    row = db.query(ShopeeCustomerServiceModelSetting).filter(ShopeeCustomerServiceModelSetting.run_id.is_(None), ShopeeCustomerServiceModelSetting.user_id.is_(None)).first()
+    if row is not None:
+        return row
+    enabled = os.getenv("SHOPEE_CUSTOMER_SERVICE_LLM_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
+    return ShopeeCustomerServiceModelSetting(
+        run_id=run_id,
+        user_id=user_id,
+        provider=os.getenv("SHOPEE_CUSTOMER_SERVICE_LLM_PROVIDER", "lm_studio"),
+        model_name=os.getenv("SHOPEE_CUSTOMER_SERVICE_LLM_MODEL", "local-model"),
+        base_url=os.getenv("SHOPEE_CUSTOMER_SERVICE_LLM_BASE_URL", "http://localhost:1234/v1"),
+        api_key_ref=os.getenv("SHOPEE_CUSTOMER_SERVICE_LLM_API_KEY") or None,
+        temperature=float(os.getenv("SHOPEE_CUSTOMER_SERVICE_LLM_TEMPERATURE", "0.7")),
+        max_tokens=int(os.getenv("SHOPEE_CUSTOMER_SERVICE_LLM_MAX_TOKENS", "300")),
+        enabled=enabled,
+    )
+
+
+def _customer_service_model_ready(row: ShopeeCustomerServiceModelSetting | None) -> bool:
+    return bool(row and row.enabled and (row.model_name or "").strip() and (row.base_url or "").strip())
+
+
+def _build_customer_service_listing_context(listing: ShopeeListing, *, selected_variant: ShopeeListingVariant | None = None) -> dict[str, Any]:
+    images = sorted(listing.images or [], key=lambda item: (not item.is_cover, item.sort_order, item.id))
+    specs = sorted(listing.specs or [], key=lambda item: item.id)
+    variants = sorted(listing.variants or [], key=lambda item: (item.sort_order, item.id))
+    latest_score = next((score for score in sorted(listing.quality_scores or [], key=lambda item: item.created_at or datetime.min, reverse=True) if score.is_latest), None)
+    selected_image_url = selected_variant.image_url if selected_variant and (selected_variant.image_url or "").strip() else None
+    return {
+        "id": listing.id,
+        "title": listing.title,
+        "category": listing.category,
+        "description": listing.description or "",
+        "description_summary": (listing.description or "")[:160],
+        "price": listing.price,
+        "original_price": listing.original_price,
+        "stock_available": listing.stock_available,
+        "cover_url": selected_image_url or listing.cover_url or (images[0].image_url if images else None),
+        "image_urls": ([selected_image_url] if selected_image_url else []) + [image.image_url for image in images if image.image_url != selected_image_url],
+        "image_count": len(([selected_image_url] if selected_image_url else []) + [image.image_url for image in images if image.image_url != selected_image_url]),
+        "selected_variant_id": selected_variant.id if selected_variant else None,
+        "selected_variant_name": selected_variant.variant_name if selected_variant else None,
+        "selected_variant_option": selected_variant.option_value if selected_variant else None,
+        "selected_variant_image_url": selected_image_url,
+        "specs": [{"key": spec.attr_key, "label": spec.attr_label, "value": spec.attr_value} for spec in specs],
+        "variants": [{"id": item.id, "name": item.variant_name, "option": item.option_value, "price": item.price, "stock": item.stock, "image_url": item.image_url} for item in variants],
+        "quality_total_score": listing.quality_total_score if listing.quality_total_score is not None else (latest_score.total_score if latest_score else None),
+        "quality_status": listing.quality_status,
+    }
+
+
+def _build_pre_order_buyer_message(*, listing: ShopeeListing, buyer: SimBuyerProfile, context: dict[str, Any]) -> str:
+    selected_option = str(context.get("selected_variant_option") or context.get("selected_variant_name") or "").strip()
+    variant_options = [str(item.get("option") or item.get("name") or "").strip() for item in context.get("variants") or []]
+    variant_options = [item for item in variant_options if item]
+    if selected_option:
+        return f"你好，我想下单这个{listing.title}，想先确认一下{selected_option}这个选项的细节和实物图片一致吗？"
+    if variant_options:
+        return f"你好，我想下单这个{listing.title}，想先确认一下{variant_options[0]}这个选项的细节和实物图片一致吗？"
+    if context.get("image_count"):
+        return f"你好，我准备下单这个{listing.title}，想先确认一下商品图片和实际收到的会一致吗？"
+    return f"你好，我想下单这个{listing.title}，可以先帮我确认一下商品细节吗？"
+
+
+def _maybe_create_product_detail_inquiry_for_buyer(db: Session, *, run_id: int, user_id: int, buyer: SimBuyerProfile, listing: ShopeeListing, variant: ShopeeListingVariant | None, order_prob: float, rng: random.Random, game_now: datetime) -> bool:
+    setting = _get_customer_service_model_setting(db, run_id=run_id, user_id=user_id)
+    if not _customer_service_model_ready(setting):
+        return False
+    scenario = _ensure_customer_service_scenario(db)
+    if not scenario.enabled:
+        return False
+    open_count = db.query(ShopeeCustomerServiceConversation.id).filter(ShopeeCustomerServiceConversation.run_id == run_id, ShopeeCustomerServiceConversation.user_id == user_id, ShopeeCustomerServiceConversation.status.in_(CUSTOMER_SERVICE_OPEN_STATUSES)).count()
+    if open_count >= CUSTOMER_SERVICE_MAX_OPEN_CONVERSATIONS:
+        return False
+    day_start = game_now.replace(hour=0, minute=0, second=0, microsecond=0)
+    created_today = db.query(ShopeeCustomerServiceConversation.id).filter(ShopeeCustomerServiceConversation.run_id == run_id, ShopeeCustomerServiceConversation.user_id == user_id, ShopeeCustomerServiceConversation.opened_game_at >= day_start).count()
+    if created_today >= CUSTOMER_SERVICE_MAX_DAILY_CONVERSATIONS:
+        return False
+    exists = db.query(ShopeeCustomerServiceConversation.id).filter(ShopeeCustomerServiceConversation.run_id == run_id, ShopeeCustomerServiceConversation.user_id == user_id, ShopeeCustomerServiceConversation.scenario_code == CUSTOMER_SERVICE_SCENARIO_PRODUCT_DETAIL, ShopeeCustomerServiceConversation.listing_id == listing.id).first()
+    if exists:
+        return False
+    probability = _clamp(float(scenario.base_probability) + order_prob * 0.25, 0.05, CUSTOMER_SERVICE_INQUIRY_PROBABILITY_CAP)
+    if rng.random() > probability:
+        return False
+    context = _build_customer_service_listing_context(listing, selected_variant=variant)
+    conversation = ShopeeCustomerServiceConversation(
+        run_id=run_id,
+        user_id=user_id,
+        scenario_id=scenario.id,
+        scenario_code=scenario.scenario_code,
+        buyer_profile_id=buyer.id,
+        buyer_name=buyer.nickname or "Shopee Buyer",
+        listing_id=listing.id,
+        order_id=None,
+        status="open",
+        trigger_reason="买家通过下单概率后，在下单前发起售前商品细节咨询",
+        context_json=json.dumps(context, ensure_ascii=False),
+        opened_game_at=game_now,
+    )
+    db.add(conversation)
+    db.flush()
+    db.add(ShopeeCustomerServiceMessage(
+        conversation_id=conversation.id,
+        run_id=run_id,
+        user_id=user_id,
+        sender_type="buyer",
+        message_type="text",
+        content=_build_pre_order_buyer_message(listing=listing, buyer=buyer, context=context),
+        sent_game_at=game_now,
+    ))
+    cache_delete_prefix(f"{REDIS_PREFIX}:shopee:customer_service:conversations:{run_id}:{user_id}:")
+    return True
 
 
 def _resolve_listing_quality_score(listing: ShopeeListing) -> float:
@@ -1733,7 +1880,12 @@ def simulate_orders_for_run(
 
     live_products = (
         db.query(ShopeeListing)
-        .options(selectinload(ShopeeListing.variants))
+        .options(
+            selectinload(ShopeeListing.images),
+            selectinload(ShopeeListing.specs),
+            selectinload(ShopeeListing.variants),
+            selectinload(ShopeeListing.quality_scores),
+        )
         .filter(
             ShopeeListing.run_id == run_id,
             ShopeeListing.user_id == user_id,
@@ -2471,6 +2623,12 @@ def simulate_orders_for_run(
             skip_reasons["below_probability"] = skip_reasons.get("below_probability", 0) + 1
             journey["decision"] = "skipped_probability"
             journey["reason"] = "order_roll_gt_order_prob"
+            buyer_journeys.append(journey)
+            continue
+        if _maybe_create_product_detail_inquiry_for_buyer(db, run_id=run_id, user_id=user_id, buyer=buyer, listing=best_listing, variant=variant, order_prob=order_prob, rng=rng, game_now=now):
+            skip_reasons["pre_order_inquiry"] = skip_reasons.get("pre_order_inquiry", 0) + 1
+            journey["decision"] = "created_pre_order_inquiry"
+            journey["reason"] = "buyer_inquired_before_order"
             buyer_journeys.append(journey)
             continue
         if quantity is None:

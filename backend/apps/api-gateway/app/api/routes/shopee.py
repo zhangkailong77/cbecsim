@@ -1,5 +1,6 @@
 from datetime import date, datetime, time, timedelta
 import hashlib
+import httpx
 import re
 import json
 import logging
@@ -56,6 +57,10 @@ from app.models import (
     ShopeeProductVoucherCampaign,
     ShopeeFollowVoucherCampaign,
     ShopeeAutoReplySetting,
+    ShopeeCustomerServiceConversation,
+    ShopeeCustomerServiceMessage,
+    ShopeeCustomerServiceModelSetting,
+    ShopeeCustomerServiceScenario,
     ShopeeQuickReplyPreference,
     ShopeeQuickReplyGroup,
     ShopeeQuickReplyMessage,
@@ -134,6 +139,8 @@ REDIS_CACHE_TTL_SHOPEE_SHIPPING_FEE_PROMOTION_BOOTSTRAP_SEC = max(10, int(os.get
 REDIS_CACHE_TTL_SHOPEE_SHIPPING_FEE_PROMOTION_LIST_SEC = max(10, int(os.getenv("REDIS_CACHE_TTL_SHOPEE_SHIPPING_FEE_PROMOTION_LIST_SEC", "60")))
 REDIS_CACHE_TTL_SHOPEE_AUTO_REPLY_SETTINGS_SEC = max(10, int(os.getenv("REDIS_CACHE_TTL_SHOPEE_AUTO_REPLY_SETTINGS_SEC", "300")))
 REDIS_CACHE_TTL_SHOPEE_QUICK_REPLY_LIST_SEC = max(10, int(os.getenv("REDIS_CACHE_TTL_SHOPEE_QUICK_REPLY_LIST_SEC", "300")))
+REDIS_CACHE_TTL_SHOPEE_CUSTOMER_SERVICE_LIST_SEC = max(5, int(os.getenv("REDIS_CACHE_TTL_SHOPEE_CUSTOMER_SERVICE_LIST_SEC", "30")))
+REDIS_CACHE_TTL_SHOPEE_CUSTOMER_SERVICE_DETAIL_SEC = max(5, int(os.getenv("REDIS_CACHE_TTL_SHOPEE_CUSTOMER_SERVICE_DETAIL_SEC", "30")))
 REDIS_CACHE_TTL_DISCOUNT_ELIGIBLE_PRODUCTS_SEC = max(10, int(os.getenv("REDIS_CACHE_TTL_DISCOUNT_ELIGIBLE_PRODUCTS_SEC", "20")))
 REDIS_CACHE_TTL_DISCOUNT_DRAFT_SEC = max(30, int(os.getenv("REDIS_CACHE_TTL_DISCOUNT_DRAFT_SEC", "300")))
 REDIS_CACHE_TTL_ADDON_BOOTSTRAP_SEC = max(10, int(os.getenv("REDIS_CACHE_TTL_ADDON_BOOTSTRAP_SEC", "30")))
@@ -155,6 +162,8 @@ REDIS_RATE_LIMIT_DISCOUNT_LIST_PER_MIN = max(10, int(os.getenv("REDIS_RATE_LIMIT
 REDIS_RATE_LIMIT_DISCOUNT_DETAIL_PER_MIN = max(10, int(os.getenv("REDIS_RATE_LIMIT_DISCOUNT_DETAIL_PER_MIN", "120")))
 REDIS_RATE_LIMIT_DISCOUNT_DATA_PER_MIN = max(10, int(os.getenv("REDIS_RATE_LIMIT_DISCOUNT_DATA_PER_MIN", "120")))
 REDIS_RATE_LIMIT_DISCOUNT_DATA_EXPORT_PER_MIN = max(5, int(os.getenv("REDIS_RATE_LIMIT_DISCOUNT_DATA_EXPORT_PER_MIN", "10")))
+REDIS_RATE_LIMIT_SHOPEE_CUSTOMER_SERVICE_PER_MIN = max(10, int(os.getenv("REDIS_RATE_LIMIT_SHOPEE_CUSTOMER_SERVICE_PER_MIN", "60")))
+REDIS_RATE_LIMIT_SHOPEE_CUSTOMER_SERVICE_LLM_PER_MIN = max(3, int(os.getenv("REDIS_RATE_LIMIT_SHOPEE_CUSTOMER_SERVICE_LLM_PER_MIN", "10")))
 REDIS_RATE_LIMIT_DISCOUNT_CREATE_BOOTSTRAP_PER_MIN = max(10, int(os.getenv("REDIS_RATE_LIMIT_DISCOUNT_CREATE_BOOTSTRAP_PER_MIN", "60")))
 REDIS_RATE_LIMIT_SHOPEE_VOUCHER_CREATE_BOOTSTRAP_PER_MIN = max(10, int(os.getenv("REDIS_RATE_LIMIT_SHOPEE_VOUCHER_CREATE_BOOTSTRAP_PER_MIN", "60")))
 REDIS_RATE_LIMIT_SHOPEE_VOUCHER_CODE_CHECK_PER_MIN = max(10, int(os.getenv("REDIS_RATE_LIMIT_SHOPEE_VOUCHER_CODE_CHECK_PER_MIN", "120")))
@@ -501,6 +510,112 @@ class ShopeeQuickReplyGroupSortRequest(BaseModel):
 
 class ShopeeQuickReplyGroupReorderRequest(BaseModel):
     group_ids: list[int]
+
+
+CUSTOMER_SERVICE_SCENARIO_PRODUCT_DETAIL = "product_detail_inquiry"
+CUSTOMER_SERVICE_OPEN_STATUSES = {"open", "waiting_seller"}
+CUSTOMER_SERVICE_MAX_OPEN_CONVERSATIONS = 3
+CUSTOMER_SERVICE_MAX_DAILY_CONVERSATIONS = 5
+CUSTOMER_SERVICE_MAX_MESSAGES = 10
+CUSTOMER_SERVICE_RECOMMENDED_MESSAGES = 7
+CUSTOMER_SERVICE_MIN_MESSAGES = 5
+
+
+class ShopeeCustomerServiceListingResponse(BaseModel):
+    id: int | None = None
+    title: str = ""
+    image_url: str | None = None
+    price: int | None = None
+    original_price: int | None = None
+    stock_available: int | None = None
+    quality_total_score: int | None = None
+    specs: list[dict[str, Any]] = Field(default_factory=list)
+    variants: list[dict[str, Any]] = Field(default_factory=list)
+    description_summary: str = ""
+
+
+class ShopeeCustomerServiceMessageResponse(BaseModel):
+    id: int
+    sender_type: str
+    message_type: str
+    content: str
+    sent_game_at: datetime
+
+
+class ShopeeCustomerServiceConversationSummaryResponse(BaseModel):
+    id: int
+    scenario_code: str
+    scenario_name: str
+    buyer_name: str
+    status: str
+    last_message: str
+    last_message_game_at: datetime | None = None
+    listing: ShopeeCustomerServiceListingResponse | None = None
+    unread_count: int = 0
+    message_count: int = 0
+
+
+class ShopeeCustomerServiceConversationListResponse(BaseModel):
+    items: list[ShopeeCustomerServiceConversationSummaryResponse]
+    total: int
+    page: int
+    page_size: int
+    model_ready: bool
+    model_message: str | None = None
+
+
+class ShopeeCustomerServiceConversationDetailResponse(BaseModel):
+    id: int
+    scenario_code: str
+    scenario_name: str
+    buyer_name: str
+    status: str
+    trigger_reason: str
+    listing: ShopeeCustomerServiceListingResponse | None = None
+    messages: list[ShopeeCustomerServiceMessageResponse]
+    satisfaction_score: float | None = None
+    satisfaction_level: str | None = None
+    score_detail: dict[str, Any] | None = None
+    can_send: bool
+    can_resolve: bool
+    min_messages: int = CUSTOMER_SERVICE_MIN_MESSAGES
+    recommended_messages: int = CUSTOMER_SERVICE_RECOMMENDED_MESSAGES
+    max_messages: int = CUSTOMER_SERVICE_MAX_MESSAGES
+    model_ready: bool
+    model_message: str | None = None
+
+
+class ShopeeCustomerServiceSendMessageRequest(BaseModel):
+    content: str = Field(min_length=1, max_length=1000)
+
+
+class ShopeeCustomerServiceResolveResponse(BaseModel):
+    conversation: ShopeeCustomerServiceConversationDetailResponse
+
+
+class ShopeeCustomerServiceModelSettingResponse(BaseModel):
+    id: int | None = None
+    provider: str = "lm_studio"
+    model_name: str = "local-model"
+    base_url: str | None = "http://localhost:1234/v1"
+    temperature: float = 0.7
+    max_tokens: int = 300
+    enabled: bool = False
+    api_key_configured: bool = False
+
+
+class ShopeeCustomerServiceModelSettingUpdateRequest(BaseModel):
+    provider: str = "lm_studio"
+    model_name: str
+    base_url: str | None = "http://localhost:1234/v1"
+    api_key_ref: str | None = None
+    temperature: float = Field(default=0.7, ge=0, le=2)
+    max_tokens: int = Field(default=300, ge=64, le=2000)
+    enabled: bool = True
+
+
+class ShopeeCustomerServiceModelSettingUpdateResponse(BaseModel):
+    setting: ShopeeCustomerServiceModelSettingResponse
 
 
 class ShopeeOrderItemResponse(BaseModel):
@@ -2436,6 +2551,269 @@ def _resolve_auto_reply_status(*, enabled: bool, message: str) -> str:
     if not normalized_message or len(normalized_message) > AUTO_REPLY_MAX_MESSAGE_LENGTH:
         return "invalid"
     return "enabled" if enabled else "disabled"
+
+
+def _enforce_shopee_customer_service_rate_limit(*, user_id: int, llm: bool = False) -> None:
+    limited, _remaining, reset_at = check_rate_limit(
+        key=f"{REDIS_PREFIX}:ratelimit:shopee:customer_service:{'llm' if llm else 'api'}:user:{user_id}",
+        limit=REDIS_RATE_LIMIT_SHOPEE_CUSTOMER_SERVICE_LLM_PER_MIN if llm else REDIS_RATE_LIMIT_SHOPEE_CUSTOMER_SERVICE_PER_MIN,
+        window_sec=60,
+    )
+    if limited:
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=f"客服请求过于频繁，请在 {reset_at} 后重试")
+
+
+def _customer_service_list_cache_key(*, run_id: int, user_id: int, status_filter: str | None, page: int, page_size: int) -> str:
+    digest = hashlib.md5(json.dumps({"status": status_filter, "page": page, "page_size": page_size}, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+    return f"{REDIS_PREFIX}:shopee:customer_service:conversations:{run_id}:{user_id}:{digest}"
+
+
+def _customer_service_detail_cache_key(*, conversation_id: int) -> str:
+    return f"{REDIS_PREFIX}:shopee:customer_service:conversation:{conversation_id}"
+
+
+def _invalidate_customer_service_cache(*, run_id: int, user_id: int, conversation_id: int | None = None) -> None:
+    cache_delete_prefix(f"{REDIS_PREFIX}:shopee:customer_service:conversations:{run_id}:{user_id}:")
+    if conversation_id is not None:
+        cache_delete_prefix(_customer_service_detail_cache_key(conversation_id=conversation_id))
+
+
+def _safe_json_loads(raw: str | None, default: Any) -> Any:
+    if not raw:
+        return default
+    try:
+        return json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        return default
+
+
+def _ensure_customer_service_scenario(db: Session) -> ShopeeCustomerServiceScenario:
+    row = db.query(ShopeeCustomerServiceScenario).filter(ShopeeCustomerServiceScenario.scenario_code == CUSTOMER_SERVICE_SCENARIO_PRODUCT_DETAIL).first()
+    if row is not None:
+        return row
+    row = ShopeeCustomerServiceScenario(
+        scenario_code=CUSTOMER_SERVICE_SCENARIO_PRODUCT_DETAIL,
+        name="商品细节追问",
+        trigger_type="product",
+        enabled=True,
+        base_probability=0.35,
+        cooldown_game_hours=48,
+        buyer_persona_prompt="你是 Shopee 买家，准备下单前会礼貌追问商品细节；回复要像真实买家，可以先表达理解、犹豫、认可或补充个人偏好。",
+        scenario_prompt="只围绕当前商品的标题、图片、规格、材质、颜色、尺码、库存、发货信息追问；可用生活化语言复述客服解释并逐步澄清需求，不编造商品事实，不暴露内部评分。",
+        rubric_json=json.dumps({"响应完整度": 30, "商品准确性": 25, "服务态度": 20, "购买引导": 15, "平台合规": 10}, ensure_ascii=False),
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def _get_customer_service_model_setting(db: Session, *, run_id: int, user_id: int) -> ShopeeCustomerServiceModelSetting | None:
+    row = db.query(ShopeeCustomerServiceModelSetting).filter(ShopeeCustomerServiceModelSetting.run_id == run_id, ShopeeCustomerServiceModelSetting.user_id == user_id).first()
+    if row is not None:
+        return row
+    row = db.query(ShopeeCustomerServiceModelSetting).filter(ShopeeCustomerServiceModelSetting.run_id.is_(None), ShopeeCustomerServiceModelSetting.user_id.is_(None)).first()
+    if row is not None:
+        return row
+    env_enabled = os.getenv("SHOPEE_CUSTOMER_SERVICE_LLM_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
+    return ShopeeCustomerServiceModelSetting(
+        run_id=run_id,
+        user_id=user_id,
+        provider=os.getenv("SHOPEE_CUSTOMER_SERVICE_LLM_PROVIDER", "lm_studio"),
+        model_name=os.getenv("SHOPEE_CUSTOMER_SERVICE_LLM_MODEL", "local-model"),
+        base_url=os.getenv("SHOPEE_CUSTOMER_SERVICE_LLM_BASE_URL", "http://localhost:1234/v1"),
+        api_key_ref=os.getenv("SHOPEE_CUSTOMER_SERVICE_LLM_API_KEY") or None,
+        temperature=float(os.getenv("SHOPEE_CUSTOMER_SERVICE_LLM_TEMPERATURE", "0.7")),
+        max_tokens=int(os.getenv("SHOPEE_CUSTOMER_SERVICE_LLM_MAX_TOKENS", "300")),
+        enabled=env_enabled,
+    )
+
+
+def _serialize_customer_service_model_setting(row: ShopeeCustomerServiceModelSetting | None) -> ShopeeCustomerServiceModelSettingResponse:
+    if row is None:
+        return ShopeeCustomerServiceModelSettingResponse()
+    return ShopeeCustomerServiceModelSettingResponse(
+        id=row.id,
+        provider=row.provider or "lm_studio",
+        model_name=row.model_name or "local-model",
+        base_url=row.base_url or "http://localhost:1234/v1",
+        temperature=float(row.temperature),
+        max_tokens=int(row.max_tokens),
+        enabled=bool(row.enabled),
+        api_key_configured=bool(row.api_key_ref),
+    )
+
+
+def _customer_service_model_ready(row: ShopeeCustomerServiceModelSetting | None) -> tuple[bool, str | None]:
+    if row is None or not row.enabled:
+        return False, "请先启用客服模型配置（LM Studio 默认 http://localhost:1234/v1）。"
+    if not (row.model_name or "").strip():
+        return False, "客服模型名称不能为空。"
+    if not (row.base_url or "").strip():
+        return False, "客服模型 Base URL 不能为空。"
+    return True, None
+
+
+def _build_customer_service_listing_context(listing: ShopeeListing) -> dict[str, Any]:
+    images = sorted(listing.images, key=lambda item: (not item.is_cover, item.sort_order, item.id))
+    specs = sorted(listing.specs, key=lambda item: item.id)
+    variants = sorted(listing.variants, key=lambda item: (item.sort_order, item.id))
+    latest_score = next((score for score in sorted(listing.quality_scores, key=lambda item: item.created_at or datetime.min, reverse=True) if score.is_latest), None)
+    reasons = _safe_json_loads(latest_score.reasons_json if latest_score else None, [])
+    suggestions = _safe_json_loads(latest_score.suggestions_json if latest_score else None, [])
+    return {
+        "id": listing.id,
+        "title": listing.title,
+        "category": listing.category,
+        "description": listing.description or "",
+        "description_summary": (listing.description or "")[:160],
+        "price": listing.price,
+        "original_price": listing.original_price,
+        "stock_available": listing.stock_available,
+        "cover_url": listing.cover_url or (images[0].image_url if images else None),
+        "image_urls": [image.image_url for image in images],
+        "image_count": len(images),
+        "specs": [{"key": spec.attr_key, "label": spec.attr_label, "value": spec.attr_value} for spec in specs],
+        "variants": [{"name": item.variant_name, "option": item.option_value, "price": item.price, "stock": item.stock, "image_url": item.image_url} for item in variants],
+        "quality_total_score": listing.quality_total_score if listing.quality_total_score is not None else (latest_score.total_score if latest_score else None),
+        "quality_status": listing.quality_status,
+        "quality_reasons": reasons,
+        "quality_suggestions": suggestions,
+    }
+
+
+def _serialize_customer_service_listing(context: dict[str, Any] | None) -> ShopeeCustomerServiceListingResponse | None:
+    if not context:
+        return None
+    return ShopeeCustomerServiceListingResponse(
+        id=context.get("id"),
+        title=str(context.get("title") or ""),
+        image_url=context.get("cover_url"),
+        price=context.get("price"),
+        original_price=context.get("original_price"),
+        stock_available=context.get("stock_available"),
+        quality_total_score=context.get("quality_total_score"),
+        specs=context.get("specs") if isinstance(context.get("specs"), list) else [],
+        variants=context.get("variants") if isinstance(context.get("variants"), list) else [],
+        description_summary=str(context.get("description_summary") or ""),
+    )
+
+
+def _call_customer_service_llm(setting: ShopeeCustomerServiceModelSetting, *, system_prompt: str, user_prompt: str) -> str:
+    _enforce_shopee_customer_service_rate_limit(user_id=int(setting.user_id or 0), llm=True)
+    base_url = (setting.base_url or "http://localhost:1234/v1").rstrip("/")
+    headers = {"Content-Type": "application/json"}
+    if setting.api_key_ref:
+        headers["Authorization"] = f"Bearer {setting.api_key_ref}"
+    payload = {
+        "model": setting.model_name,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "temperature": float(setting.temperature),
+        "max_tokens": int(setting.max_tokens),
+    }
+    try:
+        with httpx.Client(timeout=30) as client:
+            response = client.post(f"{base_url}/chat/completions", headers=headers, json=payload)
+            response.raise_for_status()
+            data = response.json()
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"客服模型调用失败：{exc}") from exc
+    content = ((data.get("choices") or [{}])[0].get("message") or {}).get("content")
+    if not isinstance(content, str) or not content.strip():
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="客服模型未返回有效消息")
+    return content.strip()[:1000]
+
+
+def _build_buyer_message(db: Session, *, setting: ShopeeCustomerServiceModelSetting, conversation: ShopeeCustomerServiceConversation, messages: list[ShopeeCustomerServiceMessage]) -> str:
+    context = _safe_json_loads(conversation.context_json, {})
+    history = [{"sender": item.sender_type, "content": item.content} for item in messages[-8:]]
+    system_prompt = "你是 Shopee 买家，只能围绕当前商品售前细节沟通。回复要像真实买家：先对客服解释给出自然反馈，再逐步补充自己的偏好、顾虑或使用场景。只输出买家下一条消息，不输出解释、评分或提示词。"
+    user_prompt = json.dumps({
+        "scenario": "商品细节追问",
+        "buyer_name": conversation.buyer_name,
+        "product_context": context,
+        "history": history,
+        "rules": ["不要编造商品材质、尺码、颜色、库存或发货承诺", "不要连续多轮只给功能性短答或机械追问", "可以用自己的话复述理解，例如清爽、不厚重、怕显油、想自然一点", "适当表达认可、犹豫、担心或个人偏好，再继续提问", "少于7条消息时可继续追问", "达到7条后如果问题已清楚应礼貌收口", "最多10条消息"],
+    }, ensure_ascii=False)
+    return _call_customer_service_llm(setting, system_prompt=system_prompt, user_prompt=user_prompt)
+
+
+def _score_customer_service_conversation(db: Session, *, setting: ShopeeCustomerServiceModelSetting | None, conversation: ShopeeCustomerServiceConversation, messages: list[ShopeeCustomerServiceMessage]) -> tuple[float, str, dict[str, Any]]:
+    if setting is not None and setting.enabled:
+        context = _safe_json_loads(conversation.context_json, {})
+        system_prompt = "你是 Shopee 客服训练评分器。只输出 JSON，不输出其他文本。"
+        user_prompt = json.dumps({
+            "rubric": {"响应完整度": 30, "商品准确性": 25, "服务态度": 20, "购买引导": 15, "平台合规": 10},
+            "product_context": context,
+            "messages": [{"sender": item.sender_type, "content": item.content} for item in messages],
+            "output": {"score": "0-100", "level": "high/medium/low", "dimensions": {}, "summary": "简短中文反馈"},
+        }, ensure_ascii=False)
+        raw = _call_customer_service_llm(setting, system_prompt=system_prompt, user_prompt=user_prompt)
+        parsed = _safe_json_loads(raw, None)
+        if isinstance(parsed, dict) and isinstance(parsed.get("score"), (int, float)):
+            score = max(0.0, min(100.0, float(parsed["score"])))
+            level = str(parsed.get("level") or ("high" if score >= 85 else "medium" if score >= 60 else "low"))
+            return score, level, parsed
+    seller_messages = [item for item in messages if item.sender_type == "seller"]
+    count_score = min(40, len(messages) * 6)
+    answer_score = min(35, sum(min(len(item.content), 120) for item in seller_messages) / 120 * 35)
+    score = max(0.0, min(100.0, count_score + answer_score + (15 if seller_messages else 0)))
+    level = "high" if score >= 85 else "medium" if score >= 60 else "low"
+    return score, level, {"score": score, "level": level, "summary": "已按消息完整度、回复长度和会话轮次生成规则评分。"}
+
+
+def _select_customer_service_buyer(db: Session) -> SimBuyerProfile | None:
+    return db.query(SimBuyerProfile).filter(SimBuyerProfile.is_active == True).order_by(func.rand()).first()
+
+
+def _serialize_customer_service_message(row: ShopeeCustomerServiceMessage) -> ShopeeCustomerServiceMessageResponse:
+    return ShopeeCustomerServiceMessageResponse(id=row.id, sender_type=row.sender_type, message_type=row.message_type, content=row.content, sent_game_at=row.sent_game_at)
+
+
+def _serialize_customer_service_summary(row: ShopeeCustomerServiceConversation) -> ShopeeCustomerServiceConversationSummaryResponse:
+    messages = sorted(row.messages, key=lambda item: (item.sent_game_at, item.id))
+    last_message = messages[-1] if messages else None
+    context = _safe_json_loads(row.context_json, {})
+    return ShopeeCustomerServiceConversationSummaryResponse(
+        id=row.id,
+        scenario_code=row.scenario_code,
+        scenario_name=row.scenario.name if row.scenario else "商品细节追问",
+        buyer_name=row.buyer_name,
+        status=row.status,
+        last_message=last_message.content if last_message else "",
+        last_message_game_at=last_message.sent_game_at if last_message else None,
+        listing=_serialize_customer_service_listing(context),
+        unread_count=sum(1 for item in messages if item.sender_type == "buyer" and row.status in CUSTOMER_SERVICE_OPEN_STATUSES),
+        message_count=len(messages),
+    )
+
+
+def _serialize_customer_service_detail(db: Session, *, run: GameRun, user_id: int, row: ShopeeCustomerServiceConversation) -> ShopeeCustomerServiceConversationDetailResponse:
+    messages = sorted(row.messages, key=lambda item: (item.sent_game_at, item.id))
+    context = _safe_json_loads(row.context_json, {})
+    score_detail = _safe_json_loads(row.score_detail_json, None) if row.score_detail_json else None
+    setting = _get_customer_service_model_setting(db, run_id=run.id, user_id=user_id)
+    ready, message = _customer_service_model_ready(setting)
+    return ShopeeCustomerServiceConversationDetailResponse(
+        id=row.id,
+        scenario_code=row.scenario_code,
+        scenario_name=row.scenario.name if row.scenario else "商品细节追问",
+        buyer_name=row.buyer_name,
+        status=row.status,
+        trigger_reason=row.trigger_reason,
+        listing=_serialize_customer_service_listing(context),
+        messages=[_serialize_customer_service_message(item) for item in messages],
+        satisfaction_score=row.satisfaction_score,
+        satisfaction_level=row.satisfaction_level,
+        score_detail=score_detail,
+        can_send=run.status == "running" and row.status in CUSTOMER_SERVICE_OPEN_STATUSES and len(messages) < CUSTOMER_SERVICE_MAX_MESSAGES,
+        can_resolve=run.status == "running" and row.status in CUSTOMER_SERVICE_OPEN_STATUSES,
+        model_ready=ready,
+        model_message=message,
+    )
 
 
 def _serialize_auto_reply_setting(row: ShopeeAutoReplySetting | None, *, reply_type: str) -> ShopeeAutoReplySettingResponse:
@@ -11527,6 +11905,174 @@ def list_shopee_discount_eligible_products(
     )
     cache_set_json(cache_key, payload.model_dump(mode="json"), REDIS_CACHE_TTL_DISCOUNT_ELIGIBLE_PRODUCTS_SEC)
     return payload
+
+
+@router.get("/runs/{run_id}/customer-service/model-settings", response_model=ShopeeCustomerServiceModelSettingResponse)
+def get_shopee_customer_service_model_settings(
+    run_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> ShopeeCustomerServiceModelSettingResponse:
+    user_id = int(current_user["id"])
+    run = _get_owned_order_readable_run_or_404(db, run_id, user_id)
+    return _serialize_customer_service_model_setting(_get_customer_service_model_setting(db, run_id=run.id, user_id=user_id))
+
+
+@router.put("/runs/{run_id}/customer-service/model-settings", response_model=ShopeeCustomerServiceModelSettingUpdateResponse)
+def update_shopee_customer_service_model_settings(
+    run_id: int,
+    payload: ShopeeCustomerServiceModelSettingUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> ShopeeCustomerServiceModelSettingUpdateResponse:
+    user_id = int(current_user["id"])
+    run = _get_owned_running_run_or_404(db, run_id, user_id)
+    provider = payload.provider.strip() or "lm_studio"
+    model_name = payload.model_name.strip()
+    if not model_name:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="客服模型名称不能为空")
+    base_url = (payload.base_url or "http://localhost:1234/v1").strip().rstrip("/")
+    if not base_url:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="客服模型 Base URL 不能为空")
+    row = db.query(ShopeeCustomerServiceModelSetting).filter(ShopeeCustomerServiceModelSetting.run_id == run.id, ShopeeCustomerServiceModelSetting.user_id == user_id).first()
+    if row is None:
+        row = ShopeeCustomerServiceModelSetting(run_id=run.id, user_id=user_id)
+        db.add(row)
+    row.provider = provider
+    row.model_name = model_name
+    row.base_url = base_url
+    row.api_key_ref = payload.api_key_ref.strip() if payload.api_key_ref else None
+    row.temperature = float(payload.temperature)
+    row.max_tokens = int(payload.max_tokens)
+    row.enabled = bool(payload.enabled)
+    db.commit()
+    db.refresh(row)
+    _invalidate_customer_service_cache(run_id=run.id, user_id=user_id)
+    return ShopeeCustomerServiceModelSettingUpdateResponse(setting=_serialize_customer_service_model_setting(row))
+
+
+@router.get("/runs/{run_id}/customer-service/conversations", response_model=ShopeeCustomerServiceConversationListResponse)
+def list_shopee_customer_service_conversations(
+    run_id: int,
+    scenario: str | None = Query(default=None),
+    status_filter: str | None = Query(default=None, alias="status"),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> ShopeeCustomerServiceConversationListResponse:
+    user_id = int(current_user["id"])
+    _enforce_shopee_customer_service_rate_limit(user_id=user_id)
+    run = _get_owned_order_readable_run_or_404(db, run_id, user_id)
+    cache_key = _customer_service_list_cache_key(run_id=run.id, user_id=user_id, status_filter=status_filter, page=page, page_size=page_size)
+    cached_payload = cache_get_json(cache_key)
+    if isinstance(cached_payload, dict):
+        return ShopeeCustomerServiceConversationListResponse.model_validate(cached_payload)
+    query = db.query(ShopeeCustomerServiceConversation).options(selectinload(ShopeeCustomerServiceConversation.messages), selectinload(ShopeeCustomerServiceConversation.scenario)).filter(ShopeeCustomerServiceConversation.run_id == run.id, ShopeeCustomerServiceConversation.user_id == user_id)
+    if scenario:
+        query = query.filter(ShopeeCustomerServiceConversation.scenario_code == scenario)
+    if status_filter:
+        if status_filter == "open":
+            query = query.filter(ShopeeCustomerServiceConversation.status.in_(CUSTOMER_SERVICE_OPEN_STATUSES))
+        else:
+            query = query.filter(ShopeeCustomerServiceConversation.status == status_filter)
+    total = query.count()
+    rows = query.order_by(ShopeeCustomerServiceConversation.updated_at.desc(), ShopeeCustomerServiceConversation.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
+    setting = _get_customer_service_model_setting(db, run_id=run.id, user_id=user_id)
+    ready, message = _customer_service_model_ready(setting)
+    payload = ShopeeCustomerServiceConversationListResponse(items=[_serialize_customer_service_summary(row) for row in rows], total=total, page=page, page_size=page_size, model_ready=ready, model_message=message)
+    cache_set_json(cache_key, payload.model_dump(mode="json"), REDIS_CACHE_TTL_SHOPEE_CUSTOMER_SERVICE_LIST_SEC)
+    return payload
+
+
+@router.get("/runs/{run_id}/customer-service/conversations/{conversation_id}", response_model=ShopeeCustomerServiceConversationDetailResponse)
+def get_shopee_customer_service_conversation(
+    run_id: int,
+    conversation_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> ShopeeCustomerServiceConversationDetailResponse:
+    user_id = int(current_user["id"])
+    _enforce_shopee_customer_service_rate_limit(user_id=user_id)
+    run = _get_owned_order_readable_run_or_404(db, run_id, user_id)
+    cache_key = _customer_service_detail_cache_key(conversation_id=conversation_id)
+    cached_payload = cache_get_json(cache_key)
+    if isinstance(cached_payload, dict):
+        return ShopeeCustomerServiceConversationDetailResponse.model_validate(cached_payload)
+    row = db.query(ShopeeCustomerServiceConversation).options(selectinload(ShopeeCustomerServiceConversation.messages), selectinload(ShopeeCustomerServiceConversation.scenario)).filter(ShopeeCustomerServiceConversation.id == conversation_id, ShopeeCustomerServiceConversation.run_id == run.id, ShopeeCustomerServiceConversation.user_id == user_id).first()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="客服会话不存在")
+    payload = _serialize_customer_service_detail(db, run=run, user_id=user_id, row=row)
+    cache_set_json(cache_key, payload.model_dump(mode="json"), REDIS_CACHE_TTL_SHOPEE_CUSTOMER_SERVICE_DETAIL_SEC)
+    return payload
+
+
+@router.post("/runs/{run_id}/customer-service/conversations/{conversation_id}/messages", response_model=ShopeeCustomerServiceConversationDetailResponse)
+def send_shopee_customer_service_message(
+    run_id: int,
+    conversation_id: int,
+    payload: ShopeeCustomerServiceSendMessageRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> ShopeeCustomerServiceConversationDetailResponse:
+    user_id = int(current_user["id"])
+    _enforce_shopee_customer_service_rate_limit(user_id=user_id)
+    run = _get_owned_running_run_or_404(db, run_id, user_id)
+    row = db.query(ShopeeCustomerServiceConversation).options(selectinload(ShopeeCustomerServiceConversation.messages), selectinload(ShopeeCustomerServiceConversation.scenario)).filter(ShopeeCustomerServiceConversation.id == conversation_id, ShopeeCustomerServiceConversation.run_id == run.id, ShopeeCustomerServiceConversation.user_id == user_id).first()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="客服会话不存在")
+    if row.status not in CUSTOMER_SERVICE_OPEN_STATUSES:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="当前会话已结束，不能继续回复")
+    messages = sorted(row.messages, key=lambda item: (item.sent_game_at, item.id))
+    if len(messages) >= CUSTOMER_SERVICE_MAX_MESSAGES:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="当前会话已达到最多 10 条消息，请结束会话或查看评分")
+    setting = _get_customer_service_model_setting(db, run_id=run.id, user_id=user_id)
+    ready, message = _customer_service_model_ready(setting)
+    if not ready or setting is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=message or "客服模型未配置")
+    game_now = _resolve_game_tick(db, run.id, user_id)
+    seller_message = ShopeeCustomerServiceMessage(conversation_id=row.id, run_id=run.id, user_id=user_id, sender_type="seller", message_type="text", content=payload.content.strip(), sent_game_at=game_now)
+    db.add(seller_message)
+    db.flush()
+    row.status = "waiting_seller"
+    messages.append(seller_message)
+    if len(messages) < CUSTOMER_SERVICE_MAX_MESSAGES:
+        buyer_content = _build_buyer_message(db, setting=setting, conversation=row, messages=messages)
+        db.add(ShopeeCustomerServiceMessage(conversation_id=row.id, run_id=run.id, user_id=user_id, sender_type="buyer", message_type="text", content=buyer_content, sent_game_at=game_now))
+        row.status = "open"
+    db.commit()
+    _invalidate_customer_service_cache(run_id=run.id, user_id=user_id, conversation_id=row.id)
+    row = db.query(ShopeeCustomerServiceConversation).options(selectinload(ShopeeCustomerServiceConversation.messages), selectinload(ShopeeCustomerServiceConversation.scenario)).filter(ShopeeCustomerServiceConversation.id == row.id).first()
+    return _serialize_customer_service_detail(db, run=run, user_id=user_id, row=row)
+
+
+@router.post("/runs/{run_id}/customer-service/conversations/{conversation_id}/resolve", response_model=ShopeeCustomerServiceResolveResponse)
+def resolve_shopee_customer_service_conversation(
+    run_id: int,
+    conversation_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> ShopeeCustomerServiceResolveResponse:
+    user_id = int(current_user["id"])
+    _enforce_shopee_customer_service_rate_limit(user_id=user_id)
+    run = _get_owned_running_run_or_404(db, run_id, user_id)
+    row = db.query(ShopeeCustomerServiceConversation).options(selectinload(ShopeeCustomerServiceConversation.messages), selectinload(ShopeeCustomerServiceConversation.scenario)).filter(ShopeeCustomerServiceConversation.id == conversation_id, ShopeeCustomerServiceConversation.run_id == run.id, ShopeeCustomerServiceConversation.user_id == user_id).first()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="客服会话不存在")
+    if row.status not in CUSTOMER_SERVICE_OPEN_STATUSES:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="当前会话已结束")
+    setting = _get_customer_service_model_setting(db, run_id=run.id, user_id=user_id)
+    messages = sorted(row.messages, key=lambda item: (item.sent_game_at, item.id))
+    score, level, detail = _score_customer_service_conversation(db, setting=setting, conversation=row, messages=messages)
+    row.status = "resolved"
+    row.closed_game_at = _resolve_game_tick(db, run.id, user_id)
+    row.satisfaction_score = score
+    row.satisfaction_level = level
+    row.score_detail_json = json.dumps(detail, ensure_ascii=False)
+    db.commit()
+    _invalidate_customer_service_cache(run_id=run.id, user_id=user_id, conversation_id=row.id)
+    row = db.query(ShopeeCustomerServiceConversation).options(selectinload(ShopeeCustomerServiceConversation.messages), selectinload(ShopeeCustomerServiceConversation.scenario)).filter(ShopeeCustomerServiceConversation.id == row.id).first()
+    return ShopeeCustomerServiceResolveResponse(conversation=_serialize_customer_service_detail(db, run=run, user_id=user_id, row=row))
 
 
 @router.get("/runs/{run_id}/customer-service/auto-replies", response_model=ShopeeAutoReplySettingsResponse)

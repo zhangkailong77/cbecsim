@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ChevronsRight,
   ChevronDown,
@@ -8,54 +8,76 @@ import {
 } from 'lucide-react';
 import ChatDetailWindow from './ChatDetailWindow';
 
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000';
+const ACCESS_TOKEN_KEY = 'cbec_access_token';
+
 interface ChatMessagesDrawerProps {
   open: boolean;
+  runId?: number | null;
+  readOnly?: boolean;
   onClose?: () => void;
   onOpenWebVersion?: () => void;
 }
 
-export default function ChatMessagesDrawer({ open, onClose, onOpenWebVersion }: ChatMessagesDrawerProps) {
-  // 1. 基础状态管理
+export default function ChatMessagesDrawer({ open, runId, readOnly = false, onClose, onOpenWebVersion }: ChatMessagesDrawerProps) {
   const [activeTab, setActiveTab] = useState<'serving' | 'all'>('serving');
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [selectedChat, setSelectedChat] = useState<any>(null);
-  
-  // 2. 各分组的展开/收起状态
+  const [conversations, setConversations] = useState<any[]>([]);
+  const [error, setError] = useState<string | null>(null);
+
   const [expanded, setExpanded] = useState({
     replied: true,
     inquiry: true,
     allBuyers: true
   });
 
+  const token = typeof window !== 'undefined' ? window.localStorage.getItem(ACCESS_TOKEN_KEY) : null;
+
+  const loadConversations = async () => {
+    if (!runId || !open) return;
+    setError(null);
+    try {
+      const statusQuery = activeTab === 'serving' ? '&status=open' : '';
+      const response = await fetch(`${API_BASE_URL}/shopee/runs/${runId}/customer-service/conversations?scenario=product_detail_inquiry&page=1&page_size=50${statusQuery}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!response.ok) throw new Error(await response.text());
+      const payload = await response.json();
+      setConversations(payload.items ?? []);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '客服会话加载失败');
+      setConversations([]);
+    }
+  };
+
+  useEffect(() => {
+    loadConversations();
+  }, [runId, open, activeTab]);
+
   const toggleGroup = (key: keyof typeof expanded) => {
     setExpanded(prev => ({ ...prev, [key]: !prev[key] }));
   };
 
-  // 3. 模拟数据...
-  const servingChats = [
-    { id: 's1', name: 'vasuchathongnoi', date: '02/04', msg: '亲爱的，我们的商品正在备货中，请耐心等待...', avatar: '' },
-    { id: 's2', name: 'pattanun23289', date: '02/04', msg: '亲爱的，商品已经寄出了，物流单号是...', avatar: 'https://api.dicebear.com/7.x/notionists/svg?seed=pattanun' }
-  ];
+  const toChat = (item: any) => ({
+    id: item.id,
+    name: item.buyer_name,
+    date: item.last_message_game_at ? new Date(item.last_message_game_at).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' }) : '',
+    msg: item.last_message || '商品咨询',
+    avatar: '',
+    listing: item.listing,
+    raw: item,
+  });
 
-  const inquiryChats = [
-    { id: 'a1', name: 'pattanun23289', date: '02/04', msg: '这款柜子还有其他颜色吗？', avatar: 'https://api.dicebear.com/7.x/notionists/svg?seed=pattanun' }
-  ];
-  
-  const allBuyerChats = [
-    { id: 'a2', name: 'vasuchathongnoi', date: '02/04', msg: '亲爱的，由于物流原因可能需要延迟发货。', avatar: '' },
-    { id: 'a3', name: 'nutcha1279', date: '30/03', msg: '亲爱的，对于这次不好的体验我们深表歉意...', avatar: 'https://api.dicebear.com/7.x/notionists/svg?seed=nutcha' },
-    { id: 'a4', name: 'tjitsunan51', date: '30/03', msg: '你好亲爱的，欢迎来到我们的店铺...', avatar: '' },
-    { id: 'a5', name: 'khunjoejoe', date: '25/03', msg: '包裹已经加固包装了，请放心。', avatar: 'https://api.dicebear.com/7.x/notionists/svg?seed=joe' },
-    { id: 'a6', name: 'minize', date: '23/03', msg: '退款已经处理，请查看您的账户。', avatar: 'https://api.dicebear.com/7.x/notionists/svg?seed=minize' },
-  ];
+  const openChats = conversations.filter((item) => ['open', 'waiting_seller'].includes(item.status)).map(toChat);
+  const allChats = conversations.map(toChat);
 
-  // 5. 渲染单个聊天列表项
   const renderChatItem = (chat: any) => {
     const isActive = selectedChat?.id === chat.id;
     return (
-      <div 
-        key={chat.id} 
-        onClick={() => setSelectedChat(chat)} 
+      <div
+        key={chat.id}
+        onClick={() => setSelectedChat(chat)}
         className={`flex items-center gap-3 px-4 py-3 cursor-pointer transition-colors ${
           isActive ? 'bg-[#fff1ed]' : 'hover:bg-gray-50'
         }`}
@@ -67,7 +89,7 @@ export default function ChatMessagesDrawer({ open, onClose, onOpenWebVersion }: 
             <div className="w-full h-full bg-black rounded-full" />
           )}
         </div>
-        
+
         <div className="flex-1 min-w-0">
           <div className="flex justify-between items-center mb-0.5">
             <span className={`text-[13px] font-medium truncate pr-2 ${isActive ? 'text-[#ee4d2d]' : 'text-gray-900'}`}>
@@ -88,32 +110,29 @@ export default function ChatMessagesDrawer({ open, onClose, onOpenWebVersion }: 
           open ? 'w-[360px]' : 'w-0'
         }`}
       >
-        {/* ======================= 新增/修改核心逻辑 ======================= */}
-        {/* 将聊天详情窗口包裹在这里，使用 absolute 和 right-full 紧贴父元素(右侧面板)的左边缘 */}
         {selectedChat && (
-          <div 
+          <div
             className={`absolute bottom-0 right-full mr-3 z-50 mb-3 rounded-lg shadow-[0_4px_24px_rgba(0,0,0,0.12)] bg-white overflow-hidden transition-opacity duration-300 ${
               open ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
             }`}
           >
-            {/* 提示：确保你的 ChatDetailWindow 组件内部没有写 position: fixed，而是让他自适应外层这个 div 的大小 */}
-            <ChatDetailWindow 
-              chat={selectedChat} 
-              onClose={() => setSelectedChat(null)} 
+            <ChatDetailWindow
+              chat={selectedChat}
+              runId={runId}
+              readOnly={readOnly}
+              onClose={() => setSelectedChat(null)}
+              onConversationUpdated={loadConversations}
             />
           </div>
         )}
-        {/* =============================================================== */}
 
         <div className={`${open ? 'opacity-100' : 'opacity-0 pointer-events-none'} h-full transition-opacity duration-200 flex flex-col`}>
-          
-          {/* 顶部 Header */}
           <div className="flex items-center justify-between px-3 py-3 border-b border-gray-100 relative">
             <div className="flex items-center gap-3">
               <span className="text-[#ee4d2d] font-bold text-[18px]">Chat</span>
-              
+
               <div className="relative">
-                <div 
+                <div
                   onClick={() => setIsDropdownOpen(!isDropdownOpen)}
                   className={`flex items-center gap-1.5 border rounded-sm px-2 py-1 cursor-pointer transition-colors ${isDropdownOpen ? 'border-[#ee4d2d] bg-gray-50' : 'border-gray-200 hover:bg-gray-50'}`}
                 >
@@ -148,7 +167,7 @@ export default function ChatMessagesDrawer({ open, onClose, onOpenWebVersion }: 
                 <span>网页版</span>
               </button>
               <div className="w-px h-3 bg-gray-200 mx-1" />
-              <button 
+              <button
                 onClick={onClose}
                 className="text-gray-400 hover:text-gray-600 transition-colors"
               >
@@ -157,28 +176,26 @@ export default function ChatMessagesDrawer({ open, onClose, onOpenWebVersion }: 
             </div>
           </div>
 
-          {/* 搜索框 */}
           <div className="px-3 pt-3 pb-2">
             <div className="relative group">
               <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-[#ee4d2d]" />
-              <input 
-                type="text" 
-                placeholder="搜索名称" 
-                className="w-full pl-8 pr-3 py-1.5 text-[13px] border border-gray-200 rounded-sm outline-none focus:border-[#ee4d2d] transition-colors" 
+              <input
+                type="text"
+                placeholder="搜索名称"
+                className="w-full pl-8 pr-3 py-1.5 text-[13px] border border-gray-200 rounded-sm outline-none focus:border-[#ee4d2d] transition-colors"
               />
             </div>
           </div>
 
-          {/* 标签页 (Tabs) */}
           <div className="flex border-b border-gray-200">
-            <div 
+            <div
               onClick={() => setActiveTab('serving')}
               className={`flex-1 flex justify-center items-center py-2.5 cursor-pointer border-b-2 transition-colors ${activeTab === 'serving' ? 'border-[#ee4d2d]' : 'border-transparent hover:bg-gray-50'}`}
             >
               <span className={`text-[13px] font-medium ${activeTab === 'serving' ? 'text-[#ee4d2d]' : 'text-gray-600'}`}>今日接待</span>
               <div className="w-1.5 h-1.5 bg-[#ee4d2d] rounded-full ml-1 mb-2" />
             </div>
-            <div 
+            <div
               onClick={() => setActiveTab('all')}
               className={`flex-1 flex justify-center items-center py-2.5 cursor-pointer border-b-2 transition-colors ${activeTab === 'all' ? 'border-[#ee4d2d]' : 'border-transparent hover:bg-gray-50'}`}
             >
@@ -187,35 +204,35 @@ export default function ChatMessagesDrawer({ open, onClose, onOpenWebVersion }: 
             </div>
           </div>
 
-          {/* 列表内容区域 */}
           <div className="flex-1 overflow-y-auto custom-scrollbar">
+            {error && <div className="px-3 py-2 text-[12px] text-red-500 bg-red-50">{error}</div>}
             {activeTab === 'serving' ? (
               <div>
-                <div 
+                <div
                   onClick={() => toggleGroup('replied')}
                   className="flex items-center gap-1.5 px-3 py-2.5 text-[13px] text-gray-700 font-medium cursor-pointer hover:bg-gray-50 select-none"
                 >
                   {expanded.replied ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                  <span>已回复 (2)</span>
+                  <span>已回复 ({openChats.length})</span>
                 </div>
-                {expanded.replied && servingChats.map(renderChatItem)}
+                {expanded.replied && openChats.map(renderChatItem)}
               </div>
             ) : (
               <div className="flex flex-col">
                 <div>
-                  <div 
+                  <div
                     onClick={() => toggleGroup('inquiry')}
                     className="flex items-center gap-1.5 px-3 py-2.5 text-[13px] text-gray-700 font-medium cursor-pointer hover:bg-gray-50 select-none"
                   >
                     {expanded.inquiry ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                    <span>无订单咨询 (1)</span>
+                    <span>无订单咨询 ({openChats.length})</span>
                   </div>
-                  {expanded.inquiry && inquiryChats.map(renderChatItem)}
+                  {expanded.inquiry && openChats.map(renderChatItem)}
                 </div>
-                
+
                 <div className="mt-1">
                   <div className="flex items-center justify-between px-3 py-2 hover:bg-gray-50 select-none">
-                    <div 
+                    <div
                       onClick={() => toggleGroup('allBuyers')}
                       className="flex items-center gap-1.5 text-[13px] text-gray-700 font-medium cursor-pointer flex-1"
                     >
@@ -226,7 +243,7 @@ export default function ChatMessagesDrawer({ open, onClose, onOpenWebVersion }: 
                       <span>筛选</span>
                     </button>
                   </div>
-                  {expanded.allBuyers && allBuyerChats.map(renderChatItem)}
+                  {expanded.allBuyers && allChats.map(renderChatItem)}
                 </div>
               </div>
             )}

@@ -1,10 +1,48 @@
 # Change Log
 
-最后更新：2026-05-12（新增 Shopee 售前商品细节追问独立实现设计）
+最后更新：2026-05-12（调整 Shopee 客服买家自然反馈提示词）
 
 ## 2026-05-12
 
+### 调整
+- 调整 Shopee 客服买家自然反馈提示词。
+  - 涉及文件：`backend/apps/api-gateway/app/api/routes/shopee.py`、`backend/apps/api-gateway/app/services/shopee_order_simulator.py`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：强化售前商品细节追问的买家角色提示，要求买家在适当节点先表达理解、犹豫、认可或补充个人偏好/顾虑，再继续追问，避免连续问卷式短答；默认剧本 seed 与实际 LLM 买家回复提示词同步调整。
+  - 影响范围：仅影响 Shopee 客服模型生成买家下一条消息的表达风格和新建默认剧本文案；不改变接口、数据库结构、会话触发规则、评分规则或前端布局。
+  - 验证结果：`python -m py_compile backend/apps/api-gateway/app/api/routes/shopee.py backend/apps/api-gateway/app/services/shopee_order_simulator.py` 通过。
+
+- 新增 Shopee 客服发送后买家输入中动画。
+  - 涉及文件：`frontend/src/modules/shopee/components/ChatDetailWindow.tsx`、`frontend/src/modules/shopee/views/CustomerServiceWebView.tsx`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：Chat 抽屉和客服网页版发送卖家消息后，先将卖家消息本地追加到会话中，并在模型生成买家回复期间显示买家侧三点输入中气泡；接口返回后再用后端会话详情刷新真实消息列表。
+  - 影响范围：仅影响客服对话发送期间的前端交互反馈；不改变接口、数据库、页面布局或客服评分规则。
+  - 验证结果：已运行前端 TypeScript 诊断与相关文件币种残留检查；未重复执行此前被拒绝的 `npm --prefix frontend run build`。
+
+- 修正 Shopee 客服商品卡片币种展示。
+  - 涉及文件：`frontend/src/modules/shopee/components/ChatDetailWindow.tsx`、`frontend/src/modules/shopee/views/CustomerServiceWebView.tsx`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：将 Chat 抽屉商品卡片、客服网页版中间会话商品卡片和右侧商品面板价格展示从泰铢符号 `฿` 改为马来西亚 `RM`，避免出现 `฿188฿188` 这类错误币种展示。
+  - 影响范围：仅影响客服相关商品卡片价格展示；不改变接口数据、订单金额和页面布局。
+  - 验证结果：已确认客服相关文件无 `฿` 残留；未重复执行此前被拒绝的 `npm --prefix frontend run build`。
+
+- 修正 Shopee 售前咨询变体图片口径。
+  - 涉及文件：`backend/apps/api-gateway/app/services/shopee_order_simulator.py`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：订单模拟器在买家选中具体变体并触发售前商品细节追问时，会话商品上下文的 `cover_url` 与图片列表优先使用该变体图片，并记录选中变体 ID、名称、选项和变体图，避免买家咨询中展示主商品图而非准备下单变体图。
+  - 影响范围：影响订单模拟触发的 `product_detail_inquiry` 会话商品卡片与买家首条咨询上下文；前端样式与接口结构不变。
+  - 验证结果：`python -m py_compile backend/apps/api-gateway/app/services/shopee_order_simulator.py` 通过。
+
+- 调整 Shopee 售前商品细节追问触发口径。
+  - 涉及文件：`backend/apps/api-gateway/app/services/shopee_order_simulator.py`、`backend/apps/api-gateway/app/api/routes/shopee.py`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：将 `product_detail_inquiry` 从客服会话列表查询时扫描已上架商品触发，调整为订单模拟器中买家通过下单概率后、正式创建订单前按售前咨询概率分流触发；命中咨询时创建客服会话和买家首条消息，本次不创建订单；客服列表接口改为纯查询，不再承担自动触发副作用。
+  - 影响范围：影响 Shopee 订单模拟生成订单前的买家咨询分流，以及 `/shopee/runs/{run_id}/customer-service/conversations` 的触发副作用；前端样式与客服会话接口保持不变。
+  - 验证结果：`python -m py_compile backend/apps/api-gateway/app/services/shopee_order_simulator.py backend/apps/api-gateway/app/api/routes/shopee.py` 通过。
+
 ### 新增
+- 实现 Shopee 售前商品细节追问客服闭环。
+  - 涉及文件：`backend/apps/api-gateway/app/models.py`、`backend/apps/api-gateway/app/db.py`、`backend/apps/api-gateway/app/api/routes/shopee.py`、`frontend/src/modules/shopee/ShopeePage.tsx`、`frontend/src/modules/shopee/components/ChatMessagesDrawer.tsx`、`frontend/src/modules/shopee/components/ChatDetailWindow.tsx`、`frontend/src/modules/shopee/views/CustomerServiceWebView.tsx`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：新增客服剧本、会话、消息和模型配置 ORM；补齐历史库索引保障、表注释和字段注释；新增 LM Studio/OpenAI-compatible 客服模型配置接口、会话列表/详情、发送消息和结束评分接口；未配置数据库模型记录时读取 `.env` 中的 `SHOPEE_CUSTOMER_SERVICE_LLM_*` 作为默认客服模型配置；会话列表查询时按对局游戏时间扫描上架商品并按概率、质量分、规格复杂度、描述长度、图片数量、去重、未处理会话上限和每日上限触发 `product_detail_inquiry`；Chat 抽屉和客服网页版共用同一套接口展示、发送、结束和评分。
+  - 游戏时间口径：商品咨询触发、消息发送、会话关闭和满意度评分均使用对局游戏时间，不使用真实世界当前时间。
+  - 影响范围：影响 `/shopee/runs/{run_id}/customer-service/conversations`、`/messages`、`/resolve`、`/model-settings` 接口，以及 Chat 抽屉和 `/shopee/customer-service/web` 的数据来源与交互；前端保留既有样式和布局，仅替换 mock 数据和事件处理。
+  - 验证结果：`python -m py_compile backend/apps/api-gateway/app/models.py backend/apps/api-gateway/app/db.py backend/apps/api-gateway/app/api/routes/shopee.py` 通过；`npm --prefix frontend run build` 通过。
+
 - 新增 Shopee 售前商品细节追问前后端数据库 Redis 实现设计文档。
   - 涉及文件：`docs/设计文档/52-Shopee售前商品细节追问前后端数据库Redis实现设计.md`、`docs/当前进度.md`、`docs/change-log.md`
   - 修改内容：在虚拟客服 MVP 总设计基础上，单独拆出售前商品细节追问实现设计；明确商品上架后按游戏时间延迟、质量分、规格复杂度、描述完整度、概率、去重和未处理会话上限创建客服会话；设计会话列表、详情、发送消息、结束评分接口复用口径；补充 Redis 列表/详情缓存、商品触发锁、LLM 限流和模型配置缓存；定义商品准确性、响应完整度、服务态度、购买引导和平台合规评分重点；补充商品细节追问对话轮次为最少 5 条、推荐 7 条、最多 10 条消息；补充买家/LLM 复用我的产品商品详情、主图/图片 URL、AI 商品质量评分和 AI 主图/内容评分明细的上下文口径。

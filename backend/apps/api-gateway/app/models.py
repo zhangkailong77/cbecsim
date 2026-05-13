@@ -117,6 +117,9 @@ class GameRun(Base):
     shopee_quick_reply_preferences = relationship("ShopeeQuickReplyPreference", back_populates="run")
     shopee_quick_reply_groups = relationship("ShopeeQuickReplyGroup", back_populates="run")
     shopee_quick_reply_messages = relationship("ShopeeQuickReplyMessage", back_populates="run")
+    shopee_customer_service_conversations = relationship("ShopeeCustomerServiceConversation", back_populates="run")
+    shopee_customer_service_messages = relationship("ShopeeCustomerServiceMessage", back_populates="run")
+    shopee_customer_service_model_settings = relationship("ShopeeCustomerServiceModelSetting", back_populates="run")
 
 
 class MarketProduct(Base):
@@ -375,6 +378,7 @@ class ShopeeListing(Base):
     variants = relationship("ShopeeListingVariant", back_populates="listing", cascade="all, delete-orphan")
     wholesale_tiers = relationship("ShopeeListingWholesaleTier", back_populates="listing", cascade="all, delete-orphan")
     quality_scores = relationship("ShopeeListingQualityScore", back_populates="listing", cascade="all, delete-orphan")
+    customer_service_conversations = relationship("ShopeeCustomerServiceConversation", back_populates="listing")
 
 
 class ShopeeListingQualityScore(Base):
@@ -1700,6 +1704,111 @@ class ShopeeAutoReplySetting(Base):
     )
 
     run = relationship("GameRun", back_populates="shopee_auto_reply_settings")
+
+
+class ShopeeCustomerServiceScenario(Base):
+    __tablename__ = "shopee_customer_service_scenarios"
+    __table_args__ = (
+        UniqueConstraint("scenario_code", name="uq_shopee_customer_service_scenarios_code"),
+        Index("ix_shopee_customer_service_scenarios_enabled", "enabled"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    scenario_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    trigger_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    base_probability: Mapped[float] = mapped_column(Float, nullable=False, default=0.35)
+    cooldown_game_hours: Mapped[int] = mapped_column(Integer, nullable=False, default=48)
+    buyer_persona_prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    scenario_prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    rubric_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    conversations = relationship("ShopeeCustomerServiceConversation", back_populates="scenario")
+
+
+class ShopeeCustomerServiceConversation(Base):
+    __tablename__ = "shopee_customer_service_conversations"
+    __table_args__ = (
+        Index("ix_shopee_customer_service_conversations_run_user_status", "run_id", "user_id", "status"),
+        Index("ix_shopee_customer_service_conversations_listing", "listing_id"),
+        Index("ix_shopee_customer_service_conversations_order", "order_id"),
+        UniqueConstraint("run_id", "user_id", "scenario_code", "listing_id", name="uq_shopee_cs_conversations_listing_once"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("game_runs.id"), nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    scenario_id: Mapped[int] = mapped_column(ForeignKey("shopee_customer_service_scenarios.id"), nullable=False, index=True)
+    scenario_code: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    buyer_profile_id: Mapped[int | None] = mapped_column(ForeignKey("sim_buyer_profiles.id"), nullable=True, index=True)
+    buyer_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    listing_id: Mapped[int | None] = mapped_column(ForeignKey("shopee_listings.id"), nullable=True, index=True)
+    order_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="open", index=True)
+    trigger_reason: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    context_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    opened_game_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    closed_game_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    satisfaction_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    satisfaction_level: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    score_detail_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    shop_effect_applied: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    run = relationship("GameRun", back_populates="shopee_customer_service_conversations")
+    scenario = relationship("ShopeeCustomerServiceScenario", back_populates="conversations")
+    listing = relationship("ShopeeListing", back_populates="customer_service_conversations")
+    buyer_profile = relationship("SimBuyerProfile")
+    messages = relationship("ShopeeCustomerServiceMessage", back_populates="conversation", cascade="all, delete-orphan")
+
+
+class ShopeeCustomerServiceMessage(Base):
+    __tablename__ = "shopee_customer_service_messages"
+    __table_args__ = (
+        Index("ix_shopee_customer_service_messages_conversation_time", "conversation_id", "sent_game_at"),
+        Index("ix_shopee_customer_service_messages_run_user", "run_id", "user_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    conversation_id: Mapped[int] = mapped_column(ForeignKey("shopee_customer_service_conversations.id"), nullable=False, index=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("game_runs.id"), nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    sender_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    message_type: Mapped[str] = mapped_column(String(32), nullable=False, default="text")
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    llm_request_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    sent_game_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    run = relationship("GameRun", back_populates="shopee_customer_service_messages")
+    conversation = relationship("ShopeeCustomerServiceConversation", back_populates="messages")
+
+
+class ShopeeCustomerServiceModelSetting(Base):
+    __tablename__ = "shopee_customer_service_model_settings"
+    __table_args__ = (
+        UniqueConstraint("run_id", "user_id", name="uq_shopee_customer_service_model_settings_run_user"),
+        Index("ix_shopee_customer_service_model_settings_enabled", "enabled"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    run_id: Mapped[int | None] = mapped_column(ForeignKey("game_runs.id"), nullable=True, index=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    provider: Mapped[str] = mapped_column(String(64), nullable=False, default="lm_studio")
+    model_name: Mapped[str] = mapped_column(String(128), nullable=False, default="local-model")
+    base_url: Mapped[str | None] = mapped_column(String(255), nullable=True, default="http://localhost:1234/v1")
+    api_key_ref: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    temperature: Mapped[float] = mapped_column(Float, nullable=False, default=0.7)
+    max_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=300)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    run = relationship("GameRun", back_populates="shopee_customer_service_model_settings")
 
 
 class ShopeeQuickReplyPreference(Base):

@@ -89,6 +89,10 @@ def init_database():
         ShopeeFollowVoucherCampaign,
         ShopeeBuyerFollowState,
         ShopeeAutoReplySetting,
+        ShopeeCustomerServiceConversation,
+        ShopeeCustomerServiceMessage,
+        ShopeeCustomerServiceModelSetting,
+        ShopeeCustomerServiceScenario,
         ShopeeQuickReplyPreference,
         ShopeeQuickReplyGroup,
         ShopeeQuickReplyMessage,
@@ -138,6 +142,7 @@ def init_database():
     _ensure_shopee_follow_voucher_tables()
     _ensure_shopee_buyer_follow_state_table()
     _ensure_shopee_auto_reply_settings_table()
+    _ensure_shopee_customer_service_tables()
     _ensure_shopee_quick_reply_tables()
     _ensure_shopee_shipping_fee_promotion_tables()
     _ensure_shopee_order_generation_log_indexes()
@@ -1786,6 +1791,36 @@ def _ensure_shopee_auto_reply_settings_table():
 
 
 
+def _ensure_shopee_customer_service_tables():
+    inspector = inspect(engine)
+    existing_tables = set(inspector.get_table_names())
+    with engine.begin() as conn:
+        if "shopee_customer_service_conversations" in existing_tables:
+            indexes = {idx["name"] for idx in inspector.get_indexes("shopee_customer_service_conversations")}
+            if "ix_shopee_customer_service_conversations_run_user_status" not in indexes:
+                try:
+                    conn.execute(text("CREATE INDEX ix_shopee_customer_service_conversations_run_user_status ON shopee_customer_service_conversations (run_id, user_id, status)"))
+                except Exception:
+                    pass
+            if "ix_shopee_customer_service_conversations_listing" not in indexes:
+                try:
+                    conn.execute(text("CREATE INDEX ix_shopee_customer_service_conversations_listing ON shopee_customer_service_conversations (listing_id)"))
+                except Exception:
+                    pass
+        if "shopee_customer_service_messages" in existing_tables:
+            indexes = {idx["name"] for idx in inspector.get_indexes("shopee_customer_service_messages")}
+            if "ix_shopee_customer_service_messages_conversation_time" not in indexes:
+                try:
+                    conn.execute(text("CREATE INDEX ix_shopee_customer_service_messages_conversation_time ON shopee_customer_service_messages (conversation_id, sent_game_at)"))
+                except Exception:
+                    pass
+            if "ix_shopee_customer_service_messages_run_user" not in indexes:
+                try:
+                    conn.execute(text("CREATE INDEX ix_shopee_customer_service_messages_run_user ON shopee_customer_service_messages (run_id, user_id)"))
+                except Exception:
+                    pass
+
+
 def _ensure_shopee_quick_reply_tables():
     inspector = inspect(engine)
     existing_tables = set(inspector.get_table_names())
@@ -1956,6 +1991,10 @@ def _ensure_table_comments():
         "shopee_follow_voucher_campaigns": "Shopee 关注礼代金券活动表",
         "shopee_buyer_follow_states": "Shopee 模拟买家店铺关注状态表",
         "shopee_auto_reply_settings": "Shopee 自动回复配置表",
+        "shopee_customer_service_scenarios": "Shopee 虚拟客服剧本配置表",
+        "shopee_customer_service_conversations": "Shopee 虚拟客服会话主表",
+        "shopee_customer_service_messages": "Shopee 虚拟客服消息明细表",
+        "shopee_customer_service_model_settings": "Shopee 虚拟客服模型配置表",
         "shopee_quick_reply_preferences": "Shopee 快捷回复用户偏好表",
         "shopee_quick_reply_groups": "Shopee 快捷回复分组表",
         "shopee_quick_reply_messages": "Shopee 快捷回复消息表",
@@ -3108,6 +3147,69 @@ def _ensure_column_comments():
             "trigger_once_per_game_day": "是否按游戏日限制每天一次",
             "sent_count": "已触发发送次数",
             "last_sent_game_at": "最近一次触发的游戏时间",
+            "created_at": "创建时间",
+            "updated_at": "更新时间",
+        },
+
+        "shopee_customer_service_scenarios": {
+            "id": "主键ID",
+            "scenario_code": "客服剧本代码",
+            "name": "客服剧本名称",
+            "trigger_type": "触发业务类型",
+            "enabled": "是否启用",
+            "base_probability": "基础触发概率",
+            "cooldown_game_hours": "冷却游戏小时数",
+            "buyer_persona_prompt": "买家人设提示词",
+            "scenario_prompt": "剧本目标与边界提示词",
+            "rubric_json": "评分规则JSON",
+            "created_at": "创建时间",
+            "updated_at": "更新时间",
+        },
+        "shopee_customer_service_conversations": {
+            "id": "主键ID",
+            "run_id": "所属对局ID",
+            "user_id": "所属用户ID",
+            "scenario_id": "客服剧本ID",
+            "scenario_code": "客服剧本代码快照",
+            "buyer_profile_id": "模拟买家画像ID",
+            "buyer_name": "买家名称快照",
+            "listing_id": "关联商品ID",
+            "order_id": "关联订单ID",
+            "status": "会话状态",
+            "trigger_reason": "触发原因摘要",
+            "context_json": "商品/订单上下文快照JSON",
+            "opened_game_at": "会话打开游戏时间",
+            "closed_game_at": "会话关闭游戏时间",
+            "satisfaction_score": "满意度总分",
+            "satisfaction_level": "满意度等级",
+            "score_detail_json": "评分详情JSON",
+            "shop_effect_applied": "是否已应用店铺影响",
+            "created_at": "创建时间",
+            "updated_at": "更新时间",
+        },
+        "shopee_customer_service_messages": {
+            "id": "主键ID",
+            "conversation_id": "所属客服会话ID",
+            "run_id": "所属对局ID",
+            "user_id": "所属用户ID",
+            "sender_type": "发送方类型",
+            "message_type": "消息类型",
+            "content": "消息内容",
+            "llm_request_id": "LLM请求追踪ID",
+            "sent_game_at": "发送游戏时间",
+            "created_at": "创建时间",
+        },
+        "shopee_customer_service_model_settings": {
+            "id": "主键ID",
+            "run_id": "所属对局ID，空表示全局默认",
+            "user_id": "所属用户ID，空表示全局默认",
+            "provider": "模型提供商",
+            "model_name": "模型名称",
+            "base_url": "OpenAI兼容接口Base URL",
+            "api_key_ref": "API Key引用或占位，不明文返回",
+            "temperature": "模型温度",
+            "max_tokens": "最大输出Token数",
+            "enabled": "是否启用",
             "created_at": "创建时间",
             "updated_at": "更新时间",
         },

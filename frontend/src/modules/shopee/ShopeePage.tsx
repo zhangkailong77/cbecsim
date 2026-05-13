@@ -658,7 +658,7 @@ export default function ShopeePage({ run, currentUser, onBackToSetup, readOnly =
             ) : activeView === 'bank-accounts' ? (
               <MyBankAccountsView runId={run?.id ?? null} readOnly={readOnly} />
             ) : activeView === 'customer-service-web' ? (
-              <CustomerServiceWebView />
+              <CustomerServiceWebView runId={run?.id ?? null} readOnly={readOnly} />
             ) : activeView === 'customer-service-chat-management' ? (
               <ChatManagementView
                 onOpenAutoReply={() => handleSelectView('customer-service-auto-reply')}
@@ -794,6 +794,8 @@ export default function ShopeePage({ run, currentUser, onBackToSetup, readOnly =
           />
           <ChatMessagesDrawer
             open={chatMessagesDrawerOpen}
+            runId={run?.id ?? null}
+            readOnly={readOnly}
             onOpenWebVersion={() => {
               handleSelectView('customer-service-web');
               setChatMessagesDrawerOpen(false);
