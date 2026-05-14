@@ -40,7 +40,17 @@ export default function ChatDetailWindow({ chat, runId, readOnly = false, onClos
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
       if (!response.ok) throw new Error(await response.text());
-      setDetail(await response.json());
+      const payload = await response.json();
+      setDetail(payload);
+      if (!readOnly) {
+        const readResponse = await fetch(`${API_BASE_URL}/shopee/runs/${runId}/customer-service/conversations/${chat.id}/read`, {
+          method: 'POST',
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+        if (!readResponse.ok) throw new Error(await readResponse.text());
+        setDetail(await readResponse.json());
+        onConversationUpdated?.();
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : '客服会话加载失败');
     }
@@ -53,9 +63,28 @@ export default function ChatDetailWindow({ chat, runId, readOnly = false, onClos
   if (!chat) return null;
 
   const activeDetail = detail ?? chat;
+  const buyerName = activeDetail.buyer_name ?? chat.name ?? '?';
+  const avatarInitial = buyerName.charAt(0).toUpperCase();
   const listing = activeDetail.listing ?? chat.listing;
   const messages = activeDetail.messages ?? [];
   const canSend = Boolean(runId && activeDetail.can_send && !readOnly && !submitting);
+  const scoreDetail = activeDetail.score_detail;
+  const isDamageRefund = activeDetail.scenario_code === 'delivered_damage_refund' && scoreDetail?.resolution_type;
+  const scenarioLabels: Record<string, string> = {
+    product_detail_inquiry: '商品咨询',
+    logistics_stalled_urge: '物流停滞催单',
+    delivered_damage_refund: '签收破损退款',
+  };
+  const scenarioLabel = scenarioLabels[activeDetail.scenario_code] ?? '客服咨询';
+  const resolutionLabels: Record<string, string> = {
+    platform_return_refund_guidance: '引导平台退货退款流程',
+    evidence_first_followup: '先索取证据并跟进',
+    replacement_or_resend_promise: '承诺补发或重发',
+    direct_refund_promise: '直接承诺退款',
+    private_compensation: '私下补偿',
+    refuse_or_blame_buyer: '拒绝或责怪买家',
+    unclear_response: '处理方式不清晰',
+  };
 
   const sendMessage = async () => {
     const content = message.trim();
@@ -128,10 +157,14 @@ export default function ChatDetailWindow({ chat, runId, readOnly = false, onClos
     <div className="w-[360px] h-[500px] flex flex-col bg-white">
       <div className="flex items-center justify-between px-3 py-2 border-b border-gray-100 flex-shrink-0">
         <div className="flex items-center gap-2 cursor-pointer group">
-          <div className="w-8 h-8 rounded-full bg-black flex-shrink-0">
-             {chat.avatar && <img src={chat.avatar} className="w-full h-full rounded-full" />}
+          <div className="w-8 h-8 rounded-full bg-gray-300 flex-shrink-0 overflow-hidden border border-gray-200">
+            {chat.avatar ? (
+              <img src={chat.avatar} alt="avatar" className="w-full h-full object-cover" />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center text-white text-[14px] font-bold bg-gray-400">{avatarInitial}</div>
+            )}
           </div>
-          <span className="text-[14px] font-bold text-gray-800">{activeDetail.buyer_name ?? chat.name}</span>
+          <span className="text-[14px] font-bold text-gray-800">{buyerName}</span>
           <ChevronDown size={14} className="text-gray-400 group-hover:text-gray-600" />
         </div>
         <div className="flex items-center gap-2">
@@ -146,7 +179,7 @@ export default function ChatDetailWindow({ chat, runId, readOnly = false, onClos
 
       <div className="flex-1 overflow-y-auto bg-[#f5f5f5] p-3 space-y-4 custom-scrollbar relative">
         <div className="flex justify-center">
-          <span className="bg-gray-200 text-white text-[11px] px-2 py-0.5 rounded-full">商品咨询</span>
+          <span className="bg-gray-200 text-white text-[11px] px-2 py-0.5 rounded-full">{scenarioLabel}</span>
         </div>
 
         {listing && (
@@ -197,8 +230,26 @@ export default function ChatDetailWindow({ chat, runId, readOnly = false, onClos
           </div>
         )}
 
-        {activeDetail.satisfaction_score != null && (
-          <div className="bg-white border border-gray-200 rounded-lg p-2 text-[12px] text-gray-700">满意度：{activeDetail.satisfaction_score}（{activeDetail.satisfaction_level}）</div>
+        {isDamageRefund ? (
+          <div className="bg-white border border-gray-200 rounded-lg p-2 text-[12px] text-gray-700 space-y-1">
+            <div>处理方式：{resolutionLabels[scoreDetail.resolution_type] ?? scoreDetail.resolution_type}</div>
+            {(scoreDetail.commentary || scoreDetail.summary) && <div>{scoreDetail.commentary || scoreDetail.summary}</div>}
+            {Array.isArray(scoreDetail.suggestions) && scoreDetail.suggestions.length > 0 && (
+              <ul className="list-disc pl-4 space-y-0.5">
+                {scoreDetail.suggestions.map((item: string, index: number) => <li key={index}>{item}</li>)}
+              </ul>
+            )}
+          </div>
+        ) : activeDetail.satisfaction_score != null && (
+          <div className="bg-white border border-gray-200 rounded-lg p-2 text-[12px] text-gray-700 space-y-1">
+            <div>满意度：{activeDetail.satisfaction_score}（{activeDetail.satisfaction_level}）</div>
+            {(scoreDetail?.commentary || scoreDetail?.summary) && <div>点评：{scoreDetail.commentary || scoreDetail.summary}</div>}
+            {Array.isArray(scoreDetail?.suggestions) && scoreDetail.suggestions.length > 0 && (
+              <ul className="list-disc pl-4 space-y-0.5">
+                {scoreDetail.suggestions.map((item: string, index: number) => <li key={index}>{item}</li>)}
+              </ul>
+            )}
+          </div>
         )}
         {error && <div className="bg-red-50 border border-red-100 rounded-lg p-2 text-[12px] text-red-600">{error}</div>}
 

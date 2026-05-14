@@ -17,9 +17,10 @@ interface ChatMessagesDrawerProps {
   readOnly?: boolean;
   onClose?: () => void;
   onOpenWebVersion?: () => void;
+  onUnreadCountChange?: (count: number) => void;
 }
 
-export default function ChatMessagesDrawer({ open, runId, readOnly = false, onClose, onOpenWebVersion }: ChatMessagesDrawerProps) {
+export default function ChatMessagesDrawer({ open, runId, readOnly = false, onClose, onOpenWebVersion, onUnreadCountChange }: ChatMessagesDrawerProps) {
   const [activeTab, setActiveTab] = useState<'serving' | 'all'>('serving');
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [selectedChat, setSelectedChat] = useState<any>(null);
@@ -39,12 +40,14 @@ export default function ChatMessagesDrawer({ open, runId, readOnly = false, onCl
     setError(null);
     try {
       const statusQuery = activeTab === 'serving' ? '&status=open' : '';
-      const response = await fetch(`${API_BASE_URL}/shopee/runs/${runId}/customer-service/conversations?scenario=product_detail_inquiry&page=1&page_size=50${statusQuery}`, {
+      const response = await fetch(`${API_BASE_URL}/shopee/runs/${runId}/customer-service/conversations?page=1&page_size=50${statusQuery}`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
       if (!response.ok) throw new Error(await response.text());
       const payload = await response.json();
-      setConversations(payload.items ?? []);
+      const items = payload.items ?? [];
+      setConversations(items);
+      onUnreadCountChange?.(items.reduce((sum: number, item: any) => sum + Number(item.unread_count ?? 0), 0));
     } catch (err) {
       setError(err instanceof Error ? err.message : '客服会话加载失败');
       setConversations([]);
@@ -59,21 +62,34 @@ export default function ChatMessagesDrawer({ open, runId, readOnly = false, onCl
     setExpanded(prev => ({ ...prev, [key]: !prev[key] }));
   };
 
+  const scenarioLabels: Record<string, string> = {
+    product_detail_inquiry: '商品咨询',
+    logistics_stalled_urge: '物流停滞催单',
+    delivered_damage_refund: '签收破损退款',
+  };
+
   const toChat = (item: any) => ({
     id: item.id,
     name: item.buyer_name,
     date: item.last_message_game_at ? new Date(item.last_message_game_at).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' }) : '',
-    msg: item.last_message || '商品咨询',
+    msg: item.last_message || scenarioLabels[item.scenario_code] || '客服咨询',
     avatar: '',
     listing: item.listing,
+    scenario_code: item.scenario_code,
     raw: item,
   });
 
-  const openChats = conversations.filter((item) => ['open', 'waiting_seller'].includes(item.status)).map(toChat);
+  const openConversations = conversations.filter((item) => ['open', 'waiting_seller'].includes(item.status));
+  const noOrderConversations = openConversations.filter((item) => item.scenario_code === 'product_detail_inquiry');
+  const hasUnreadMessages = conversations.some((item) => Number(item.unread_count ?? 0) > 0);
+  const hasOpenUnreadMessages = openConversations.some((item) => Number(item.unread_count ?? 0) > 0);
+  const openChats = openConversations.map(toChat);
+  const noOrderChats = noOrderConversations.map(toChat);
   const allChats = conversations.map(toChat);
 
   const renderChatItem = (chat: any) => {
     const isActive = selectedChat?.id === chat.id;
+    const avatarInitial = (chat.name || '?').charAt(0).toUpperCase();
     return (
       <div
         key={chat.id}
@@ -82,11 +98,11 @@ export default function ChatMessagesDrawer({ open, runId, readOnly = false, onCl
           isActive ? 'bg-[#fff1ed]' : 'hover:bg-gray-50'
         }`}
       >
-        <div className={`w-10 h-10 rounded-full flex-shrink-0 overflow-hidden border border-gray-100 flex items-center justify-center ${!chat.avatar ? 'bg-gray-200' : ''}`}>
+        <div className="w-10 h-10 rounded-full bg-gray-300 flex-shrink-0 overflow-hidden border border-gray-200">
           {chat.avatar ? (
             <img src={chat.avatar} alt="avatar" className="w-full h-full object-cover" />
           ) : (
-            <div className="w-full h-full bg-black rounded-full" />
+            <div className="w-full h-full flex items-center justify-center text-white text-[16px] font-bold bg-gray-400">{avatarInitial}</div>
           )}
         </div>
 
@@ -137,7 +153,7 @@ export default function ChatMessagesDrawer({ open, runId, readOnly = false, onCl
                   className={`flex items-center gap-1.5 border rounded-sm px-2 py-1 cursor-pointer transition-colors ${isDropdownOpen ? 'border-[#ee4d2d] bg-gray-50' : 'border-gray-200 hover:bg-gray-50'}`}
                 >
                   <span className="text-[12px] text-gray-600">与买家聊...</span>
-                  <div className="w-1.5 h-1.5 bg-[#ee4d2d] rounded-full" />
+                  {hasUnreadMessages ? <div className="w-1.5 h-1.5 bg-[#ee4d2d] rounded-full" /> : null}
                   <ChevronDown size={14} className="text-gray-400" />
                 </div>
 
@@ -146,7 +162,7 @@ export default function ChatMessagesDrawer({ open, runId, readOnly = false, onCl
                     <div className="fixed inset-0 z-10" onClick={() => setIsDropdownOpen(false)} />
                     <div className="absolute top-full left-0 mt-1 bg-white border border-gray-100 shadow-lg rounded-sm py-2 z-20 w-[180px]">
                       <div className="px-3 py-2 hover:bg-gray-50 text-[13px] text-[#ee4d2d] font-medium flex items-center justify-between">
-                        与买家聊天 <div className="w-1.5 h-1.5 bg-[#ee4d2d] rounded-full" />
+                        与买家聊天 {hasUnreadMessages ? <div className="w-1.5 h-1.5 bg-[#ee4d2d] rounded-full" /> : null}
                       </div>
                       <div className="px-3 py-2 hover:bg-gray-50 text-[13px] text-gray-600">
                         与联盟伙伴聊天
@@ -193,14 +209,14 @@ export default function ChatMessagesDrawer({ open, runId, readOnly = false, onCl
               className={`flex-1 flex justify-center items-center py-2.5 cursor-pointer border-b-2 transition-colors ${activeTab === 'serving' ? 'border-[#ee4d2d]' : 'border-transparent hover:bg-gray-50'}`}
             >
               <span className={`text-[13px] font-medium ${activeTab === 'serving' ? 'text-[#ee4d2d]' : 'text-gray-600'}`}>今日接待</span>
-              <div className="w-1.5 h-1.5 bg-[#ee4d2d] rounded-full ml-1 mb-2" />
+              {hasOpenUnreadMessages ? <div className="w-1.5 h-1.5 bg-[#ee4d2d] rounded-full ml-1 mb-2" /> : null}
             </div>
             <div
               onClick={() => setActiveTab('all')}
               className={`flex-1 flex justify-center items-center py-2.5 cursor-pointer border-b-2 transition-colors ${activeTab === 'all' ? 'border-[#ee4d2d]' : 'border-transparent hover:bg-gray-50'}`}
             >
               <span className={`text-[13px] font-medium ${activeTab === 'all' ? 'text-[#ee4d2d]' : 'text-gray-600'}`}>全部聊天</span>
-              <div className="w-1.5 h-1.5 bg-[#ee4d2d] rounded-full ml-1 mb-2" />
+              {hasUnreadMessages ? <div className="w-1.5 h-1.5 bg-[#ee4d2d] rounded-full ml-1 mb-2" /> : null}
             </div>
           </div>
 
@@ -225,9 +241,9 @@ export default function ChatMessagesDrawer({ open, runId, readOnly = false, onCl
                     className="flex items-center gap-1.5 px-3 py-2.5 text-[13px] text-gray-700 font-medium cursor-pointer hover:bg-gray-50 select-none"
                   >
                     {expanded.inquiry ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                    <span>无订单咨询 ({openChats.length})</span>
+                    <span>无订单咨询 ({noOrderChats.length})</span>
                   </div>
-                  {expanded.inquiry && openChats.map(renderChatItem)}
+                  {expanded.inquiry && noOrderChats.map(renderChatItem)}
                 </div>
 
                 <div className="mt-1">

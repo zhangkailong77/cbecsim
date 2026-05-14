@@ -6,6 +6,7 @@ const ACCESS_TOKEN_KEY = 'cbec_access_token';
 
 interface ShippingFeePromotionCreateViewProps {
   runId?: number | null;
+  campaignId?: number | null;
   readOnly?: boolean;
   onBackToShippingFeePromotion: () => void;
 }
@@ -37,9 +38,11 @@ const TrashIcon = () => (
 
 export default function ShippingFeePromotionCreateView({
   runId = null,
+  campaignId = null,
   readOnly = false,
   onBackToShippingFeePromotion,
 }: ShippingFeePromotionCreateViewProps) {
+  const isUpdateMode = Boolean(campaignId);
   // 基础信息状态
   const [promoName, setPromoName] = useState('');
   const [periodType, setPeriodType] = useState<'no_limit' | 'selected'>('no_limit');
@@ -48,6 +51,8 @@ export default function ShippingFeePromotionCreateView({
   
   const [budgetType, setBudgetType] = useState<'no_limit' | 'selected'>('no_limit');
   const [budgetLimit, setBudgetLimit] = useState('');
+  const [editable, setEditable] = useState(true);
+  const [editableReason, setEditableReason] = useState<string | null>(null);
 
   // 运费与渠道状态
   const [channels, setChannels] = useState<string[]>(['standard']);
@@ -56,11 +61,15 @@ export default function ShippingFeePromotionCreateView({
   ]);
 
   const currency = 'RM';
+  const formDisabled = readOnly || !editable;
 
   useEffect(() => {
     if (!runId) return;
     const token = localStorage.getItem(ACCESS_TOKEN_KEY);
-    fetch(`${API_BASE_URL}/shopee/runs/${runId}/marketing/shipping-fee-promotion/create/bootstrap`, {
+    const url = isUpdateMode
+      ? `${API_BASE_URL}/shopee/runs/${runId}/marketing/shipping-fee-promotions/${campaignId}`
+      : `${API_BASE_URL}/shopee/runs/${runId}/marketing/shipping-fee-promotion/create/bootstrap`;
+    fetch(url, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     })
       .then(async (response) => {
@@ -68,6 +77,8 @@ export default function ShippingFeePromotionCreateView({
         return response.json();
       })
       .then((data) => {
+        setEditable(data.meta?.editable ?? true);
+        setEditableReason(data.meta?.editable_reason ?? null);
         setPromoName(data.form?.promotion_name ?? '');
         setPeriodType(data.form?.period_type ?? 'no_limit');
         setPromoStartAt(data.form?.start_at ?? data.meta?.current_tick ?? '');
@@ -83,13 +94,14 @@ export default function ShippingFeePromotionCreateView({
         })));
       })
       .catch(() => undefined);
-  }, [runId]);
+  }, [campaignId, isUpdateMode, runId]);
 
   const handleSubmit = async () => {
     if (readOnly || !runId) return;
+    if (isUpdateMode && !campaignId) return;
     const token = localStorage.getItem(ACCESS_TOKEN_KEY);
-    const response = await fetch(`${API_BASE_URL}/shopee/runs/${runId}/marketing/shipping-fee-promotions`, {
-      method: 'POST',
+    const response = await fetch(isUpdateMode ? `${API_BASE_URL}/shopee/runs/${runId}/marketing/shipping-fee-promotions/${campaignId}` : `${API_BASE_URL}/shopee/runs/${runId}/marketing/shipping-fee-promotions`, {
+      method: isUpdateMode ? 'PUT' : 'POST',
       headers: {
         'Content-Type': 'application/json',
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -112,7 +124,7 @@ export default function ShippingFeePromotionCreateView({
     });
     if (!response.ok) {
       const errorText = await response.text();
-      window.alert(errorText || '创建失败');
+      window.alert(errorText || (isUpdateMode ? '更新失败' : '创建失败'));
       return;
     }
     onBackToShippingFeePromotion();
@@ -120,7 +132,7 @@ export default function ShippingFeePromotionCreateView({
 
   // 处理渠道选择
   const toggleChannel = (channel: string) => {
-    if (readOnly) return;
+    if (formDisabled) return;
     setChannels(prev => 
       prev.includes(channel) ? prev.filter(c => c !== channel) : [...prev, channel]
     );
@@ -134,22 +146,43 @@ export default function ShippingFeePromotionCreateView({
 
   // 删除运费层级
   const handleRemoveTier = (idToRemove: number) => {
-    if (readOnly) return;
+    if (formDisabled) return;
     setTiers(tiers.filter(t => t.id !== idToRemove));
   };
 
   // 更新层级数据
   const updateTier = (id: number, field: keyof Tier, value: string) => {
-    if (readOnly) return;
+    if (formDisabled) return;
     setTiers(tiers.map(t => t.id === id ? { ...t,[field]: value } : t));
   };
+
+  if (isUpdateMode && !campaignId) {
+    return (
+      <div className="flex-1 overflow-y-auto bg-[#f6f6f6] px-9 py-6 custom-scrollbar text-[#333]">
+        <div className="mx-auto w-[1360px] border border-[#ececec] bg-white p-8 shadow-sm rounded-[2px]">
+          <div className="mb-4 text-[16px] text-[#333]">缺少运费促销活动 ID</div>
+          <button
+            type="button"
+            onClick={onBackToShippingFeePromotion}
+            className="h-8 min-w-[80px] rounded-sm border border-[#e5e5e5] bg-white px-6 text-[14px] text-[#333] hover:bg-[#fafafa]"
+          >
+            返回列表
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex-1 overflow-y-auto bg-[#f6f6f6] px-9 py-6 custom-scrollbar text-[#333]">
       <div className="mx-auto w-[1360px]">
         {readOnly ? (
           <div className="mb-5 border border-amber-200 bg-amber-50 px-4 py-2 text-[13px] text-amber-700">
-            当前为历史对局回溯模式：可浏览运费促销创建页，但无法创建或编辑活动。
+            当前为历史对局回溯模式：可浏览运费促销{isUpdateMode ? '编辑' : '创建'}页，但无法创建或编辑活动。
+          </div>
+        ) : editableReason ? (
+          <div className="mb-5 border border-amber-200 bg-amber-50 px-4 py-2 text-[13px] text-amber-700">
+            {editableReason}
           </div>
         ) : null}
 
@@ -170,7 +203,7 @@ export default function ShippingFeePromotionCreateView({
                     type="text" 
                     value={promoName}
                     onChange={(e) => setPromoName(e.target.value.slice(0, 20))}
-                    disabled={readOnly}
+                    disabled={formDisabled}
                     className="flex-1 outline-none text-[14px] disabled:bg-white" 
                     placeholder="请输入" 
                   />
@@ -187,7 +220,7 @@ export default function ShippingFeePromotionCreateView({
                     type="radio" 
                     checked={periodType === 'no_limit'} 
                     onChange={() => setPeriodType('no_limit')}
-                    disabled={readOnly}
+                    disabled={formDisabled}
                     className="h-4 w-4 accent-[#ee4d2d]" 
                   />
                   <span>无期限</span>
@@ -198,26 +231,30 @@ export default function ShippingFeePromotionCreateView({
                       type="radio" 
                       checked={periodType === 'selected'} 
                       onChange={() => setPeriodType('selected')}
-                      disabled={readOnly}
+                      disabled={formDisabled}
                       className="h-4 w-4 accent-[#ee4d2d]" 
                     />
                     <span>自定义期限</span>
                   </label>
                   {periodType === 'selected' && (
                     <div className="ml-6 flex items-center gap-3">
-                      <DateTimePicker 
-                        value={promoStartAt} 
-                        onChange={setPromoStartAt} 
-                        inputWidthClassName="w-[180px]" 
-                        popupPlacement="bottom" 
-                        maxValue={promoEndAt || undefined}                       />
+                      <DateTimePicker
+                        value={promoStartAt}
+                        onChange={setPromoStartAt}
+                        inputWidthClassName="w-[180px]"
+                        popupPlacement="bottom"
+                        maxValue={promoEndAt || undefined}
+                        disabled={formDisabled}
+                      />
                       <span className="text-[#999] text-[12px]">—</span>
-                      <DateTimePicker 
-                        value={promoEndAt} 
-                        onChange={setPromoEndAt} 
-                        inputWidthClassName="w-[180px]" 
-                        popupPlacement="bottom" 
-                        minValue={promoStartAt || undefined}                       />
+                      <DateTimePicker
+                        value={promoEndAt}
+                        onChange={setPromoEndAt}
+                        inputWidthClassName="w-[180px]"
+                        popupPlacement="bottom"
+                        minValue={promoStartAt || undefined}
+                        disabled={formDisabled}
+                      />
                     </div>
                   )}
                 </div>
@@ -231,7 +268,7 @@ export default function ShippingFeePromotionCreateView({
                     type="radio" 
                     checked={budgetType === 'no_limit'} 
                     onChange={() => setBudgetType('no_limit')}
-                    disabled={readOnly}
+                    disabled={formDisabled}
                     className="h-4 w-4 accent-[#ee4d2d]" 
                   />
                   <span>无预算限制</span>
@@ -242,7 +279,7 @@ export default function ShippingFeePromotionCreateView({
                       type="radio" 
                       checked={budgetType === 'selected'} 
                       onChange={() => setBudgetType('selected')}
-                      disabled={readOnly}
+                      disabled={formDisabled}
                       className="h-4 w-4 accent-[#ee4d2d]" 
                     />
                     <span>自定义预算</span>
@@ -255,7 +292,7 @@ export default function ShippingFeePromotionCreateView({
                           type="number" 
                           value={budgetLimit}
                           onChange={(e) => setBudgetLimit(e.target.value)}
-                          disabled={readOnly} 
+                          disabled={formDisabled}
                           className="flex-1 outline-none text-[14px] px-3 disabled:bg-[#f5f5f5]" 
                           placeholder="输入" 
                         />
@@ -291,7 +328,7 @@ export default function ShippingFeePromotionCreateView({
                   type="checkbox" 
                   checked={channels.includes('standard')} 
                   onChange={() => toggleChannel('standard')}
-                  disabled={readOnly}
+                  disabled={formDisabled}
                   className="h-4 w-4 accent-[#ee4d2d]" 
                 />
                 <span>标准快递 (Standard Delivery)</span>
@@ -301,7 +338,7 @@ export default function ShippingFeePromotionCreateView({
                   type="checkbox" 
                   checked={channels.includes('bulky')} 
                   onChange={() => toggleChannel('bulky')}
-                  disabled={readOnly}
+                  disabled={formDisabled}
                   className="h-4 w-4 accent-[#ee4d2d]" 
                 />
                 <span>大件快递 (Standard Delivery Bulky)</span>
@@ -340,7 +377,7 @@ export default function ShippingFeePromotionCreateView({
                           type="number" 
                           value={tier.minSpend}
                           onChange={(e) => updateTier(tier.id, 'minSpend', e.target.value)}
-                          disabled={readOnly}
+                          disabled={formDisabled}
                           className="flex-1 outline-none text-[14px] px-3 disabled:bg-[#f5f5f5]" 
                           placeholder="输入"
                         />
@@ -355,7 +392,7 @@ export default function ShippingFeePromotionCreateView({
                             name={`feeType-${tier.id}`} 
                             checked={tier.feeType === 'subsidize'} 
                             onChange={() => updateTier(tier.id, 'feeType', 'subsidize')}
-                            disabled={readOnly}
+                            disabled={formDisabled}
                             className="h-4 w-4 accent-[#ee4d2d]" 
                           />
                           <span>运费减免</span>
@@ -367,7 +404,7 @@ export default function ShippingFeePromotionCreateView({
                               type="number" 
                               value={tier.subsidizeAmount}
                               onChange={(e) => updateTier(tier.id, 'subsidizeAmount', e.target.value)}
-                              disabled={readOnly}
+                              disabled={formDisabled}
                               className="flex-1 outline-none text-[14px] px-3 disabled:bg-[#f5f5f5]" 
                               placeholder="输入"
                             />
@@ -381,7 +418,7 @@ export default function ShippingFeePromotionCreateView({
                           name={`feeType-${tier.id}`} 
                           checked={tier.feeType === 'free'} 
                           onChange={() => updateTier(tier.id, 'feeType', 'free')}
-                          disabled={readOnly}
+                          disabled={formDisabled}
                           className="h-4 w-4 accent-[#ee4d2d]" 
                         />
                         <span>免运费</span>
@@ -434,10 +471,10 @@ export default function ShippingFeePromotionCreateView({
           <button
             type="button"
             onClick={handleSubmit}
-            disabled={readOnly}
+            disabled={formDisabled}
             className="h-8 min-w-[80px] rounded-sm bg-[#ee4d2d] px-6 text-[14px] text-white hover:bg-[#d83f21] disabled:cursor-not-allowed disabled:bg-[#f3a899]"
           >
-            确认
+            {isUpdateMode ? '保存' : '确认'}
           </button>
         </div>
       </div>

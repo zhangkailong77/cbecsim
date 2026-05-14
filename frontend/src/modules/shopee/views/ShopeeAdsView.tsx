@@ -404,7 +404,6 @@ export default function ShopeeAdsView({ readOnly = false }: ShopeeAdsViewProps) 
           <div className="flex items-center gap-4 relative z-10">
             <h1 className="text-[20px] font-medium text-[#333]">Shopee 广告</h1>
             <span className="flex items-center gap-1.5 text-[13px] text-[#05a] cursor-pointer hover:underline font-medium border-l border-[#e5e5e5] pl-4">
-              <span className="text-lg leading-none">🚀</span> 智能店铺助手 <ChevronRightIcon />
             </span>
           </div>
 

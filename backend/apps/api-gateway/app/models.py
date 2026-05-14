@@ -1751,6 +1751,7 @@ class ShopeeCustomerServiceConversation(Base):
     trigger_reason: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     context_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
     opened_game_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    last_read_game_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     closed_game_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     satisfaction_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     satisfaction_level: Mapped[str | None] = mapped_column(String(32), nullable=True)

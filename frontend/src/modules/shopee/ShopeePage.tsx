@@ -47,6 +47,8 @@ import ChatManagementView from './views/ChatManagementView';
 import AutoReplySettingsView from './views/AutoReplySettingsView';
 import QuickReplySettingsView from './views/QuickReplySettingsView';
 import QuickReplyCreateView from './views/QuickReplyCreateView';
+import BuyerCentreView from './views/BuyerCentreView';
+import BuyerCentreProductDetailView from './views/BuyerCentreProductDetailView';
 
 interface ShopeePageProps {
   run: {
@@ -86,6 +88,8 @@ const HISTORY_READONLY_DETAIL = '历史对局仅支持回溯查看，不能继�
 
 type ShopeeView =
   | 'dashboard'
+  | 'buyer-centre'
+  | 'buyer-centre-product-detail'
   | 'my-orders'
   | 'my-products'
   | 'new-product'
@@ -112,6 +116,7 @@ type ShopeeView =
   | 'marketing-shopee-ads'
   | 'marketing-shipping-fee-promotion'
   | 'marketing-shipping-fee-promotion-create'
+  | 'marketing-shipping-fee-promotion-update'
   | 'marketing-vouchers'
   | 'marketing-voucher-create'
   | 'marketing-private-voucher-create'
@@ -134,6 +139,8 @@ export default function ShopeePage({ run, currentUser, onBackToSetup, readOnly =
   const [scale, setScale] = useState(1);
   const [activeView, setActiveView] = useState<ShopeeView>(() => {
     const path = window.location.pathname;
+    if (/\/shopee\/buyer-centre\/product\/?$/.test(path)) return 'buyer-centre-product-detail';
+    if (/\/shopee\/buyer-centre\/?$/.test(path)) return 'buyer-centre';
     if (/\/shopee\/order(?:\/\d+)?\/?$/.test(path)) return 'my-orders';
     if (/\/shopee\/product\/add_news\/?$/.test(path)) return 'new-product';
     if (/\/shopee\/product\/list\/(all|live|violation|review|unpublished)\/?$/.test(path)) return 'my-products';
@@ -155,6 +162,7 @@ export default function ShopeePage({ run, currentUser, onBackToSetup, readOnly =
     if (/\/shopee\/marketing\/flash-sale\/?$/.test(path)) return 'marketing-shop-flash-sale';
     if (/\/shopee\/marketing\/shopee-ads\/?$/.test(path)) return 'marketing-shopee-ads';
     if (/\/shopee\/marketing\/shipping-fee-promotion\/create\/?$/.test(path)) return 'marketing-shipping-fee-promotion-create';
+    if (/\/shopee\/marketing\/shipping-fee-promotion\/update\/?$/.test(path)) return 'marketing-shipping-fee-promotion-update';
     if (/\/shopee\/marketing\/shipping-fee-promotion\/?$/.test(path)) return 'marketing-shipping-fee-promotion';
     if (/\/shopee\/marketing\/vouchers\/orders\/?$/.test(path)) return 'marketing-voucher-orders';
     if (/\/shopee\/marketing\/vouchers\/detail\/?$/.test(path)) return 'marketing-voucher-detail';
@@ -172,6 +180,11 @@ export default function ShopeePage({ run, currentUser, onBackToSetup, readOnly =
     return 'dashboard';
   });
   const [editingListingId, setEditingListingId] = useState<number | null>(() => {
+    const search = new URLSearchParams(window.location.search);
+    const raw = Number(search.get('listing_id') || '');
+    return Number.isFinite(raw) && raw > 0 ? raw : null;
+  });
+  const [buyerCentreListingId, setBuyerCentreListingId] = useState<number | null>(() => {
     const search = new URLSearchParams(window.location.search);
     const raw = Number(search.get('listing_id') || '');
     return Number.isFinite(raw) && raw > 0 ? raw : null;
@@ -197,6 +210,11 @@ export default function ShopeePage({ run, currentUser, onBackToSetup, readOnly =
     const raw = Number(search.get('campaign_id') || '');
     return Number.isFinite(raw) && raw > 0 ? raw : null;
   });
+  const [activeShippingFeePromotionId, setActiveShippingFeePromotionId] = useState<number | null>(() => {
+    const search = new URLSearchParams(window.location.search);
+    const raw = Number(search.get('id') || search.get('campaign_id') || '');
+    return Number.isFinite(raw) && raw > 0 ? raw : null;
+  });
   const [editingQuickReplyGroupId, setEditingQuickReplyGroupId] = useState<number | null>(() => {
     const raw = Number(new URLSearchParams(window.location.search).get('group_id') || '');
     return Number.isFinite(raw) && raw > 0 ? raw : null;
@@ -218,6 +236,7 @@ export default function ShopeePage({ run, currentUser, onBackToSetup, readOnly =
   const [notificationDrawerOpen, setNotificationDrawerOpen] = useState(false);
   const [chatMessagesDrawerOpen, setChatMessagesDrawerOpen] = useState(false);
   const [notificationCount, setNotificationCount] = useState(0);
+  const [chatUnreadCount, setChatUnreadCount] = useState(0);
   const [notificationOrders, setNotificationOrders] = useState<NotificationOrder[]>([]);
   const [notificationLoading, setNotificationLoading] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -226,6 +245,8 @@ export default function ShopeePage({ run, currentUser, onBackToSetup, readOnly =
 
   const parseShopeeViewFromPath = () => {
     const path = window.location.pathname;
+    if (/\/shopee\/buyer-centre\/product\/?$/.test(path)) return 'buyer-centre-product-detail';
+    if (/\/shopee\/buyer-centre\/?$/.test(path)) return 'buyer-centre';
     if (/\/shopee\/order(?:\/\d+)?\/?$/.test(path)) return 'my-orders';
     if (/\/shopee\/product\/add_news\/?$/.test(path)) return 'new-product';
     if (/\/shopee\/product\/list\/(all|live|violation|review|unpublished)\/?$/.test(path)) return 'my-products';
@@ -247,6 +268,7 @@ export default function ShopeePage({ run, currentUser, onBackToSetup, readOnly =
     if (/\/shopee\/marketing\/flash-sale\/?$/.test(path)) return 'marketing-shop-flash-sale';
     if (/\/shopee\/marketing\/shopee-ads\/?$/.test(path)) return 'marketing-shopee-ads';
     if (/\/shopee\/marketing\/shipping-fee-promotion\/create\/?$/.test(path)) return 'marketing-shipping-fee-promotion-create';
+    if (/\/shopee\/marketing\/shipping-fee-promotion\/update\/?$/.test(path)) return 'marketing-shipping-fee-promotion-update';
     if (/\/shopee\/marketing\/shipping-fee-promotion\/?$/.test(path)) return 'marketing-shipping-fee-promotion';
     if (/\/shopee\/marketing\/vouchers\/orders\/?$/.test(path)) return 'marketing-voucher-orders';
     if (/\/shopee\/marketing\/vouchers\/detail\/?$/.test(path)) return 'marketing-voucher-detail';
@@ -275,6 +297,8 @@ export default function ShopeePage({ run, currentUser, onBackToSetup, readOnly =
 
   const buildShopeePath = (view: ShopeeView) => {
     const base = `/u/${encodeURIComponent(currentUser?.public_id ?? '')}/shopee`;
+    if (view === 'buyer-centre') return `${base}/buyer-centre`;
+    if (view === 'buyer-centre-product-detail') return `${base}/buyer-centre/product`;
     if (view === 'new-product') return `${base}/product/add_news`;
     if (view === 'marketing-centre') return `${base}/marketing-centre`;
     if (view === 'marketing-discount') return `${base}/marketing/discount`;
@@ -290,6 +314,7 @@ export default function ShopeePage({ run, currentUser, onBackToSetup, readOnly =
     if (view === 'marketing-shopee-ads') return `${base}/marketing/shopee-ads`;
     if (view === 'marketing-shipping-fee-promotion') return `${base}/marketing/shipping-fee-promotion`;
     if (view === 'marketing-shipping-fee-promotion-create') return `${base}/marketing/shipping-fee-promotion/create`;
+    if (view === 'marketing-shipping-fee-promotion-update') return `${base}/marketing/shipping-fee-promotion/update`;
     if (view === 'marketing-voucher-create') return `${base}/marketing/vouchers/create`;
     if (view === 'marketing-private-voucher-create') return `${base}/marketing/vouchers/private-create`;
     if (view === 'marketing-live-voucher-create') return `${base}/marketing/vouchers/live-create`;
@@ -324,6 +349,12 @@ export default function ShopeePage({ run, currentUser, onBackToSetup, readOnly =
     return Number.isFinite(raw) && raw > 0 ? raw : null;
   };
 
+  const parseBuyerCentreListingIdFromPath = () => {
+    const search = new URLSearchParams(window.location.search);
+    const raw = Number(search.get('listing_id') || '');
+    return Number.isFinite(raw) && raw > 0 ? raw : null;
+  };
+
   const parseDiscountCampaignIdFromPath = () => {
     const search = new URLSearchParams(window.location.search);
     const raw = Number(search.get('campaign_id') || '');
@@ -333,6 +364,12 @@ export default function ShopeePage({ run, currentUser, onBackToSetup, readOnly =
   const parseFlashSaleCampaignIdFromPath = () => {
     const search = new URLSearchParams(window.location.search);
     const raw = Number(search.get('campaign_id') || '');
+    return Number.isFinite(raw) && raw > 0 ? raw : null;
+  };
+
+  const parseShippingFeePromotionIdFromPath = () => {
+    const search = new URLSearchParams(window.location.search);
+    const raw = Number(search.get('id') || search.get('campaign_id') || '');
     return Number.isFinite(raw) && raw > 0 ? raw : null;
   };
 
@@ -347,9 +384,11 @@ export default function ShopeePage({ run, currentUser, onBackToSetup, readOnly =
     const onPopState = () => {
       setActiveView(parseShopeeViewFromPath());
       setEditingListingId(parseEditingListingIdFromPath());
+      setBuyerCentreListingId(parseBuyerCentreListingIdFromPath());
       setActiveOrderId(parseOrderIdFromPath());
       setActiveDiscountCampaignId(parseDiscountCampaignIdFromPath());
       setActiveFlashSaleCampaignId(parseFlashSaleCampaignIdFromPath());
+      setActiveShippingFeePromotionId(parseShippingFeePromotionIdFromPath());
       setActiveVoucherCampaign(parseVoucherCampaignFromPath());
       setOrderReturnType(new URLSearchParams(window.location.search).get('type') || 'all');
       setMarketingCreateType(resolveMarketingCreateType(window.location.search));
@@ -362,7 +401,7 @@ export default function ShopeePage({ run, currentUser, onBackToSetup, readOnly =
 
   useEffect(() => {
     if (!readOnly) return;
-    const allowed = new Set(['dashboard', 'my-orders', 'my-products', 'new-product', 'my-income', 'my-balance', 'bank-accounts', 'marketing-centre', 'marketing-discount', 'marketing-discount-create', 'marketing-discount-detail', 'marketing-discount-data', 'marketing-addon-orders', 'marketing-bundle-orders', 'marketing-shop-flash-sale', 'marketing-shop-flash-sale-create', 'marketing-shop-flash-sale-detail', 'marketing-shop-flash-sale-data', 'marketing-shopee-ads', 'marketing-shipping-fee-promotion', 'marketing-shipping-fee-promotion-create', 'marketing-vouchers', 'marketing-voucher-create', 'marketing-product-voucher-create', 'marketing-private-voucher-create']);
+    const allowed = new Set(['dashboard', 'buyer-centre', 'buyer-centre-product-detail', 'my-orders', 'my-products', 'new-product', 'my-income', 'my-balance', 'bank-accounts', 'marketing-centre', 'marketing-discount', 'marketing-discount-create', 'marketing-discount-detail', 'marketing-discount-data', 'marketing-addon-orders', 'marketing-bundle-orders', 'marketing-shop-flash-sale', 'marketing-shop-flash-sale-create', 'marketing-shop-flash-sale-detail', 'marketing-shop-flash-sale-data', 'marketing-shopee-ads', 'marketing-shipping-fee-promotion', 'marketing-shipping-fee-promotion-create', 'marketing-shipping-fee-promotion-update', 'marketing-vouchers', 'marketing-voucher-create', 'marketing-product-voucher-create', 'marketing-private-voucher-create']);
     if (!allowed.has(activeView)) {
       setActiveView('my-orders');
       const nextPath = withHistoryRunId(buildShopeePath('my-orders'));
@@ -375,6 +414,7 @@ export default function ShopeePage({ run, currentUser, onBackToSetup, readOnly =
   useEffect(() => {
     if (!run?.id) {
       setNotificationCount(0);
+      setChatUnreadCount(0);
       setNotificationOrders([]);
       return;
     }
@@ -382,6 +422,7 @@ export default function ShopeePage({ run, currentUser, onBackToSetup, readOnly =
     const token = localStorage.getItem(ACCESS_TOKEN_KEY);
     if (!token) {
       setNotificationCount(0);
+      setChatUnreadCount(0);
       setNotificationOrders([]);
       return;
     }
@@ -413,9 +454,19 @@ export default function ShopeePage({ run, currentUser, onBackToSetup, readOnly =
         }));
         setNotificationCount(Math.max(0, Number(data.counts?.toship ?? 0)));
         setNotificationOrders(mapped);
+
+        const chatRes = await fetch(`${API_BASE_URL}/shopee/runs/${run.id}/customer-service/conversations?status=open&page=1&page_size=50`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!chatRes.ok) throw new Error('load chat messages failed');
+        const chatData = await chatRes.json();
+        if (cancelled) return;
+        const unreadTotal = (chatData.items ?? []).reduce((sum: number, item: any) => sum + Number(item.unread_count ?? 0), 0);
+        setChatUnreadCount(Math.max(0, unreadTotal));
       } catch {
         if (!cancelled) {
           setNotificationCount(0);
+          setChatUnreadCount(0);
           setNotificationOrders([]);
         }
       } finally {
@@ -435,7 +486,7 @@ export default function ShopeePage({ run, currentUser, onBackToSetup, readOnly =
 
   const handleSelectView = (view: ShopeeView, listingId?: number | null) => {
     if (readOnly) {
-      const allowed = new Set(['dashboard', 'my-orders', 'my-products', 'new-product', 'my-income', 'my-balance', 'bank-accounts', 'marketing-centre', 'marketing-discount', 'marketing-discount-create', 'marketing-discount-detail', 'marketing-discount-data', 'marketing-addon-orders', 'marketing-bundle-orders', 'marketing-shop-flash-sale', 'marketing-shop-flash-sale-create', 'marketing-shop-flash-sale-detail', 'marketing-shop-flash-sale-data', 'marketing-shopee-ads', 'marketing-shipping-fee-promotion', 'marketing-shipping-fee-promotion-create', 'marketing-vouchers', 'marketing-voucher-create', 'marketing-product-voucher-create', 'marketing-private-voucher-create']);
+      const allowed = new Set(['dashboard', 'buyer-centre', 'buyer-centre-product-detail', 'my-orders', 'my-products', 'new-product', 'my-income', 'my-balance', 'bank-accounts', 'marketing-centre', 'marketing-discount', 'marketing-discount-create', 'marketing-discount-detail', 'marketing-discount-data', 'marketing-addon-orders', 'marketing-bundle-orders', 'marketing-shop-flash-sale', 'marketing-shop-flash-sale-create', 'marketing-shop-flash-sale-detail', 'marketing-shop-flash-sale-data', 'marketing-shopee-ads', 'marketing-shipping-fee-promotion', 'marketing-shipping-fee-promotion-create', 'marketing-shipping-fee-promotion-update', 'marketing-vouchers', 'marketing-voucher-create', 'marketing-product-voucher-create', 'marketing-private-voucher-create']);
       if (!allowed.has(view)) {
         alert(HISTORY_READONLY_DETAIL);
         return;
@@ -452,11 +503,15 @@ export default function ShopeePage({ run, currentUser, onBackToSetup, readOnly =
       nextPath = `${base}${query}`;
     } else {
       const nextPathBase = view === 'my-products' ? `${buildShopeePath('dashboard')}/product/list/all` : buildShopeePath(view);
-      nextPath = view === 'new-product' && listingId && listingId > 0
+      nextPath = view === 'buyer-centre-product-detail' && listingId && listingId > 0
         ? `${nextPathBase}?listing_id=${listingId}`
-        : view === 'customer-service-quick-reply-edit' && listingId && listingId > 0
+        : view === 'new-product' && listingId && listingId > 0
+          ? `${nextPathBase}?listing_id=${listingId}`
+          : view === 'customer-service-quick-reply-edit' && listingId && listingId > 0
           ? `${nextPathBase}?group_id=${listingId}`
-          : nextPathBase;
+          : view === 'marketing-shipping-fee-promotion-update' && listingId && listingId > 0
+            ? `${nextPathBase}?id=${listingId}`
+            : nextPathBase;
     }
     const nextPathWithRunId = withHistoryRunId(nextPath);
     const currentFullPath = `${window.location.pathname}${window.location.search}`;
@@ -464,10 +519,12 @@ export default function ShopeePage({ run, currentUser, onBackToSetup, readOnly =
       window.history.pushState(null, '', nextPathWithRunId);
     }
     setEditingListingId(view === 'new-product' ? (listingId && listingId > 0 ? listingId : null) : null);
+    setBuyerCentreListingId(view === 'buyer-centre-product-detail' ? (listingId && listingId > 0 ? listingId : null) : null);
     setEditingQuickReplyGroupId(view === 'customer-service-quick-reply-edit' ? (listingId && listingId > 0 ? listingId : null) : null);
     setActiveOrderId(null);
     setActiveDiscountCampaignId(null);
     setActiveFlashSaleCampaignId(null);
+    setActiveShippingFeePromotionId(view === 'marketing-shipping-fee-promotion-update' ? (listingId && listingId > 0 ? listingId : null) : null);
     setActiveView(view);
     if (view === 'marketing-discount-create') {
       setMarketingCreateType(resolveMarketingCreateType(nextPathWithRunId.includes('?') ? `?${nextPathWithRunId.split('?')[1]}` : ''));
@@ -586,6 +643,27 @@ export default function ShopeePage({ run, currentUser, onBackToSetup, readOnly =
 
   const playerDisplayName = currentUser?.full_name?.trim() || currentUser?.username || '玩家';
 
+  if (activeView === 'buyer-centre') {
+    return (
+      <BuyerCentreView
+        runId={run?.id ?? null}
+        readOnly={readOnly}
+        onOpenProductDetail={(listingId) => handleSelectView('buyer-centre-product-detail', listingId)}
+        onBackToSellerCentre={() => handleSelectView('dashboard')}
+      />
+    );
+  }
+
+  if (activeView === 'buyer-centre-product-detail') {
+    return (
+      <BuyerCentreProductDetailView
+        listingId={buyerCentreListingId}
+        onBackToBuyerCentre={() => handleSelectView('buyer-centre')}
+        onBackToSellerCentre={() => handleSelectView('dashboard')}
+      />
+    );
+  }
+
   return (
     <div className="fixed inset-0 overflow-auto bg-white">
       <div
@@ -624,7 +702,7 @@ export default function ShopeePage({ run, currentUser, onBackToSetup, readOnly =
             </div>
           )}
           <div className="flex min-w-0 flex-1 overflow-hidden">
-            {activeView !== 'new-product' && activeView !== 'customer-service-web' && activeView !== 'customer-service-auto-reply' && activeView !== 'customer-service-quick-reply' && activeView !== 'customer-service-quick-reply-create' && activeView !== 'customer-service-quick-reply-edit' && activeView !== 'marketing-discount-create' && activeView !== 'marketing-discount-detail' && activeView !== 'marketing-discount-data' && activeView !== 'marketing-addon-orders' && activeView !== 'marketing-bundle-orders' && activeView !== 'marketing-shop-flash-sale-create' && activeView !== 'marketing-shop-flash-sale-detail' && activeView !== 'marketing-shop-flash-sale-data' && activeView !== 'marketing-shipping-fee-promotion-create' && activeView !== 'marketing-voucher-create' && activeView !== 'marketing-private-voucher-create' && activeView !== 'marketing-live-voucher-create' && activeView !== 'marketing-video-voucher-create' && activeView !== 'marketing-follow-voucher-create' && activeView !== 'marketing-product-voucher-create' && activeView !== 'marketing-voucher-detail' && activeView !== 'marketing-voucher-orders' && !activeOrderId && (
+            {activeView !== 'new-product' && activeView !== 'customer-service-web' && activeView !== 'customer-service-auto-reply' && activeView !== 'customer-service-quick-reply' && activeView !== 'customer-service-quick-reply-create' && activeView !== 'customer-service-quick-reply-edit' && activeView !== 'marketing-discount-create' && activeView !== 'marketing-discount-detail' && activeView !== 'marketing-discount-data' && activeView !== 'marketing-addon-orders' && activeView !== 'marketing-bundle-orders' && activeView !== 'marketing-shop-flash-sale-create' && activeView !== 'marketing-shop-flash-sale-detail' && activeView !== 'marketing-shop-flash-sale-data' && activeView !== 'marketing-shipping-fee-promotion-create' && activeView !== 'marketing-shipping-fee-promotion-update' && activeView !== 'marketing-voucher-create' && activeView !== 'marketing-private-voucher-create' && activeView !== 'marketing-live-voucher-create' && activeView !== 'marketing-video-voucher-create' && activeView !== 'marketing-follow-voucher-create' && activeView !== 'marketing-product-voucher-create' && activeView !== 'marketing-voucher-detail' && activeView !== 'marketing-voucher-orders' && !activeOrderId && (
               <Sidebar activeView={activeView} onSelectView={handleSelectView} />
             )}
             {activeView === 'my-orders' ? (
@@ -732,9 +810,21 @@ export default function ShopeePage({ run, currentUser, onBackToSetup, readOnly =
             ) : activeView === 'marketing-shopee-ads' ? (
               <ShopeeAdsView readOnly={readOnly} />
             ) : activeView === 'marketing-shipping-fee-promotion' ? (
-              <ShippingFeePromotionView runId={run?.id ?? null} readOnly={readOnly} onCreate={() => handleSelectView('marketing-shipping-fee-promotion-create')} />
+              <ShippingFeePromotionView
+                runId={run?.id ?? null}
+                readOnly={readOnly}
+                onCreate={() => handleSelectView('marketing-shipping-fee-promotion-create')}
+                onEdit={(promotionId) => handleSelectView('marketing-shipping-fee-promotion-update', promotionId)}
+              />
             ) : activeView === 'marketing-shipping-fee-promotion-create' ? (
               <ShippingFeePromotionCreateView runId={run?.id ?? null} readOnly={readOnly} onBackToShippingFeePromotion={() => handleSelectView('marketing-shipping-fee-promotion')} />
+            ) : activeView === 'marketing-shipping-fee-promotion-update' ? (
+              <ShippingFeePromotionCreateView
+                runId={run?.id ?? null}
+                campaignId={activeShippingFeePromotionId}
+                readOnly={readOnly}
+                onBackToShippingFeePromotion={() => handleSelectView('marketing-shipping-fee-promotion')}
+              />
             ) : activeView === 'marketing-voucher-orders' ? (
               <VoucherOrdersView
                 runId={run?.id ?? null}
@@ -800,6 +890,7 @@ export default function ShopeePage({ run, currentUser, onBackToSetup, readOnly =
               handleSelectView('customer-service-web');
               setChatMessagesDrawerOpen(false);
             }}
+            onUnreadCountChange={setChatUnreadCount}
           />
           {activeView !== 'customer-service-web' && (
             <RightSidebar
@@ -814,6 +905,7 @@ export default function ShopeePage({ run, currentUser, onBackToSetup, readOnly =
                 setNotificationDrawerOpen(false);
               }}
               notificationCount={notificationCount}
+              chatUnreadCount={chatUnreadCount}
             />
           )}
         </div>

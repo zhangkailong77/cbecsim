@@ -1796,6 +1796,12 @@ def _ensure_shopee_customer_service_tables():
     existing_tables = set(inspector.get_table_names())
     with engine.begin() as conn:
         if "shopee_customer_service_conversations" in existing_tables:
+            columns = {col["name"] for col in inspector.get_columns("shopee_customer_service_conversations")}
+            if "last_read_game_at" not in columns:
+                try:
+                    conn.execute(text("ALTER TABLE shopee_customer_service_conversations ADD COLUMN last_read_game_at TIMESTAMP NULL"))
+                except Exception:
+                    pass
             indexes = {idx["name"] for idx in inspector.get_indexes("shopee_customer_service_conversations")}
             if "ix_shopee_customer_service_conversations_run_user_status" not in indexes:
                 try:
@@ -3179,6 +3185,7 @@ def _ensure_column_comments():
             "trigger_reason": "触发原因摘要",
             "context_json": "商品/订单上下文快照JSON",
             "opened_game_at": "会话打开游戏时间",
+            "last_read_game_at": "学生最后查看会话的游戏时间，用于计算未读买家消息",
             "closed_game_at": "会话关闭游戏时间",
             "satisfaction_score": "满意度总分",
             "satisfaction_level": "满意度等级",

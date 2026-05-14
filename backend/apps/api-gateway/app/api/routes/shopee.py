@@ -5,6 +5,7 @@ import re
 import json
 import logging
 import os
+import random
 from typing import Any
 from urllib.parse import quote
 from uuid import uuid4
@@ -137,10 +138,12 @@ REDIS_CACHE_TTL_SHOPEE_VOUCHER_CODE_CHECK_SEC = max(5, int(os.getenv("REDIS_CACH
 REDIS_CACHE_TTL_SHOPEE_PRODUCT_VOUCHER_ELIGIBLE_PRODUCTS_SEC = max(10, int(os.getenv("REDIS_CACHE_TTL_SHOPEE_PRODUCT_VOUCHER_ELIGIBLE_PRODUCTS_SEC", "30")))
 REDIS_CACHE_TTL_SHOPEE_SHIPPING_FEE_PROMOTION_BOOTSTRAP_SEC = max(10, int(os.getenv("REDIS_CACHE_TTL_SHOPEE_SHIPPING_FEE_PROMOTION_BOOTSTRAP_SEC", "60")))
 REDIS_CACHE_TTL_SHOPEE_SHIPPING_FEE_PROMOTION_LIST_SEC = max(10, int(os.getenv("REDIS_CACHE_TTL_SHOPEE_SHIPPING_FEE_PROMOTION_LIST_SEC", "60")))
+REDIS_CACHE_TTL_SHOPEE_SHIPPING_FEE_PROMOTION_DETAIL_SEC = max(10, int(os.getenv("REDIS_CACHE_TTL_SHOPEE_SHIPPING_FEE_PROMOTION_DETAIL_SEC", "60")))
 REDIS_CACHE_TTL_SHOPEE_AUTO_REPLY_SETTINGS_SEC = max(10, int(os.getenv("REDIS_CACHE_TTL_SHOPEE_AUTO_REPLY_SETTINGS_SEC", "300")))
 REDIS_CACHE_TTL_SHOPEE_QUICK_REPLY_LIST_SEC = max(10, int(os.getenv("REDIS_CACHE_TTL_SHOPEE_QUICK_REPLY_LIST_SEC", "300")))
 REDIS_CACHE_TTL_SHOPEE_CUSTOMER_SERVICE_LIST_SEC = max(5, int(os.getenv("REDIS_CACHE_TTL_SHOPEE_CUSTOMER_SERVICE_LIST_SEC", "30")))
 REDIS_CACHE_TTL_SHOPEE_CUSTOMER_SERVICE_DETAIL_SEC = max(5, int(os.getenv("REDIS_CACHE_TTL_SHOPEE_CUSTOMER_SERVICE_DETAIL_SEC", "30")))
+REDIS_CACHE_TTL_SHOPEE_BUYER_CENTRE_PRODUCTS_SEC = max(5, int(os.getenv("REDIS_CACHE_TTL_SHOPEE_BUYER_CENTRE_PRODUCTS_SEC", "30")))
 REDIS_CACHE_TTL_DISCOUNT_ELIGIBLE_PRODUCTS_SEC = max(10, int(os.getenv("REDIS_CACHE_TTL_DISCOUNT_ELIGIBLE_PRODUCTS_SEC", "20")))
 REDIS_CACHE_TTL_DISCOUNT_DRAFT_SEC = max(30, int(os.getenv("REDIS_CACHE_TTL_DISCOUNT_DRAFT_SEC", "300")))
 REDIS_CACHE_TTL_ADDON_BOOTSTRAP_SEC = max(10, int(os.getenv("REDIS_CACHE_TTL_ADDON_BOOTSTRAP_SEC", "30")))
@@ -221,6 +224,21 @@ def _shopee_marketing_bootstrap_cache_key(*, run_id: int, user_id: int, market: 
     safe_market = (market or "MY").strip().upper() or "MY"
     safe_lang = (lang or "zh-CN").strip() or "zh-CN"
     return f"{REDIS_PREFIX}:cache:shopee:marketing:bootstrap:{run_id}:{user_id}:{safe_market}:{safe_lang}"
+
+
+def _shopee_buyer_centre_products_cache_key(*, run_id: int, user_id: int, keyword: str, category: str, page: int, page_size: int) -> str:
+    payload = {
+        "keyword": keyword.strip(),
+        "category": category.strip(),
+        "page": page,
+        "page_size": page_size,
+    }
+    digest = hashlib.md5(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+    return f"{REDIS_PREFIX}:cache:shopee:buyer-centre:products:{run_id}:{user_id}:{digest}"
+
+
+def _invalidate_shopee_buyer_centre_products_cache(*, run_id: int, user_id: int) -> None:
+    cache_delete_prefix(f"{REDIS_PREFIX}:cache:shopee:buyer-centre:products:{run_id}:{user_id}:")
 
 
 def _invalidate_shopee_marketing_bootstrap_cache(*, run_id: int, user_id: int) -> None:
@@ -513,12 +531,16 @@ class ShopeeQuickReplyGroupReorderRequest(BaseModel):
 
 
 CUSTOMER_SERVICE_SCENARIO_PRODUCT_DETAIL = "product_detail_inquiry"
+CUSTOMER_SERVICE_SCENARIO_LOGISTICS_STALLED = "logistics_stalled_urge"
+CUSTOMER_SERVICE_SCENARIO_DELIVERED_DAMAGE = "delivered_damage_refund"
 CUSTOMER_SERVICE_OPEN_STATUSES = {"open", "waiting_seller"}
 CUSTOMER_SERVICE_MAX_OPEN_CONVERSATIONS = 3
 CUSTOMER_SERVICE_MAX_DAILY_CONVERSATIONS = 5
-CUSTOMER_SERVICE_MAX_MESSAGES = 10
+CUSTOMER_SERVICE_MAX_MESSAGES = 50
 CUSTOMER_SERVICE_RECOMMENDED_MESSAGES = 7
 CUSTOMER_SERVICE_MIN_MESSAGES = 5
+CUSTOMER_SERVICE_LOGISTICS_RECOMMENDED_MESSAGES = 6
+CUSTOMER_SERVICE_LOGISTICS_MIN_MESSAGES = 4
 
 
 class ShopeeCustomerServiceListingResponse(BaseModel):
@@ -576,6 +598,7 @@ class ShopeeCustomerServiceConversationDetailResponse(BaseModel):
     satisfaction_score: float | None = None
     satisfaction_level: str | None = None
     score_detail: dict[str, Any] | None = None
+    order_context: dict[str, Any] | None = None
     can_send: bool
     can_resolve: bool
     min_messages: int = CUSTOMER_SERVICE_MIN_MESSAGES
@@ -1447,6 +1470,8 @@ class ShopeeShippingFeePromotionMetaResponse(BaseModel):
     read_only: bool
     current_tick: str
     currency: str = "RM"
+    editable: bool = True
+    editable_reason: str | None = None
 
 
 class ShopeeShippingFeePromotionTierFormResponse(BaseModel):
@@ -1457,13 +1482,16 @@ class ShopeeShippingFeePromotionTierFormResponse(BaseModel):
 
 
 class ShopeeShippingFeePromotionCreateFormResponse(BaseModel):
+    id: int | None = None
     promotion_name: str = ""
     name_max_length: int = 20
+    status: str | None = None
     period_type: str = "no_limit"
     start_at: str
     end_at: str | None = None
     budget_type: str = "no_limit"
     budget_limit: float | None = None
+    budget_used: float = 0
     channels: list[str] = Field(default_factory=lambda: ["standard"])
     tiers: list[ShopeeShippingFeePromotionTierFormResponse] = Field(default_factory=list)
 
@@ -1510,6 +1538,13 @@ class ShopeeShippingFeePromotionCreateResponse(BaseModel):
     id: int
     status: str
     message: str = "运费促销创建成功"
+
+
+class ShopeeShippingFeePromotionEndResponse(BaseModel):
+    id: int
+    status: str
+    status_label: str
+    message: str = "运费促销已结束"
 
 
 class ShopeeShippingFeePromotionTabResponse(BaseModel):
@@ -2310,6 +2345,47 @@ class ShopeeListingsListResponse(BaseModel):
     listings: list[ShopeeListingRowResponse]
 
 
+class ShopeeBuyerCentreCategoryResponse(BaseModel):
+    name: str
+    count: int
+
+
+class ShopeeBuyerCentreProductResponse(BaseModel):
+    listing_id: int
+    rank: int
+    is_mall: bool = False
+    title: str
+    category: str | None = None
+    cover_url: str | None = None
+    display_price: str
+    min_price: int
+    max_price: int
+    sales_count: int
+    stock_available: int
+    rating: float = 5.0
+    review_count: int = 0
+    status: str
+
+
+class ShopeeBuyerCentreProductsMetaResponse(BaseModel):
+    run_id: int
+    user_id: int
+    read_only: bool
+    currency: str = "RM"
+    keyword: str = ""
+    category: str = ""
+    page: int
+    page_size: int
+    total: int
+    total_pages: int
+
+
+class ShopeeBuyerCentreProductsResponse(BaseModel):
+    meta: ShopeeBuyerCentreProductsMetaResponse
+    categories: list[ShopeeBuyerCentreCategoryResponse] = Field(default_factory=list)
+    items: list[ShopeeBuyerCentreProductResponse] = Field(default_factory=list)
+
+
 ShopeeListingRowResponse.model_rebuild()
 
 
@@ -2563,8 +2639,8 @@ def _enforce_shopee_customer_service_rate_limit(*, user_id: int, llm: bool = Fal
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=f"客服请求过于频繁，请在 {reset_at} 后重试")
 
 
-def _customer_service_list_cache_key(*, run_id: int, user_id: int, status_filter: str | None, page: int, page_size: int) -> str:
-    digest = hashlib.md5(json.dumps({"status": status_filter, "page": page, "page_size": page_size}, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+def _customer_service_list_cache_key(*, run_id: int, user_id: int, scenario: str | None, status_filter: str | None, page: int, page_size: int) -> str:
+    digest = hashlib.md5(json.dumps({"scenario": scenario, "status": status_filter, "page": page, "page_size": page_size}, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
     return f"{REDIS_PREFIX}:shopee:customer_service:conversations:{run_id}:{user_id}:{digest}"
 
 
@@ -2587,20 +2663,44 @@ def _safe_json_loads(raw: str | None, default: Any) -> Any:
         return default
 
 
-def _ensure_customer_service_scenario(db: Session) -> ShopeeCustomerServiceScenario:
-    row = db.query(ShopeeCustomerServiceScenario).filter(ShopeeCustomerServiceScenario.scenario_code == CUSTOMER_SERVICE_SCENARIO_PRODUCT_DETAIL).first()
+def _ensure_customer_service_scenario(db: Session, scenario_code: str = CUSTOMER_SERVICE_SCENARIO_PRODUCT_DETAIL) -> ShopeeCustomerServiceScenario:
+    row = db.query(ShopeeCustomerServiceScenario).filter(ShopeeCustomerServiceScenario.scenario_code == scenario_code).first()
     if row is not None:
         return row
+    scenario_payloads = {
+        CUSTOMER_SERVICE_SCENARIO_PRODUCT_DETAIL: {
+            "name": "商品细节追问",
+            "trigger_type": "product",
+            "base_probability": 0.35,
+            "buyer_persona_prompt": "你是 Shopee 买家，准备下单前会礼貌追问商品细节；回复要像真实买家，可以先表达理解、犹豫、认可或补充个人偏好。",
+            "scenario_prompt": "只围绕当前商品的标题、图片、规格、材质、颜色、尺码、库存、发货信息追问；可用生活化语言复述客服解释并逐步澄清需求，不编造商品事实，不暴露内部评分。",
+            "rubric_json": json.dumps({"响应完整度": 30, "商品准确性": 25, "服务态度": 20, "购买引导": 15, "平台合规": 10}, ensure_ascii=False),
+        },
+        CUSTOMER_SERVICE_SCENARIO_LOGISTICS_STALLED: {
+            "name": "物流停滞催单",
+            "trigger_type": "logistics",
+            "base_probability": 0.55,
+            "buyer_persona_prompt": "你是 Shopee 买家，订单已经发货但物流长时间没有更新；你会围绕包裹不动、预计送达和卖家跟进进行追问。",
+            "scenario_prompt": "只围绕当前订单物流停滞沟通，要求卖家解释物流停滞并给出平台内合理跟进；不要求私下赔偿，不强制退款取消，不暴露内部阈值或评分规则。",
+            "rubric_json": json.dumps({"情绪安抚": 25, "物流解释准确性": 25, "跟进承诺": 20, "平台合规": 20, "订单稳定": 10}, ensure_ascii=False),
+        },
+        CUSTOMER_SERVICE_SCENARIO_DELIVERED_DAMAGE: {
+            "name": "签收破损退款",
+            "trigger_type": "after_sales",
+            "base_probability": 0.45,
+            "buyer_persona_prompt": "你是 Shopee 买家，刚签收商品后发现商品或包装破损、无法正常使用；情绪焦急但仍愿意通过平台流程沟通。",
+            "scenario_prompt": "只围绕当前订单签收后破损或无法使用的售后问题沟通，要求卖家给出平台 Return/Refund 流程内的合规处理方案；禁止要求私下转账、绕过平台或暴露内部规则。",
+            "rubric_json": json.dumps({"处理方式归类": 40, "证据引导": 20, "平台流程合规": 25, "沟通清晰度": 15}, ensure_ascii=False),
+        },
+    }
+    payload = scenario_payloads.get(scenario_code)
+    if payload is None:
+        raise ValueError(f"未知客服剧本：{scenario_code}")
     row = ShopeeCustomerServiceScenario(
-        scenario_code=CUSTOMER_SERVICE_SCENARIO_PRODUCT_DETAIL,
-        name="商品细节追问",
-        trigger_type="product",
+        scenario_code=scenario_code,
         enabled=True,
-        base_probability=0.35,
         cooldown_game_hours=48,
-        buyer_persona_prompt="你是 Shopee 买家，准备下单前会礼貌追问商品细节；回复要像真实买家，可以先表达理解、犹豫、认可或补充个人偏好。",
-        scenario_prompt="只围绕当前商品的标题、图片、规格、材质、颜色、尺码、库存、发货信息追问；可用生活化语言复述客服解释并逐步澄清需求，不编造商品事实，不暴露内部评分。",
-        rubric_json=json.dumps({"响应完整度": 30, "商品准确性": 25, "服务态度": 20, "购买引导": 15, "平台合规": 10}, ensure_ascii=False),
+        **payload,
     )
     db.add(row)
     db.commit()
@@ -2682,6 +2782,455 @@ def _build_customer_service_listing_context(listing: ShopeeListing) -> dict[str,
     }
 
 
+def _build_logistics_stalled_context(*, order: ShopeeOrder, latest_event: ShopeeOrderLogisticsEvent | None, current_tick: datetime) -> dict[str, Any]:
+    items = sorted(order.items, key=lambda item: item.id)
+    primary_item = items[0] if items else None
+    last_event_time = latest_event.event_time if latest_event is not None else order.shipped_at
+    stalled_game_hours = 0.0
+    if last_event_time is not None:
+        stalled_game_hours = max(0.0, (current_tick - last_event_time).total_seconds() / REAL_SECONDS_PER_GAME_HOUR)
+    is_eta_overdue = bool(order.eta_end_at and current_tick > order.eta_end_at)
+    return {
+        "id": primary_item.listing_id if primary_item is not None else order.listing_id,
+        "title": primary_item.product_name if primary_item is not None else f"订单 {order.order_no}",
+        "cover_url": primary_item.image_url if primary_item is not None else None,
+        "price": primary_item.unit_price if primary_item is not None else order.buyer_payment,
+        "stock_available": None,
+        "description_summary": "物流停滞催单",
+        "specs": [],
+        "variants": [],
+        "order": {
+            "id": order.id,
+            "order_sn": order.order_no,
+            "type_bucket": order.type_bucket,
+            "process_status": order.process_status,
+            "buyer_name": order.buyer_name,
+            "shipping_channel": order.shipping_channel,
+            "tracking_no": order.tracking_no,
+            "waybill_no": order.waybill_no,
+            "shipped_at": order.shipped_at.isoformat() if order.shipped_at else None,
+            "eta_start_at": order.eta_start_at.isoformat() if order.eta_start_at else None,
+            "eta_end_at": order.eta_end_at.isoformat() if order.eta_end_at else None,
+            "buyer_payment": order.buyer_payment,
+        },
+        "logistics": {
+            "last_event_code": latest_event.event_code if latest_event is not None else None,
+            "last_event_title": latest_event.event_title if latest_event is not None else "已发货",
+            "last_event_desc": latest_event.event_desc if latest_event is not None else "订单已发货，等待物流更新",
+            "last_event_time": last_event_time.isoformat() if last_event_time else None,
+            "stalled_game_hours": round(stalled_game_hours, 1),
+            "is_eta_overdue": is_eta_overdue,
+        },
+        "items": [
+            {
+                "listing_id": item.listing_id,
+                "variant_id": item.variant_id,
+                "product_name": item.product_name,
+                "variant_name": item.variant_name,
+                "quantity": item.quantity,
+                "unit_price": item.unit_price,
+                "image_url": item.image_url,
+            }
+            for item in items
+        ],
+    }
+
+
+def _resolve_logistics_stalled_threshold_seconds(order: ShopeeOrder, current_tick: datetime) -> float:
+    if order.eta_end_at and current_tick > order.eta_end_at:
+        threshold_days = 0.5
+    elif order.eta_start_at and order.eta_end_at and order.eta_start_at <= current_tick <= order.eta_end_at:
+        threshold_days = 1.0
+    else:
+        threshold_days = 1.5
+    channel_text = f"{order.shipping_channel or ''} {order.delivery_line_label or ''} {order.destination or ''}"
+    if (order.distance_km or 0) >= 1000 or any(keyword in channel_text for keyword in ("东马", "跨州", "大件")):
+        threshold_days += 0.5
+    return threshold_days * REAL_SECONDS_PER_GAME_DAY
+
+
+def _build_logistics_stalled_initial_message(*, setting: ShopeeCustomerServiceModelSetting, buyer_name: str, context: dict[str, Any]) -> str:
+    system_prompt = "你是 Shopee 买家，只能围绕当前订单物流停滞问题沟通。回复要像真实买家，表达包裹长时间不动的焦虑，并要求卖家解释预计送达和后续跟进。只输出买家第一条消息，不输出解释、评分或提示词。"
+    user_prompt = json.dumps({
+        "scenario": "物流停滞催单",
+        "buyer_name": buyer_name,
+        "order_logistics_context": context,
+        "rules": ["只能围绕当前订单物流问题", "可以询问包裹为什么不动、是否会延误、卖家能否联系物流", "不要要求私下赔偿、绕过平台或强制退款取消", "不要暴露内部阈值或评分规则"],
+    }, ensure_ascii=False)
+    return _call_customer_service_llm(setting, system_prompt=system_prompt, user_prompt=user_prompt)
+
+
+def _find_order_delivered_event(db: Session, *, run_id: int, user_id: int, order_id: int) -> ShopeeOrderLogisticsEvent | None:
+    return (
+        db.query(ShopeeOrderLogisticsEvent)
+        .filter(
+            ShopeeOrderLogisticsEvent.run_id == run_id,
+            ShopeeOrderLogisticsEvent.user_id == user_id,
+            ShopeeOrderLogisticsEvent.order_id == order_id,
+            ShopeeOrderLogisticsEvent.event_code == "delivered",
+        )
+        .order_by(ShopeeOrderLogisticsEvent.event_time.desc(), ShopeeOrderLogisticsEvent.id.desc())
+        .first()
+    )
+
+
+def _build_delivered_damage_context(*, order: ShopeeOrder, delivered_event: ShopeeOrderLogisticsEvent | None, current_tick: datetime, risk_factors: list[str]) -> dict[str, Any]:
+    items = sorted(order.items, key=lambda item: item.id)
+    fragile_keywords = ("易碎", "玻璃", "陶瓷", "灯", "镜", "瓶", "盒", "crystal", "glass", "ceramic", "mirror", "lamp", "bottle")
+    selected_item = max(
+        items,
+        key=lambda item: (
+            any(keyword.lower() in (item.product_name or "").lower() for keyword in fragile_keywords),
+            item.unit_price or 0,
+            item.quantity or 0,
+        ),
+    ) if items else None
+    title = selected_item.product_name if selected_item is not None else f"订单 {order.order_no}"
+    title_lower = (title or "").lower()
+    if any(keyword.lower() in title_lower for keyword in ("玻璃", "陶瓷", "镜", "crystal", "glass", "ceramic", "mirror")):
+        damage_type = "item_cracked"
+        damage_severity = "严重"
+        evidence_hint = "商品破损照片、外包装照片、面单图和开箱视频"
+    elif any(keyword.lower() in title_lower for keyword in ("配件", "part", "accessory")):
+        damage_type = "missing_part"
+        damage_severity = "中等"
+        evidence_hint = "缺失或破损配件照片、外包装照片和面单图"
+    elif any(keyword.lower() in title_lower for keyword in ("电", "灯", "charger", "lamp", "electronic")):
+        damage_type = "not_working"
+        damage_severity = "中等"
+        evidence_hint = "无法使用的视频、商品照片、外包装照片和面单图"
+    else:
+        damage_type = "package_damaged"
+        damage_severity = "轻微" if (order.buyer_payment or 0) < 10000 else "中等"
+        evidence_hint = "外包装破损照片、商品照片和面单图"
+    delivered_at = order.delivered_at or (delivered_event.event_time if delivered_event is not None else None)
+    order_payload = {
+        "id": order.id,
+        "order_sn": order.order_no,
+        "type_bucket": order.type_bucket,
+        "process_status": order.process_status,
+        "buyer_name": order.buyer_name,
+        "buyer_payment": order.buyer_payment,
+        "shipping_channel": order.shipping_channel,
+        "tracking_no": order.tracking_no,
+        "waybill_no": order.waybill_no,
+        "created_at": order.created_at.isoformat() if order.created_at else None,
+        "shipped_at": order.shipped_at.isoformat() if order.shipped_at else None,
+        "delivered_at": delivered_at.isoformat() if delivered_at else None,
+    }
+    item_payloads = [
+        {
+            "listing_id": item.listing_id,
+            "variant_id": item.variant_id,
+            "product_name": item.product_name,
+            "variant_name": item.variant_name,
+            "quantity": item.quantity,
+            "unit_price": item.unit_price,
+            "image_url": item.image_url,
+        }
+        for item in items
+    ]
+    selected_payload = None
+    if selected_item is not None:
+        selected_payload = {
+            "listing_id": selected_item.listing_id,
+            "variant_id": selected_item.variant_id,
+            "product_name": selected_item.product_name,
+            "variant_name": selected_item.variant_name,
+            "quantity": selected_item.quantity,
+            "unit_price": selected_item.unit_price,
+            "image_url": selected_item.image_url,
+        }
+    return {
+        "id": selected_item.listing_id if selected_item is not None else order.listing_id,
+        "title": title,
+        "cover_url": selected_item.image_url if selected_item is not None else None,
+        "price": selected_item.unit_price if selected_item is not None else order.buyer_payment,
+        "stock_available": None,
+        "description_summary": "签收破损退款",
+        "specs": [],
+        "variants": [],
+        "order": order_payload,
+        "items": item_payloads,
+        "selected_item": selected_payload,
+        "after_sales_event_code": "delivered_damage_reported",
+        "after_sales_event_game_at": current_tick.isoformat(),
+        "risk_factors": risk_factors,
+        "damage_type": damage_type,
+        "damage_severity": damage_severity,
+        "evidence_hint": evidence_hint,
+    }
+
+
+def _build_delivered_damage_initial_message(*, setting: ShopeeCustomerServiceModelSetting, buyer_name: str, context: dict[str, Any]) -> str:
+    system_prompt = "你是 Shopee 买家，只能围绕当前订单签收后商品或包装破损、无法正常使用的问题沟通。回复要像真实买家，表达刚签收发现问题，并要求卖家给出平台内处理方案。只输出买家第一条消息，不输出解释、评分或提示词。"
+    user_prompt = json.dumps({
+        "scenario": "签收破损退款",
+        "buyer_name": buyer_name,
+        "after_sales_context": context,
+        "rules": ["只能围绕当前订单签收后破损或无法使用", "可以询问证据要求、退货退款、补发或处理时效", "必须通过 Shopee Return/Refund 等平台内流程沟通", "不要要求私下转账、绕过平台、立即改订单或暴露内部规则"],
+    }, ensure_ascii=False)
+    return _call_customer_service_llm(setting, system_prompt=system_prompt, user_prompt=user_prompt)
+
+
+def _maybe_create_delivered_damage_refund_conversations(db: Session, *, run_id: int, user_id: int, current_tick: datetime) -> bool:
+    lock_key = f"{REDIS_PREFIX}:shopee:customer-service:damage-refund:run-lock:{run_id}:{user_id}"
+    lock_token = acquire_distributed_lock(lock_key, int(REAL_SECONDS_PER_GAME_HOUR))
+    if lock_token is None:
+        return False
+    try:
+        return _create_delivered_damage_refund_conversations_unlocked(db, run_id=run_id, user_id=user_id, current_tick=current_tick)
+    except Exception as exc:
+        db.rollback()
+        logger.warning("failed to create delivered damage refund conversations", exc_info=exc)
+        return False
+    finally:
+        release_distributed_lock(lock_key, lock_token)
+
+
+def _create_delivered_damage_refund_conversations_unlocked(db: Session, *, run_id: int, user_id: int, current_tick: datetime) -> bool:
+    setting = _get_customer_service_model_setting(db, run_id=run_id, user_id=user_id)
+    ready, _ = _customer_service_model_ready(setting)
+    if not ready or setting is None:
+        return False
+    scenario = _ensure_customer_service_scenario(db, CUSTOMER_SERVICE_SCENARIO_DELIVERED_DAMAGE)
+    if not scenario.enabled:
+        return False
+    open_count = db.query(func.count(ShopeeCustomerServiceConversation.id)).filter(ShopeeCustomerServiceConversation.run_id == run_id, ShopeeCustomerServiceConversation.user_id == user_id, ShopeeCustomerServiceConversation.status.in_(CUSTOMER_SERVICE_OPEN_STATUSES)).scalar() or 0
+    if open_count >= CUSTOMER_SERVICE_MAX_OPEN_CONVERSATIONS:
+        return False
+    day_start = datetime.combine(current_tick.date(), time.min)
+    day_end = datetime.combine(current_tick.date(), time.max)
+    daily_count = db.query(func.count(ShopeeCustomerServiceConversation.id)).filter(ShopeeCustomerServiceConversation.run_id == run_id, ShopeeCustomerServiceConversation.user_id == user_id, ShopeeCustomerServiceConversation.opened_game_at >= day_start, ShopeeCustomerServiceConversation.opened_game_at <= day_end).scalar() or 0
+    if daily_count >= CUSTOMER_SERVICE_MAX_DAILY_CONVERSATIONS:
+        return False
+    orders = (
+        db.query(ShopeeOrder)
+        .options(selectinload(ShopeeOrder.items))
+        .filter(
+            ShopeeOrder.run_id == run_id,
+            ShopeeOrder.user_id == user_id,
+            ShopeeOrder.type_bucket == "completed",
+            ShopeeOrder.cancelled_at.is_(None),
+        )
+        .order_by(ShopeeOrder.id.desc())
+        .limit(100)
+        .all()
+    )
+    changed = False
+    fragile_keywords = ("易碎", "玻璃", "陶瓷", "灯", "镜", "瓶", "盒", "crystal", "glass", "ceramic", "mirror", "lamp", "bottle")
+    for order in orders:
+        if not order.items:
+            continue
+        delivered_event = _find_order_delivered_event(db, run_id=run_id, user_id=user_id, order_id=order.id)
+        delivered_at = order.delivered_at or (delivered_event.event_time if delivered_event is not None else None)
+        if delivered_at is None:
+            continue
+        elapsed_hours = (current_tick - delivered_at).total_seconds() / REAL_SECONDS_PER_GAME_HOUR
+        if elapsed_hours < 2 or elapsed_hours > 48:
+            continue
+        exists = db.query(ShopeeCustomerServiceConversation.id).filter(ShopeeCustomerServiceConversation.run_id == run_id, ShopeeCustomerServiceConversation.user_id == user_id, ShopeeCustomerServiceConversation.scenario_code == CUSTOMER_SERVICE_SCENARIO_DELIVERED_DAMAGE, ShopeeCustomerServiceConversation.order_id == order.id).first()
+        if exists is not None:
+            continue
+        lock_key = f"{REDIS_PREFIX}:shopee:customer-service:damage-refund:lock:{run_id}:{order.id}"
+        lock_token = acquire_distributed_lock(lock_key, int(REAL_SECONDS_PER_GAME_DAY * 2))
+        if lock_token is None:
+            continue
+        created = False
+        try:
+            risk_factors: list[str] = []
+            probability = float(scenario.base_probability)
+            if (order.buyer_payment or 0) >= 20000:
+                probability += 0.10
+                risk_factors.append("high_amount")
+            total_qty = sum(max(0, int(item.quantity or 0)) for item in order.items)
+            if total_qty >= 2:
+                probability += 0.05
+                risk_factors.append("multiple_items")
+            if any(any(keyword.lower() in (item.product_name or "").lower() for keyword in fragile_keywords) for item in order.items):
+                probability += 0.10
+                risk_factors.append("fragile_keyword")
+            if (order.distance_km or 0) >= 1000 or any(keyword in f"{order.shipping_channel or ''} {order.delivery_line_label or ''} {order.destination or ''}" for keyword in ("东马", "跨州", "大件")):
+                probability += 0.05
+                risk_factors.append("long_distance_or_bulky")
+            buyer_profile = _select_customer_service_buyer(db)
+            if buyer_profile is not None and (buyer_profile.impulse_level or 0) >= 0.65:
+                probability += 0.10
+                risk_factors.append("low_patience_buyer")
+            probability = max(0.10, min(0.85, probability))
+            rng = random.Random(f"damage:{run_id}:{user_id}:{order.id}:{current_tick.date().isoformat()}")
+            if rng.random() > probability:
+                continue
+            buyer_name = order.buyer_name or (buyer_profile.nickname if buyer_profile is not None else "Buyer")
+            context = _build_delivered_damage_context(order=order, delivered_event=delivered_event, current_tick=current_tick, risk_factors=risk_factors)
+            trigger_reason = f"签收后 {elapsed_hours:.1f} 游戏小时反馈商品破损"
+            conversation = ShopeeCustomerServiceConversation(run_id=run_id, user_id=user_id, scenario_id=scenario.id, scenario_code=scenario.scenario_code, buyer_profile_id=buyer_profile.id if buyer_profile is not None else None, buyer_name=buyer_name, listing_id=(context.get("selected_item") or {}).get("listing_id") if isinstance(context.get("selected_item"), dict) else None, order_id=order.id, status="open", trigger_reason=trigger_reason[:255], context_json=json.dumps(context, ensure_ascii=False), opened_game_at=current_tick)
+            db.add(conversation)
+            db.flush()
+            buyer_content = _build_delivered_damage_initial_message(setting=setting, buyer_name=buyer_name, context=context)
+            db.add(ShopeeCustomerServiceMessage(conversation_id=conversation.id, run_id=run_id, user_id=user_id, sender_type="buyer", message_type="text", content=buyer_content, sent_game_at=current_tick))
+            created = True
+            changed = True
+            open_count += 1
+            daily_count += 1
+        finally:
+            if not created:
+                release_distributed_lock(lock_key, lock_token)
+        if open_count >= CUSTOMER_SERVICE_MAX_OPEN_CONVERSATIONS or daily_count >= CUSTOMER_SERVICE_MAX_DAILY_CONVERSATIONS:
+            break
+    if changed:
+        _invalidate_customer_service_cache(run_id=run_id, user_id=user_id)
+    return changed
+
+
+def _maybe_create_logistics_stalled_urge_conversations(db: Session, *, run_id: int, user_id: int, current_tick: datetime) -> bool:
+    lock_key = f"{REDIS_PREFIX}:shopee:customer-service:logistics-stalled:run-lock:{run_id}:{user_id}"
+    lock_token = acquire_distributed_lock(lock_key, int(REAL_SECONDS_PER_GAME_HOUR))
+    if lock_token is None:
+        return False
+    try:
+        return _create_logistics_stalled_urge_conversations_unlocked(db, run_id=run_id, user_id=user_id, current_tick=current_tick)
+    finally:
+        release_distributed_lock(lock_key, lock_token)
+
+
+def _create_logistics_stalled_urge_conversations_unlocked(db: Session, *, run_id: int, user_id: int, current_tick: datetime) -> bool:
+    setting = _get_customer_service_model_setting(db, run_id=run_id, user_id=user_id)
+    ready, _ = _customer_service_model_ready(setting)
+    if not ready or setting is None:
+        return False
+    scenario = _ensure_customer_service_scenario(db, CUSTOMER_SERVICE_SCENARIO_LOGISTICS_STALLED)
+    if not scenario.enabled:
+        return False
+    open_count = (
+        db.query(func.count(ShopeeCustomerServiceConversation.id))
+        .filter(
+            ShopeeCustomerServiceConversation.run_id == run_id,
+            ShopeeCustomerServiceConversation.user_id == user_id,
+            ShopeeCustomerServiceConversation.status.in_(CUSTOMER_SERVICE_OPEN_STATUSES),
+        )
+        .scalar()
+        or 0
+    )
+    if open_count >= CUSTOMER_SERVICE_MAX_OPEN_CONVERSATIONS:
+        return False
+    day_start = datetime.combine(current_tick.date(), time.min)
+    day_end = datetime.combine(current_tick.date(), time.max)
+    daily_count = (
+        db.query(func.count(ShopeeCustomerServiceConversation.id))
+        .filter(
+            ShopeeCustomerServiceConversation.run_id == run_id,
+            ShopeeCustomerServiceConversation.user_id == user_id,
+            ShopeeCustomerServiceConversation.opened_game_at >= day_start,
+            ShopeeCustomerServiceConversation.opened_game_at <= day_end,
+        )
+        .scalar()
+        or 0
+    )
+    if daily_count >= CUSTOMER_SERVICE_MAX_DAILY_CONVERSATIONS:
+        return False
+
+    shipping_orders = (
+        db.query(ShopeeOrder)
+        .options(selectinload(ShopeeOrder.items))
+        .filter(
+            ShopeeOrder.run_id == run_id,
+            ShopeeOrder.user_id == user_id,
+            ShopeeOrder.type_bucket == "shipping",
+            ShopeeOrder.process_status == "processed",
+            ShopeeOrder.shipped_at.isnot(None),
+            ShopeeOrder.delivered_at.is_(None),
+            ShopeeOrder.cancelled_at.is_(None),
+        )
+        .order_by(ShopeeOrder.id.desc())
+        .limit(100)
+        .all()
+    )
+    changed = False
+    for order in shipping_orders:
+        if not (order.tracking_no or order.waybill_no):
+            continue
+        exists = (
+            db.query(ShopeeCustomerServiceConversation.id)
+            .filter(
+                ShopeeCustomerServiceConversation.run_id == run_id,
+                ShopeeCustomerServiceConversation.user_id == user_id,
+                ShopeeCustomerServiceConversation.scenario_code == CUSTOMER_SERVICE_SCENARIO_LOGISTICS_STALLED,
+                ShopeeCustomerServiceConversation.order_id == order.id,
+            )
+            .first()
+        )
+        if exists is not None:
+            continue
+        latest_event = (
+            db.query(ShopeeOrderLogisticsEvent)
+            .filter(
+                ShopeeOrderLogisticsEvent.run_id == run_id,
+                ShopeeOrderLogisticsEvent.user_id == user_id,
+                ShopeeOrderLogisticsEvent.order_id == order.id,
+            )
+            .order_by(ShopeeOrderLogisticsEvent.event_time.desc(), ShopeeOrderLogisticsEvent.id.desc())
+            .first()
+        )
+        if latest_event is not None and latest_event.event_code == "delivered":
+            continue
+        last_event_time = latest_event.event_time if latest_event is not None else order.shipped_at
+        if last_event_time is None:
+            continue
+        stalled_seconds = max(0.0, (current_tick - last_event_time).total_seconds())
+        if stalled_seconds < _resolve_logistics_stalled_threshold_seconds(order, current_tick):
+            continue
+        lock_key = f"{REDIS_PREFIX}:shopee:customer-service:logistics-stalled:lock:{run_id}:{order.id}"
+        lock_token = acquire_distributed_lock(lock_key, int(REAL_SECONDS_PER_GAME_DAY * 2))
+        if lock_token is None:
+            continue
+        probability = float(scenario.base_probability)
+        if order.eta_end_at and current_tick > order.eta_end_at:
+            probability += 0.25
+        if (order.buyer_payment or 0) >= 20000:
+            probability += 0.10
+        if (order.distance_km or 0) >= 1000 or "大件" in (order.shipping_channel or ""):
+            probability -= 0.05
+        probability = max(0.15, min(0.90, probability))
+        rng = random.Random(f"{run_id}:{user_id}:{order.id}:{current_tick.date().isoformat()}")
+        if rng.random() > probability:
+            release_distributed_lock(lock_key, lock_token)
+            continue
+        buyer_profile = _select_customer_service_buyer(db)
+        buyer_name = order.buyer_name or (buyer_profile.nickname if buyer_profile is not None else "Buyer")
+        context = _build_logistics_stalled_context(order=order, latest_event=latest_event, current_tick=current_tick)
+        stalled_game_hours = context.get("logistics", {}).get("stalled_game_hours", 0)
+        trigger_reason = f"物流 {stalled_game_hours} 游戏小时未更新"
+        if order.eta_end_at and current_tick > order.eta_end_at:
+            trigger_reason = f"{trigger_reason}，已超过预计送达结束时间"
+        conversation = ShopeeCustomerServiceConversation(
+            run_id=run_id,
+            user_id=user_id,
+            scenario_id=scenario.id,
+            scenario_code=scenario.scenario_code,
+            buyer_profile_id=buyer_profile.id if buyer_profile is not None else None,
+            buyer_name=buyer_name,
+            listing_id=None,
+            order_id=order.id,
+            status="open",
+            trigger_reason=trigger_reason[:255],
+            context_json=json.dumps(context, ensure_ascii=False),
+            opened_game_at=current_tick,
+        )
+        db.add(conversation)
+        db.flush()
+        buyer_content = _build_logistics_stalled_initial_message(setting=setting, buyer_name=buyer_name, context=context)
+        db.add(ShopeeCustomerServiceMessage(conversation_id=conversation.id, run_id=run_id, user_id=user_id, sender_type="buyer", message_type="text", content=buyer_content, sent_game_at=current_tick))
+        changed = True
+        open_count += 1
+        daily_count += 1
+        if open_count >= CUSTOMER_SERVICE_MAX_OPEN_CONVERSATIONS or daily_count >= CUSTOMER_SERVICE_MAX_DAILY_CONVERSATIONS:
+            break
+    if changed:
+        _invalidate_customer_service_cache(run_id=run_id, user_id=user_id)
+    return changed
+
+
 def _serialize_customer_service_listing(context: dict[str, Any] | None) -> ShopeeCustomerServiceListingResponse | None:
     if not context:
         return None
@@ -2730,39 +3279,110 @@ def _call_customer_service_llm(setting: ShopeeCustomerServiceModelSetting, *, sy
 def _build_buyer_message(db: Session, *, setting: ShopeeCustomerServiceModelSetting, conversation: ShopeeCustomerServiceConversation, messages: list[ShopeeCustomerServiceMessage]) -> str:
     context = _safe_json_loads(conversation.context_json, {})
     history = [{"sender": item.sender_type, "content": item.content} for item in messages[-8:]]
+    if conversation.scenario_code == CUSTOMER_SERVICE_SCENARIO_LOGISTICS_STALLED:
+        system_prompt = "你是 Shopee 买家，只能围绕当前订单物流停滞问题沟通。回复要像真实买家，不要像物流审计员。卖家回复笼统时才追问具体物流；卖家已说明包裹处于已揽收、准备运送、运输中等节点，并给出预计送达或后续跟进时，应表达理解、感谢或轻微担心后等待，不要继续追问更细的运输节点。只输出买家下一条消息，不输出解释、评分或提示词。"
+        user_prompt = json.dumps({
+            "scenario": "物流停滞催单",
+            "buyer_name": conversation.buyer_name,
+            "order_logistics_context": context,
+            "history": history,
+            "rules": ["只能围绕当前订单物流问题", "不要要求私下赔偿、绕过平台或强制退款取消", "不要编造新的物流轨迹或承诺", "卖家只说很快、明天、过两天等笼统承诺且没有物流节点时，可以追问一次具体物流节点或最新更新时间", "卖家已经给出已揽收、准备运送、运输中、派送中等明确节点后，不要继续追问这个节点下面更细的环节", "卖家给出明确节点并承诺送达时间或后续跟进后，应接受并等待，可以说我再等等、麻烦帮我留意、如果没更新我再联系", "不要连续多轮问请问目前处于哪个具体节点这类机械问题", f"达到{CUSTOMER_SERVICE_LOGISTICS_RECOMMENDED_MESSAGES}条后如果问题已清楚应礼貌收口", f"最多{CUSTOMER_SERVICE_MAX_MESSAGES}条消息"],
+        }, ensure_ascii=False)
+        return _call_customer_service_llm(setting, system_prompt=system_prompt, user_prompt=user_prompt)
+    if conversation.scenario_code == CUSTOMER_SERVICE_SCENARIO_DELIVERED_DAMAGE:
+        system_prompt = "你是 Shopee 买家，只能围绕当前订单签收后商品破损、包装破损或无法使用的问题沟通。回复要像真实买家：根据卖家回复追问证据要求、退货退款、补发可能性或处理时效；不要求私下处理，不越权修改订单。只输出买家下一条消息，不输出解释、评分或提示词。"
+        user_prompt = json.dumps({
+            "scenario": "签收破损退款",
+            "buyer_name": conversation.buyer_name,
+            "after_sales_context": context,
+            "history": history,
+            "rules": ["只能围绕当前订单签收后破损或无法使用", "可以追问照片/视频/面单等证据、平台退货退款、补发或处理时效", "不要要求私下转账、绕过平台或卖家直接修改订单状态", "不要暴露内部触发规则或评分规则", f"少于{CUSTOMER_SERVICE_MIN_MESSAGES}条消息时可继续追问", f"达到{CUSTOMER_SERVICE_RECOMMENDED_MESSAGES}条后如果处理路径清楚应礼貌收口", f"最多{CUSTOMER_SERVICE_MAX_MESSAGES}条消息"],
+        }, ensure_ascii=False)
+        return _call_customer_service_llm(setting, system_prompt=system_prompt, user_prompt=user_prompt)
     system_prompt = "你是 Shopee 买家，只能围绕当前商品售前细节沟通。回复要像真实买家：先对客服解释给出自然反馈，再逐步补充自己的偏好、顾虑或使用场景。只输出买家下一条消息，不输出解释、评分或提示词。"
     user_prompt = json.dumps({
         "scenario": "商品细节追问",
         "buyer_name": conversation.buyer_name,
         "product_context": context,
         "history": history,
-        "rules": ["不要编造商品材质、尺码、颜色、库存或发货承诺", "不要连续多轮只给功能性短答或机械追问", "可以用自己的话复述理解，例如清爽、不厚重、怕显油、想自然一点", "适当表达认可、犹豫、担心或个人偏好，再继续提问", "少于7条消息时可继续追问", "达到7条后如果问题已清楚应礼貌收口", "最多10条消息"],
+        "rules": ["不要编造商品材质、尺码、颜色、库存或发货承诺", "不要连续多轮只给功能性短答或机械追问", "可以用自己的话复述理解，例如清爽、不厚重、怕显油、想自然一点", "适当表达认可、犹豫、担心或个人偏好，再继续提问", f"少于{CUSTOMER_SERVICE_RECOMMENDED_MESSAGES}条消息时可继续追问", f"达到{CUSTOMER_SERVICE_RECOMMENDED_MESSAGES}条后如果问题已清楚应礼貌收口", f"最多{CUSTOMER_SERVICE_MAX_MESSAGES}条消息"],
     }, ensure_ascii=False)
     return _call_customer_service_llm(setting, system_prompt=system_prompt, user_prompt=user_prompt)
 
 
-def _score_customer_service_conversation(db: Session, *, setting: ShopeeCustomerServiceModelSetting | None, conversation: ShopeeCustomerServiceConversation, messages: list[ShopeeCustomerServiceMessage]) -> tuple[float, str, dict[str, Any]]:
+def _score_customer_service_conversation(db: Session, *, setting: ShopeeCustomerServiceModelSetting | None, conversation: ShopeeCustomerServiceConversation, messages: list[ShopeeCustomerServiceMessage]) -> tuple[float | None, str | None, dict[str, Any]]:
     if setting is not None and setting.enabled:
         context = _safe_json_loads(conversation.context_json, {})
         system_prompt = "你是 Shopee 客服训练评分器。只输出 JSON，不输出其他文本。"
-        user_prompt = json.dumps({
-            "rubric": {"响应完整度": 30, "商品准确性": 25, "服务态度": 20, "购买引导": 15, "平台合规": 10},
-            "product_context": context,
-            "messages": [{"sender": item.sender_type, "content": item.content} for item in messages],
-            "output": {"score": "0-100", "level": "high/medium/low", "dimensions": {}, "summary": "简短中文反馈"},
-        }, ensure_ascii=False)
+        if conversation.scenario_code == CUSTOMER_SERVICE_SCENARIO_DELIVERED_DAMAGE:
+            allowed_types = ["platform_return_refund_guidance", "evidence_first_followup", "replacement_or_resend_promise", "direct_refund_promise", "private_compensation", "refuse_or_blame_buyer", "unclear_response"]
+            user_prompt = json.dumps({
+                "after_sales_context": context,
+                "messages": [{"sender": item.sender_type, "content": item.content} for item in messages],
+                "requirements": ["只把卖家最终处理方式归为七类之一", "重点点评是否安抚、索证、引导 Shopee Return/Refund 平台流程", "不得输出数值分数或满意度等级"],
+                "allowed_resolution_types": allowed_types,
+                "output": {"resolution_type": allowed_types[0], "summary": "中文总结", "commentary": "中文点评", "suggestions": ["中文建议"]},
+            }, ensure_ascii=False)
+            raw = _call_customer_service_llm(setting, system_prompt=system_prompt, user_prompt=user_prompt)
+            parsed = _safe_json_loads(raw, None)
+            if isinstance(parsed, dict) and parsed.get("resolution_type") in allowed_types:
+                suggestions = parsed.get("suggestions")
+                if not isinstance(suggestions, list):
+                    suggestions = [str(suggestions)] if suggestions else []
+                return None, None, {
+                    "resolution_type": parsed.get("resolution_type"),
+                    "summary": str(parsed.get("summary") or "已生成签收破损售后处理总结。"),
+                    "commentary": str(parsed.get("commentary") or "请结合平台流程、证据要求和安抚表达继续优化。"),
+                    "suggestions": [str(item) for item in suggestions[:5]],
+                }
+        if conversation.scenario_code == CUSTOMER_SERVICE_SCENARIO_LOGISTICS_STALLED:
+            user_prompt = json.dumps({
+                "rubric": {"情绪安抚": 25, "物流解释准确性": 25, "跟进承诺": 20, "平台合规": 20, "订单稳定": 10},
+                "order_logistics_context": context,
+                "messages": [{"sender": item.sender_type, "content": item.content} for item in messages],
+                "requirements": ["检查卖家是否先共情买家焦虑", "检查卖家是否基于真实物流节点和 ETA 解释", "检查卖家是否给出平台内合理跟进方式", "不得因私下退款、补偿、取消或虚假时效承诺给高分"],
+                "output": {"score": "0-100", "level": "high/medium/low", "dimensions": {}, "summary": "简短中文反馈", "suggestions": ["中文改进建议"]},
+            }, ensure_ascii=False)
+        else:
+            user_prompt = json.dumps({
+                "rubric": {"响应完整度": 30, "商品准确性": 25, "服务态度": 20, "购买引导": 15, "平台合规": 10},
+                "product_context": context,
+                "messages": [{"sender": item.sender_type, "content": item.content} for item in messages],
+                "output": {"score": "0-100", "level": "high/medium/low", "dimensions": {}, "summary": "简短中文反馈", "suggestions": ["中文改进建议"]},
+            }, ensure_ascii=False)
         raw = _call_customer_service_llm(setting, system_prompt=system_prompt, user_prompt=user_prompt)
         parsed = _safe_json_loads(raw, None)
         if isinstance(parsed, dict) and isinstance(parsed.get("score"), (int, float)):
             score = max(0.0, min(100.0, float(parsed["score"])))
             level = str(parsed.get("level") or ("high" if score >= 85 else "medium" if score >= 60 else "low"))
+            suggestions = parsed.get("suggestions")
+            if not isinstance(suggestions, list):
+                suggestions = [str(suggestions)] if suggestions else []
+            parsed["suggestions"] = [str(item) for item in suggestions[:5]]
             return score, level, parsed
+    if conversation.scenario_code == CUSTOMER_SERVICE_SCENARIO_DELIVERED_DAMAGE:
+        seller_text = "\n".join(item.content for item in messages if item.sender_type == "seller")
+        if any(word in seller_text for word in ("私下", "转账", "线下", "绕过平台")):
+            resolution_type = "private_compensation"
+        elif any(word in seller_text for word in ("不处理", "自己", "买家责任", "物流责任")):
+            resolution_type = "refuse_or_blame_buyer"
+        elif any(word in seller_text for word in ("退款", "全额退款")) and not any(word in seller_text for word in ("平台", "Return", "Refund", "退货退款", "证据", "照片")):
+            resolution_type = "direct_refund_promise"
+        elif any(word in seller_text for word in ("补发", "重发", "补寄")):
+            resolution_type = "replacement_or_resend_promise"
+        elif any(word in seller_text for word in ("平台", "Return", "Refund", "退货退款")):
+            resolution_type = "platform_return_refund_guidance"
+        elif any(word in seller_text for word in ("照片", "视频", "面单", "包装", "证据")):
+            resolution_type = "evidence_first_followup"
+        else:
+            resolution_type = "unclear_response"
+        return None, None, {"resolution_type": resolution_type, "summary": "已按卖家回复归类签收破损售后处理方式。", "commentary": "签收破损场景应先安抚买家，明确证据要求，并引导通过 Shopee Return/Refund 平台流程处理。", "suggestions": ["列出商品破损照片、外包装照片、面单图或开箱视频等证据要求。", "避免私下转账或未核实证据就直接承诺退款。"]}
     seller_messages = [item for item in messages if item.sender_type == "seller"]
     count_score = min(40, len(messages) * 6)
     answer_score = min(35, sum(min(len(item.content), 120) for item in seller_messages) / 120 * 35)
     score = max(0.0, min(100.0, count_score + answer_score + (15 if seller_messages else 0)))
     level = "high" if score >= 85 else "medium" if score >= 60 else "low"
-    return score, level, {"score": score, "level": level, "summary": "已按消息完整度、回复长度和会话轮次生成规则评分。"}
+    return score, level, {"score": score, "level": level, "summary": "已按消息完整度、回复长度和会话轮次生成规则评分。", "suggestions": ["回复中可以更明确回应买家的核心问题。", "可以补充下一步处理方式或购买引导，让买家更容易继续决策。"]}
 
 
 def _select_customer_service_buyer(db: Session) -> SimBuyerProfile | None:
@@ -2771,6 +3391,13 @@ def _select_customer_service_buyer(db: Session) -> SimBuyerProfile | None:
 
 def _serialize_customer_service_message(row: ShopeeCustomerServiceMessage) -> ShopeeCustomerServiceMessageResponse:
     return ShopeeCustomerServiceMessageResponse(id=row.id, sender_type=row.sender_type, message_type=row.message_type, content=row.content, sent_game_at=row.sent_game_at)
+
+
+def _calculate_customer_service_unread_count(row: ShopeeCustomerServiceConversation, messages: list[ShopeeCustomerServiceMessage]) -> int:
+    if row.status not in CUSTOMER_SERVICE_OPEN_STATUSES:
+        return 0
+    last_read_game_at = row.last_read_game_at
+    return sum(1 for item in messages if item.sender_type == "buyer" and (last_read_game_at is None or item.sent_game_at > last_read_game_at))
 
 
 def _serialize_customer_service_summary(row: ShopeeCustomerServiceConversation) -> ShopeeCustomerServiceConversationSummaryResponse:
@@ -2786,7 +3413,7 @@ def _serialize_customer_service_summary(row: ShopeeCustomerServiceConversation) 
         last_message=last_message.content if last_message else "",
         last_message_game_at=last_message.sent_game_at if last_message else None,
         listing=_serialize_customer_service_listing(context),
-        unread_count=sum(1 for item in messages if item.sender_type == "buyer" and row.status in CUSTOMER_SERVICE_OPEN_STATUSES),
+        unread_count=_calculate_customer_service_unread_count(row, messages),
         message_count=len(messages),
     )
 
@@ -2795,6 +3422,14 @@ def _serialize_customer_service_detail(db: Session, *, run: GameRun, user_id: in
     messages = sorted(row.messages, key=lambda item: (item.sent_game_at, item.id))
     context = _safe_json_loads(row.context_json, {})
     score_detail = _safe_json_loads(row.score_detail_json, None) if row.score_detail_json else None
+    order_context = None
+    if isinstance(context.get("order"), dict):
+        order_context = {
+            "order": context.get("order"),
+            "logistics": context.get("logistics") if isinstance(context.get("logistics"), dict) else None,
+            "items": context.get("items") if isinstance(context.get("items"), list) else [],
+            "selected_item": context.get("selected_item") if isinstance(context.get("selected_item"), dict) else None,
+        }
     setting = _get_customer_service_model_setting(db, run_id=run.id, user_id=user_id)
     ready, message = _customer_service_model_ready(setting)
     return ShopeeCustomerServiceConversationDetailResponse(
@@ -2809,6 +3444,7 @@ def _serialize_customer_service_detail(db: Session, *, run: GameRun, user_id: in
         satisfaction_score=row.satisfaction_score,
         satisfaction_level=row.satisfaction_level,
         score_detail=score_detail,
+        order_context=order_context,
         can_send=run.status == "running" and row.status in CUSTOMER_SERVICE_OPEN_STATUSES and len(messages) < CUSTOMER_SERVICE_MAX_MESSAGES,
         can_resolve=run.status == "running" and row.status in CUSTOMER_SERVICE_OPEN_STATUSES,
         model_ready=ready,
@@ -3624,8 +4260,13 @@ def _shopee_shipping_fee_promotion_list_cache_key(*, run_id: int, user_id: int, 
     return f"{REDIS_PREFIX}:cache:shopee:shipping_fee_promotion:list:{run_id}:{user_id}:{status_value}:{page}:{page_size}"
 
 
+def _shopee_shipping_fee_promotion_detail_cache_key(*, run_id: int, user_id: int, campaign_id: int) -> str:
+    return f"{REDIS_PREFIX}:cache:shopee:shipping_fee_promotion:detail:{run_id}:{user_id}:{campaign_id}"
+
+
 def _invalidate_shopee_shipping_fee_promotion_cache(*, run_id: int, user_id: int) -> None:
     cache_delete_prefix(f"{REDIS_PREFIX}:cache:shopee:shipping_fee_promotion:list:{run_id}:{user_id}:")
+    cache_delete_prefix(f"{REDIS_PREFIX}:cache:shopee:shipping_fee_promotion:detail:{run_id}:{user_id}:")
     cache_delete_prefix(f"{REDIS_PREFIX}:cache:shopee:shipping_fee_promotion:active:{run_id}:{user_id}:")
     cache_delete_prefix(f"{REDIS_PREFIX}:cache:shopee:orders:list:{run_id}:{user_id}:")
 
@@ -6094,6 +6735,28 @@ def _build_discount_create_bootstrap_payload(
     )
 
 
+def _shipping_fee_promotion_editable_reason(status_value: str, *, read_only: bool) -> str | None:
+    if read_only:
+        return "历史对局不可编辑"
+    if status_value in {"ended", "budget_exhausted", "stopped"}:
+        return "已结束活动不可编辑"
+    return None
+
+
+def _get_shipping_fee_promotion_or_404(db: Session, *, run_id: int, user_id: int, campaign_id: int) -> ShopeeShippingFeePromotionCampaign:
+    row = db.query(ShopeeShippingFeePromotionCampaign).options(
+        selectinload(ShopeeShippingFeePromotionCampaign.channels),
+        selectinload(ShopeeShippingFeePromotionCampaign.tiers),
+    ).filter(
+        ShopeeShippingFeePromotionCampaign.id == campaign_id,
+        ShopeeShippingFeePromotionCampaign.run_id == run_id,
+        ShopeeShippingFeePromotionCampaign.user_id == user_id,
+    ).first()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="运费促销活动不存在")
+    return row
+
+
 def _build_shipping_fee_promotion_create_bootstrap_payload(
     *,
     run: GameRun,
@@ -6115,6 +6778,55 @@ def _build_shipping_fee_promotion_create_bootstrap_payload(
             start_at=start_at,
             end_at=end_at,
             tiers=[ShopeeShippingFeePromotionTierFormResponse(tier_index=1)],
+        ),
+        channels=[
+            ShopeeShippingFeePromotionChannelOptionResponse(key=key, label=label, enabled=True)
+            for key, label in SHOPEE_SHIPPING_FEE_PROMOTION_CHANNELS.items()
+        ],
+        rules=ShopeeShippingFeePromotionRulesResponse(),
+    )
+
+
+def _build_shipping_fee_promotion_detail_payload(
+    *,
+    row: ShopeeShippingFeePromotionCampaign,
+    run: GameRun,
+    user_id: int,
+    current_tick: datetime,
+    read_only: bool,
+) -> ShopeeShippingFeePromotionCreateBootstrapResponse:
+    status_value = _resolve_shipping_fee_promotion_status(row, current_tick=current_tick)
+    editable_reason = _shipping_fee_promotion_editable_reason(status_value, read_only=read_only)
+    return ShopeeShippingFeePromotionCreateBootstrapResponse(
+        meta=ShopeeShippingFeePromotionMetaResponse(
+            run_id=run.id,
+            user_id=user_id,
+            read_only=read_only,
+            current_tick=_format_discount_game_datetime(current_tick, run=run) or "",
+            currency="RM",
+            editable=editable_reason is None,
+            editable_reason=editable_reason,
+        ),
+        form=ShopeeShippingFeePromotionCreateFormResponse(
+            id=row.id,
+            promotion_name=row.promotion_name,
+            status=status_value,
+            period_type=row.period_type,
+            start_at=_format_discount_game_datetime(row.start_at, run=run) or "",
+            end_at=_format_discount_game_datetime(row.end_at, run=run) if row.end_at else None,
+            budget_type=row.budget_type,
+            budget_limit=row.budget_limit,
+            budget_used=float(row.budget_used or 0),
+            channels=[item.channel_key for item in sorted(row.channels, key=lambda item: item.id)],
+            tiers=[
+                ShopeeShippingFeePromotionTierFormResponse(
+                    tier_index=tier.tier_index,
+                    min_spend_amount=tier.min_spend_amount,
+                    fee_type=tier.fee_type,
+                    fixed_fee_amount=tier.fixed_fee_amount,
+                )
+                for tier in sorted(row.tiers, key=lambda item: (item.tier_index, item.min_spend_amount))
+            ],
         ),
         channels=[
             ShopeeShippingFeePromotionChannelOptionResponse(key=key, label=label, enabled=True)
@@ -6242,6 +6954,9 @@ def _validate_shipping_fee_promotion_create_payload(
     payload: ShopeeShippingFeePromotionCreateRequest,
     start_at: datetime | None,
     end_at: datetime | None,
+    budget_used: float = 0,
+    current_tick: datetime | None = None,
+    editing_status: str | None = None,
 ) -> list[ShopeeShippingFeePromotionTierPayload]:
     promotion_name = payload.promotion_name.strip()
     if not promotion_name:
@@ -6255,10 +6970,14 @@ def _validate_shipping_fee_promotion_create_payload(
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="请选择自定义期限")
         if start_at >= end_at:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="结束时间必须晚于开始时间")
+        if editing_status == "ongoing" and current_tick is not None and end_at <= current_tick:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="进行中的活动结束时间必须晚于当前游戏时间")
     if payload.budget_type not in {"no_limit", "selected"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="预算类型不支持")
     if payload.budget_type == "selected" and (payload.budget_limit is None or payload.budget_limit <= 0):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="自定义预算必须大于 0")
+    if payload.budget_type == "selected" and payload.budget_limit is not None and payload.budget_limit < budget_used:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="自定义预算不能低于已使用预算")
     if not payload.channels:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="请至少选择一个物流渠道")
     invalid_channels = [item for item in payload.channels if item not in SHOPEE_SHIPPING_FEE_PROMOTION_CHANNELS]
@@ -9666,6 +10385,9 @@ def list_shopee_orders(
     if not _persist_run_finished_if_reached(db, run):
         _auto_cancel_overdue_orders_by_tick(db, run_id=run.id, user_id=user_id, current_tick=current_tick)
         _auto_progress_shipping_orders_by_tick(db, run_id=run.id, user_id=user_id, current_tick=current_tick)
+        if (run.status or "").strip() == "running":
+            _maybe_create_logistics_stalled_urge_conversations(db, run_id=run.id, user_id=user_id, current_tick=current_tick)
+            _maybe_create_delivered_damage_refund_conversations(db, run_id=run.id, user_id=user_id, current_tick=current_tick)
         _backfill_income_for_completed_orders(db, run_id=run.id, user_id=user_id, current_tick=current_tick)
         service_rebalance_backorders_from_current_inventory(db, run_id=run.id, user_id=user_id)
         db.commit()
@@ -9896,7 +10618,11 @@ def get_shopee_order_detail(
     if not _persist_run_finished_if_reached(db, run):
         _auto_cancel_overdue_orders_by_tick(db, run_id=run.id, user_id=user_id, current_tick=current_tick)
         _auto_progress_shipping_orders_by_tick(db, run_id=run.id, user_id=user_id, current_tick=current_tick)
+        if (run.status or "").strip() == "running":
+            _maybe_create_logistics_stalled_urge_conversations(db, run_id=run.id, user_id=user_id, current_tick=current_tick)
+            _maybe_create_delivered_damage_refund_conversations(db, run_id=run.id, user_id=user_id, current_tick=current_tick)
         _backfill_income_for_completed_orders(db, run_id=run.id, user_id=user_id, current_tick=current_tick)
+        db.commit()
     row = (
         db.query(ShopeeOrder)
         .options(selectinload(ShopeeOrder.items))
@@ -10220,6 +10946,10 @@ def get_order_logistics(
     if not _persist_run_finished_if_reached(db, run):
         _auto_cancel_overdue_orders_by_tick(db, run_id=run.id, user_id=user_id, current_tick=current_tick)
         _auto_progress_shipping_orders_by_tick(db, run_id=run.id, user_id=user_id, current_tick=current_tick)
+        if (run.status or "").strip() == "running":
+            _maybe_create_logistics_stalled_urge_conversations(db, run_id=run.id, user_id=user_id, current_tick=current_tick)
+            _maybe_create_delivered_damage_refund_conversations(db, run_id=run.id, user_id=user_id, current_tick=current_tick)
+        db.commit()
     order = _get_owned_order_or_404(db, run.id, user_id, order_id)
     events = (
         db.query(ShopeeOrderLogisticsEvent)
@@ -11964,7 +12694,7 @@ def list_shopee_customer_service_conversations(
     user_id = int(current_user["id"])
     _enforce_shopee_customer_service_rate_limit(user_id=user_id)
     run = _get_owned_order_readable_run_or_404(db, run_id, user_id)
-    cache_key = _customer_service_list_cache_key(run_id=run.id, user_id=user_id, status_filter=status_filter, page=page, page_size=page_size)
+    cache_key = _customer_service_list_cache_key(run_id=run.id, user_id=user_id, scenario=scenario, status_filter=status_filter, page=page, page_size=page_size)
     cached_payload = cache_get_json(cache_key)
     if isinstance(cached_payload, dict):
         return ShopeeCustomerServiceConversationListResponse.model_validate(cached_payload)
@@ -12007,6 +12737,26 @@ def get_shopee_customer_service_conversation(
     return payload
 
 
+@router.post("/runs/{run_id}/customer-service/conversations/{conversation_id}/read", response_model=ShopeeCustomerServiceConversationDetailResponse)
+def mark_shopee_customer_service_conversation_read(
+    run_id: int,
+    conversation_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> ShopeeCustomerServiceConversationDetailResponse:
+    user_id = int(current_user["id"])
+    _enforce_shopee_customer_service_rate_limit(user_id=user_id)
+    run = _get_owned_running_run_or_404(db, run_id, user_id)
+    row = db.query(ShopeeCustomerServiceConversation).options(selectinload(ShopeeCustomerServiceConversation.messages), selectinload(ShopeeCustomerServiceConversation.scenario)).filter(ShopeeCustomerServiceConversation.id == conversation_id, ShopeeCustomerServiceConversation.run_id == run.id, ShopeeCustomerServiceConversation.user_id == user_id).first()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="客服会话不存在")
+    row.last_read_game_at = _resolve_game_tick(db, run.id, user_id)
+    db.commit()
+    _invalidate_customer_service_cache(run_id=run.id, user_id=user_id, conversation_id=row.id)
+    row = db.query(ShopeeCustomerServiceConversation).options(selectinload(ShopeeCustomerServiceConversation.messages), selectinload(ShopeeCustomerServiceConversation.scenario)).filter(ShopeeCustomerServiceConversation.id == row.id).first()
+    return _serialize_customer_service_detail(db, run=run, user_id=user_id, row=row)
+
+
 @router.post("/runs/{run_id}/customer-service/conversations/{conversation_id}/messages", response_model=ShopeeCustomerServiceConversationDetailResponse)
 def send_shopee_customer_service_message(
     run_id: int,
@@ -12025,20 +12775,22 @@ def send_shopee_customer_service_message(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="当前会话已结束，不能继续回复")
     messages = sorted(row.messages, key=lambda item: (item.sent_game_at, item.id))
     if len(messages) >= CUSTOMER_SERVICE_MAX_MESSAGES:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="当前会话已达到最多 10 条消息，请结束会话或查看评分")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="当前会话已达到最多 50 条消息，请结束会话或查看评分")
     setting = _get_customer_service_model_setting(db, run_id=run.id, user_id=user_id)
     ready, message = _customer_service_model_ready(setting)
     if not ready or setting is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=message or "客服模型未配置")
     game_now = _resolve_game_tick(db, run.id, user_id)
-    seller_message = ShopeeCustomerServiceMessage(conversation_id=row.id, run_id=run.id, user_id=user_id, sender_type="seller", message_type="text", content=payload.content.strip(), sent_game_at=game_now)
+    last_message_time = messages[-1].sent_game_at if messages else None
+    seller_sent_at = max(game_now, last_message_time + timedelta(seconds=1)) if last_message_time is not None else game_now
+    seller_message = ShopeeCustomerServiceMessage(conversation_id=row.id, run_id=run.id, user_id=user_id, sender_type="seller", message_type="text", content=payload.content.strip(), sent_game_at=seller_sent_at)
     db.add(seller_message)
     db.flush()
     row.status = "waiting_seller"
     messages.append(seller_message)
     if len(messages) < CUSTOMER_SERVICE_MAX_MESSAGES:
         buyer_content = _build_buyer_message(db, setting=setting, conversation=row, messages=messages)
-        db.add(ShopeeCustomerServiceMessage(conversation_id=row.id, run_id=run.id, user_id=user_id, sender_type="buyer", message_type="text", content=buyer_content, sent_game_at=game_now))
+        db.add(ShopeeCustomerServiceMessage(conversation_id=row.id, run_id=run.id, user_id=user_id, sender_type="buyer", message_type="text", content=buyer_content, sent_game_at=seller_sent_at + timedelta(seconds=1)))
         row.status = "open"
     db.commit()
     _invalidate_customer_service_cache(run_id=run.id, user_id=user_id, conversation_id=row.id)
@@ -12428,6 +13180,27 @@ def list_shopee_shipping_fee_promotions(
     return payload
 
 
+@router.get("/runs/{run_id}/marketing/shipping-fee-promotions/{campaign_id}", response_model=ShopeeShippingFeePromotionCreateBootstrapResponse)
+def get_shopee_shipping_fee_promotion_detail(
+    run_id: int,
+    campaign_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> ShopeeShippingFeePromotionCreateBootstrapResponse:
+    user_id = int(current_user["id"])
+    _enforce_shopee_shipping_fee_promotion_rate_limit(user_id=user_id)
+    run = _get_owned_order_readable_run_or_404(db, run_id, user_id)
+    cache_key = _shopee_shipping_fee_promotion_detail_cache_key(run_id=run.id, user_id=user_id, campaign_id=campaign_id)
+    cached_payload = cache_get_json(cache_key)
+    if isinstance(cached_payload, dict):
+        return ShopeeShippingFeePromotionCreateBootstrapResponse.model_validate(cached_payload)
+    current_tick = _resolve_game_tick(db, run.id, user_id)
+    row = _get_shipping_fee_promotion_or_404(db, run_id=run.id, user_id=user_id, campaign_id=campaign_id)
+    payload = _build_shipping_fee_promotion_detail_payload(row=row, run=run, user_id=user_id, current_tick=current_tick, read_only=run.status == "finished")
+    cache_set_json(cache_key, payload.model_dump(mode="json"), REDIS_CACHE_TTL_SHOPEE_SHIPPING_FEE_PROMOTION_DETAIL_SEC)
+    return payload
+
+
 @router.post("/runs/{run_id}/marketing/shipping-fee-promotions", response_model=ShopeeShippingFeePromotionCreateResponse, status_code=status.HTTP_201_CREATED)
 def create_shopee_shipping_fee_promotion(
     run_id: int,
@@ -12479,6 +13252,91 @@ def create_shopee_shipping_fee_promotion(
     db.refresh(campaign)
     _invalidate_shopee_shipping_fee_promotion_cache(run_id=run.id, user_id=user_id)
     return ShopeeShippingFeePromotionCreateResponse(id=campaign.id, status=campaign.status)
+
+
+@router.put("/runs/{run_id}/marketing/shipping-fee-promotions/{campaign_id}", response_model=ShopeeShippingFeePromotionCreateResponse)
+def update_shopee_shipping_fee_promotion(
+    run_id: int,
+    campaign_id: int,
+    payload: ShopeeShippingFeePromotionCreateRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> ShopeeShippingFeePromotionCreateResponse:
+    user_id = int(current_user["id"])
+    _enforce_shopee_shipping_fee_promotion_create_rate_limit(user_id=user_id)
+    run = _get_owned_running_run_or_404(db, run_id, user_id)
+    current_tick = _resolve_game_tick(db, run.id, user_id)
+    campaign = _get_shipping_fee_promotion_or_404(db, run_id=run.id, user_id=user_id, campaign_id=campaign_id)
+    current_status = _resolve_shipping_fee_promotion_status(campaign, current_tick=current_tick)
+    if current_status in {"ended", "budget_exhausted", "stopped"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="已结束活动不可编辑")
+    start_at = campaign.start_at if current_status == "ongoing" else (_parse_discount_game_datetime(payload.start_at, run=run) if payload.start_at else current_tick)
+    end_at = _parse_discount_game_datetime(payload.end_at, run=run) if payload.end_at else None
+    sorted_tiers = _validate_shipping_fee_promotion_create_payload(
+        payload=payload,
+        start_at=start_at,
+        end_at=end_at,
+        budget_used=float(campaign.budget_used or 0),
+        current_tick=current_tick,
+        editing_status=current_status,
+    )
+    campaign.promotion_name = payload.promotion_name.strip()
+    campaign.period_type = payload.period_type
+    campaign.start_at = start_at or current_tick
+    campaign.end_at = end_at if payload.period_type == "selected" else None
+    campaign.budget_type = payload.budget_type
+    campaign.budget_limit = payload.budget_limit if payload.budget_type == "selected" else None
+    campaign.status = _resolve_shipping_fee_promotion_status(campaign, current_tick=current_tick)
+    campaign.channels.clear()
+    campaign.tiers.clear()
+    db.flush()
+    campaign.channels = [
+        ShopeeShippingFeePromotionChannel(
+            run_id=run.id,
+            user_id=user_id,
+            channel_key=channel_key,
+            channel_label=SHOPEE_SHIPPING_FEE_PROMOTION_CHANNELS[channel_key],
+        )
+        for channel_key in payload.channels
+    ]
+    campaign.tiers = [
+        ShopeeShippingFeePromotionTier(
+            run_id=run.id,
+            user_id=user_id,
+            tier_index=index,
+            min_spend_amount=tier.min_spend_amount,
+            fee_type=tier.fee_type,
+            fixed_fee_amount=tier.fixed_fee_amount if tier.fee_type == "fixed_fee" else None,
+        )
+        for index, tier in enumerate(sorted_tiers, start=1)
+    ]
+    db.add(campaign)
+    db.commit()
+    db.refresh(campaign)
+    _invalidate_shopee_shipping_fee_promotion_cache(run_id=run.id, user_id=user_id)
+    return ShopeeShippingFeePromotionCreateResponse(id=campaign.id, status=campaign.status, message="运费促销更新成功")
+
+
+@router.post("/runs/{run_id}/marketing/shipping-fee-promotions/{campaign_id}/end", response_model=ShopeeShippingFeePromotionEndResponse)
+def end_shopee_shipping_fee_promotion(
+    run_id: int,
+    campaign_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> ShopeeShippingFeePromotionEndResponse:
+    user_id = int(current_user["id"])
+    _enforce_shopee_shipping_fee_promotion_create_rate_limit(user_id=user_id)
+    run = _get_owned_running_run_or_404(db, run_id, user_id)
+    current_tick = _resolve_game_tick(db, run.id, user_id)
+    campaign = _get_shipping_fee_promotion_or_404(db, run_id=run.id, user_id=user_id, campaign_id=campaign_id)
+    current_status = _resolve_shipping_fee_promotion_status(campaign, current_tick=current_tick)
+    if current_status not in {"upcoming", "ongoing"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="当前活动不可结束")
+    campaign.status = "stopped"
+    db.add(campaign)
+    db.commit()
+    _invalidate_shopee_shipping_fee_promotion_cache(run_id=run.id, user_id=user_id)
+    return ShopeeShippingFeePromotionEndResponse(id=campaign.id, status="stopped", status_label=_shipping_fee_promotion_status_label("stopped"))
 
 
 @router.get("/runs/{run_id}/marketing/vouchers", response_model=ShopeeVoucherListResponse)
@@ -14051,6 +14909,121 @@ def simulate_shopee_orders(
         release_distributed_lock(lock_key, lock_token)
 
 
+@router.get("/runs/{run_id}/buyer-centre/products", response_model=ShopeeBuyerCentreProductsResponse)
+def list_shopee_buyer_centre_products(
+    run_id: int,
+    keyword: str | None = Query(default=None),
+    category: str | None = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=10, ge=1, le=50),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+) -> ShopeeBuyerCentreProductsResponse:
+    user_id = int(current_user["id"])
+    run = _get_owned_order_readable_run_or_404(db, run_id, user_id)
+    safe_keyword = (keyword or "").strip()
+    safe_category = (category or "").strip()
+    cache_key = _shopee_buyer_centre_products_cache_key(
+        run_id=run.id,
+        user_id=user_id,
+        keyword=safe_keyword,
+        category=safe_category,
+        page=page,
+        page_size=page_size,
+    )
+    cached_payload = cache_get_json(cache_key)
+    if isinstance(cached_payload, dict):
+        return ShopeeBuyerCentreProductsResponse.model_validate(cached_payload)
+
+    base_query = db.query(ShopeeListing).filter(
+        ShopeeListing.run_id == run.id,
+        ShopeeListing.user_id == user_id,
+        ShopeeListing.status == "live",
+    )
+    if safe_keyword:
+        like_value = f"%{safe_keyword}%"
+        filters = [ShopeeListing.title.ilike(like_value)]
+        if safe_keyword.isdigit():
+            filters.append(ShopeeListing.id == int(safe_keyword))
+        filters.extend([
+            ShopeeListing.sku_code.ilike(like_value),
+            ShopeeListing.parent_sku.ilike(like_value),
+        ])
+        base_query = base_query.filter(or_(*filters))
+
+    category_rows = (
+        base_query.with_entities(ShopeeListing.category, func.count(ShopeeListing.id))
+        .filter(ShopeeListing.category.isnot(None), ShopeeListing.category != "")
+        .group_by(ShopeeListing.category)
+        .order_by(func.count(ShopeeListing.id).desc(), ShopeeListing.category.asc())
+        .all()
+    )
+    categories = [
+        ShopeeBuyerCentreCategoryResponse(name=str(name), count=int(count or 0))
+        for name, count in category_rows
+        if str(name or "").strip()
+    ]
+
+    query = base_query
+    if safe_category:
+        query = query.filter(ShopeeListing.category == safe_category)
+
+    total = query.count()
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    query = query.options(selectinload(ShopeeListing.images)).order_by(
+        ShopeeListing.sales_count.desc(),
+        ShopeeListing.updated_at.desc(),
+        ShopeeListing.id.desc(),
+    )
+    rows = query.offset((page - 1) * page_size).limit(page_size).all()
+
+    items: list[ShopeeBuyerCentreProductResponse] = []
+    for idx, row in enumerate(rows):
+        cover_url = row.cover_url
+        if not cover_url:
+            cover_image = next((img for img in sorted(row.images or [], key=lambda x: (x.sort_order, x.id)) if img.is_cover), None)
+            if not cover_image and row.images:
+                cover_image = sorted(row.images, key=lambda x: (x.sort_order, x.id))[0]
+            cover_url = cover_image.image_url if cover_image else None
+        price = int(row.price or 0)
+        items.append(
+            ShopeeBuyerCentreProductResponse(
+                listing_id=int(row.id),
+                rank=(page - 1) * page_size + idx + 1,
+                is_mall=False,
+                title=row.title,
+                category=row.category,
+                cover_url=cover_url,
+                display_price=str(price),
+                min_price=price,
+                max_price=price,
+                sales_count=int(row.sales_count or 0),
+                stock_available=int(row.stock_available or 0),
+                rating=5.0,
+                review_count=0,
+                status=row.status,
+            )
+        )
+
+    payload = ShopeeBuyerCentreProductsResponse(
+        meta=ShopeeBuyerCentreProductsMetaResponse(
+            run_id=run.id,
+            user_id=user_id,
+            read_only=(run.status or "") == "finished",
+            keyword=safe_keyword,
+            category=safe_category,
+            page=page,
+            page_size=page_size,
+            total=total,
+            total_pages=total_pages,
+        ),
+        categories=categories,
+        items=items,
+    )
+    cache_set_json(cache_key, payload.model_dump(mode="json"), REDIS_CACHE_TTL_SHOPEE_BUYER_CENTRE_PRODUCTS_SEC)
+    return payload
+
+
 @router.get("/runs/{run_id}/products", response_model=ShopeeListingsListResponse)
 def list_shopee_products(
     run_id: int,
@@ -14333,6 +15306,7 @@ def batch_action_shopee_products(
                 affected += 1
 
     db.commit()
+    _invalidate_shopee_buyer_centre_products_cache(run_id=run.id, user_id=user_id)
     return ShopeeProductsBatchActionResponse(success=True, affected=affected, action=action)
 
 
@@ -15020,6 +15994,7 @@ def publish_shopee_product_draft(
     # ShopeeListingDraft relationships use ORM cascade to delete images/spec rows together.
     db.delete(draft)
     db.commit()
+    _invalidate_shopee_buyer_centre_products_cache(run_id=run.id, user_id=user_id)
     _try_recompute_listing_quality(
         db,
         listing_id=int(listing.id),
@@ -15182,6 +16157,7 @@ def create_shopee_product(
 
     db.commit()
     db.refresh(row)
+    _invalidate_shopee_buyer_centre_products_cache(run_id=run.id, user_id=user_id)
     _try_recompute_listing_quality(
         db,
         listing_id=int(row.id),

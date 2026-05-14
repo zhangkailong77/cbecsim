@@ -7,6 +7,7 @@ interface ShippingFeePromotionViewProps {
   runId?: number | null;
   readOnly?: boolean;
   onCreate: () => void;
+  onEdit: (promotionId: number) => void;
 }
 
 interface ShippingFeePromotionRow {
@@ -31,24 +32,45 @@ interface ShippingFeePromotionListResponse {
   };
 }
 
-export default function ShippingFeePromotionView({ runId = null, readOnly = false, onCreate }: ShippingFeePromotionViewProps) {
+export default function ShippingFeePromotionView({ runId = null, readOnly = false, onCreate, onEdit }: ShippingFeePromotionViewProps) {
   const [activeStatus, setActiveStatus] = useState('all');
   const [promotionData, setPromotionData] = useState<ShippingFeePromotionListResponse | null>(null);
 
-  useEffect(() => {
+  const loadPromotions = async () => {
     if (!runId) return;
     const token = localStorage.getItem(ACCESS_TOKEN_KEY);
     const query = new URLSearchParams({ status: activeStatus, page: '1', page_size: '10' });
-    fetch(`${API_BASE_URL}/shopee/runs/${runId}/marketing/shipping-fee-promotions?${query.toString()}`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    })
-      .then(async (response) => {
-        if (!response.ok) throw new Error(await response.text());
-        return response.json();
-      })
-      .then((data: ShippingFeePromotionListResponse) => setPromotionData(data))
-      .catch(() => setPromotionData({ tabs: [], list: { page: 1, page_size: 10, total: 0, items: [] } }));
+    try {
+      const response = await fetch(`${API_BASE_URL}/shopee/runs/${runId}/marketing/shipping-fee-promotions?${query.toString()}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!response.ok) throw new Error(await response.text());
+      setPromotionData(await response.json());
+    } catch {
+      setPromotionData({ tabs: [], list: { page: 1, page_size: 10, total: 0, items: [] } });
+    }
+  };
+
+  useEffect(() => {
+    void loadPromotions();
   }, [activeStatus, runId]);
+
+  const handleEndPromotion = async (promotionId: number) => {
+    if (readOnly || !runId) return;
+    const confirmed = window.confirm('结束运费促销？\n结束后该活动不会再被新订单命中，已产生的订单优惠不受影响。');
+    if (!confirmed) return;
+    const token = localStorage.getItem(ACCESS_TOKEN_KEY);
+    const response = await fetch(`${API_BASE_URL}/shopee/runs/${runId}/marketing/shipping-fee-promotions/${promotionId}/end`, {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!response.ok) {
+      const errorText = await response.text();
+      window.alert(errorText || '结束失败');
+      return;
+    }
+    await loadPromotions();
+  };
 
   const mockPromotions = promotionData?.list.items ?? [];
   const tabs = promotionData?.tabs?.length
@@ -133,9 +155,12 @@ export default function ShippingFeePromotionView({ runId = null, readOnly = fals
                     </tr>
                   </thead>
                   <tbody>
-                    {mockPromotions.map((promo) => (
-                      <tr 
-                        key={promo.id} 
+                    {mockPromotions.map((promo) => {
+                      const canEdit = !readOnly && (promo.status === 'upcoming' || promo.status === 'ongoing');
+                      const canEnd = !readOnly && (promo.status === 'upcoming' || promo.status === 'ongoing');
+                      return (
+                      <tr
+                        key={promo.id}
                         // 【改动点】：加入了 last:border-b-0，防止最后一行数据的底部边框和外层容器的底部边框出现“双粗线”
                         className="border-b border-[#e5e5e5] last:border-b-0 hover:bg-[#fafafa] transition-colors"
                       >
@@ -161,12 +186,27 @@ export default function ShippingFeePromotionView({ runId = null, readOnly = fals
                         <td className="py-4 px-4 align-top text-[#333]">{promo.period}</td>
                         <td className="py-4 px-4 align-top text-right">
                           <div className="flex flex-col items-end gap-2 text-[#2673dd]">
-                            <button className="hover:underline">编辑</button>
-                            <button className="hover:underline">结束</button>
+                            <button
+                              type="button"
+                              onClick={() => canEdit && onEdit(promo.id)}
+                              disabled={!canEdit}
+                              className="hover:underline disabled:cursor-not-allowed disabled:text-[#bbb] disabled:no-underline"
+                            >
+                              编辑
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void handleEndPromotion(promo.id)}
+                              disabled={!canEnd}
+                              className="hover:underline disabled:cursor-not-allowed disabled:text-[#bbb] disabled:no-underline"
+                            >
+                              结束
+                            </button>
                           </div>
                         </td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

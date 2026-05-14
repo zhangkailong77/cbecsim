@@ -9,6 +9,7 @@ interface DateTimePickerProps {
   popupPlacement?: 'top' | 'bottom';
   minValue?: string;
   maxValue?: string;
+  disabled?: boolean;
 }
 
 function pad2(num: number): string {
@@ -42,6 +43,7 @@ export default function DateTimePicker({
   popupPlacement = 'top',
   minValue,
   maxValue,
+  disabled = false,
 }: DateTimePickerProps) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -51,6 +53,10 @@ export default function DateTimePicker({
   const [selectedDay, setSelectedDay] = useState<Date>(initialDate);
   const [selectedHour, setSelectedHour] = useState(initialDate.getHours());
   const [selectedMinute, setSelectedMinute] = useState(initialDate.getMinutes());
+
+  useEffect(() => {
+    if (disabled) setOpen(false);
+  }, [disabled]);
 
   useEffect(() => {
     if (!open) return;
@@ -139,8 +145,11 @@ export default function DateTimePicker({
     <div ref={rootRef} className={`relative ${inputWidthClassName}`}>
       <button
         type="button"
-        onClick={() => setOpen((prev) => !prev)}
-        className={`flex h-10 w-full items-center rounded-sm border bg-white px-3 text-left text-[14px] ${
+        onClick={() => {
+          if (!disabled) setOpen((prev) => !prev);
+        }}
+        disabled={disabled}
+        className={`flex h-10 w-full items-center rounded-sm border bg-white px-3 text-left text-[14px] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] ${
           open ? 'border-[#ee4d2d]' : 'border-[#d9d9d9]'
         }`}
       >

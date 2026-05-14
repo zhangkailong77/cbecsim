@@ -1,6 +1,103 @@
 # Change Log
 
-最后更新：2026-05-12（调整 Shopee 客服买家自然反馈提示词）
+最后更新：2026-05-14（Shopee 买家中心展示上架商品设计）
+
+## 2026-05-14
+
+### 新增
+- 新增 Shopee 买家中心商品详情空白页。
+  - 涉及文件：`frontend/src/modules/shopee/ShopeePage.tsx`、`frontend/src/modules/shopee/views/BuyerCentreView.tsx`、`frontend/src/modules/shopee/views/BuyerCentreProductDetailView.tsx`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：新增买家中心商品详情空白页并接入 `/shopee/buyer-centre/product?listing_id={listing_id}` 前端路由；买家中心商品卡片点击后进入详情页；详情页保留买家中心橙色顶部、`max-w-[1200px]` 内容宽度、返回买家中心和返回卖家中心入口；页面主体预留商品主图、缩略图、标题/价格/评分/运费/数量、按钮区和商品详情描述占位。
+  - 影响范围：仅影响 `/shopee/buyer-centre` 商品卡片点击跳转和新增空白详情页展示；不接真实商品详情接口，不实现购物车、立即购买、规格选择或商品描述数据。
+
+- 实现 Shopee 买家中心展示当前对局上架主商品 V1。
+  - 涉及文件：`backend/apps/api-gateway/app/api/routes/shopee.py`、`frontend/src/modules/shopee/ShopeePage.tsx`、`frontend/src/modules/shopee/views/BuyerCentreView.tsx`、`docs/设计文档/56-Shopee买家中心展示上架商品前后端数据库Redis实现设计.md`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：新增 `GET /shopee/runs/{run_id}/buyer-centre/products` 买家中心商品列表接口，按当前 run/user 查询 `live` 主商品，返回主商品 ID、标题、类目、主图、主商品价格口径、主商品销量、主商品库存、评分/评价占位和分页信息；首页主图只读取 `shopee_listings.cover_url` 或主商品图片表封面图，不使用变体图兜底；`BuyerCentreView.tsx` 从静态 `mockProducts` 切换为接口数据，接入搜索、类目筛选和分页，保留现有橙色顶部、搜索框、类目 Tab、5 列商品卡和返回卖家中心布局；`ShopeePage.tsx` 向买家中心传入 `runId/readOnly`；商品创建、草稿发布/编辑发布、批量下架/删除后会失效买家中心商品列表缓存。
+  - 影响范围：影响 `/shopee/buyer-centre` 的商品数据来源与筛选分页交互；不新增数据库表字段，不实现商品详情、购物车、下单、收藏或买家主动咨询。
+
+- 新增 Shopee 买家中心展示上架商品前后端数据库 Redis 实现设计文档。
+  - 涉及文件：`docs/设计文档/56-Shopee买家中心展示上架商品前后端数据库Redis实现设计.md`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：基于当前 `BuyerCentreView.tsx` 买家中心前端界面，设计将静态 `mockProducts` 替换为当前对局当前用户已上架 `live` 主商品列表；要求保留现有橙色顶部、搜索框、类目 Tab、5 列商品卡、分页和返回卖家中心布局，不修改样式与布局；定义 `GET /shopee/runs/{run_id}/buyer-centre/products` 商品列表接口，支持关键字、类目和分页查询；明确首页商品卡片必须按主商品维度展示主商品主图、标题、价格口径、销量、评分/评价数占位和 TOP 排名，不展开变体，不读取变体图片或变体信息作为卡片主体；设计 Redis 短 TTL 列表缓存与商品发布、编辑、下架、订单销量变化、库存变化后的失效时机。
+  - 影响范围：仅新增后续实现设计与进度记录；本次不修改前端界面、后端接口、数据库结构或 Redis 代码。
+
+## 2026-05-13
+
+### 新增
+- 新增 Shopee 买家中心空白页入口。
+  - 涉及文件：`frontend/src/modules/shopee/ShopeePage.tsx`、`frontend/src/modules/shopee/components/Header.tsx`、`frontend/src/modules/shopee/views/BuyerCentreView.tsx`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：顶部栏“买家中心”按钮接入 `buyer-centre` 视图并跳转 `/shopee/buyer-centre`；买家中心页面右上角“返回卖家中心”按钮复用卖家中心导航回到 `/shopee`；该视图独立于 Shopee 卖家中心框架，不包含卖家中心顶部栏、左侧栏、右侧栏、通知抽屉或客服抽屉。
+  - 影响范围：仅影响 Shopee 前端买家中心入口；不涉及后端接口、数据库或 Redis。
+  - 验证结果：`npm --prefix frontend run lint` 失败于既有依赖 `node_modules/lucide-react/dist/lucide-react.d.ts` 的 `TS1010: '*/' expected`；本次改动文件 `ShopeePage.tsx`、`Header.tsx`、`BuyerCentreView.tsx` 的 LSP error diagnostics 均无错误。
+
+### 新增
+- 实现 Shopee 运费促销编辑与结束。
+  - 涉及文件：`backend/apps/api-gateway/app/api/routes/shopee.py`、`frontend/src/modules/shopee/ShopeePage.tsx`、`frontend/src/modules/shopee/components/Header.tsx`、`frontend/src/modules/shopee/components/DateTimePicker.tsx`、`frontend/src/modules/shopee/views/ShippingFeePromotionView.tsx`、`frontend/src/modules/shopee/views/ShippingFeePromotionCreateView.tsx`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：新增运费促销详情/bootstrap、更新活动和手动结束活动接口；创建页表单复用为编辑页并支持 `/shopee/marketing/shipping-fee-promotion/update?id={promotion_id}` 回填保存；列表页 `编辑` 按状态可用并跳转编辑页，`结束` 二次确认后调用结束接口并刷新列表；Header 面包屑新增编辑运费促销层级；日期时间选择器新增禁用态，确保不可编辑活动直达编辑页时日期也不能被本地修改。
+  - 游戏时间口径：编辑校验、状态判断和进行中活动结束时间校验使用当前对局游戏时间；进行中活动编辑保留原开始时间。
+  - 影响范围：影响 Shopee 运费促销列表、创建/编辑表单、活动详情/更新/结束接口和订单模拟可用活动缓存失效；不新增数据库字段，手动结束复用活动主表 `status=stopped`。
+  - 验证结果：`python3 -m py_compile backend/apps/api-gateway/app/api/routes/shopee.py` 通过；`npm --prefix frontend run build` 通过；`git diff --check` 通过。Vite 构建存在既有 chunk 体积警告。
+
+### 新增
+- 新增 Shopee 运费促销编辑与结束前后端数据库 Redis 实现设计文档。
+  - 涉及文件：`docs/设计文档/55-Shopee运费促销编辑与结束前后端数据库Redis实现设计.md`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：设计 `/shopee/marketing/shipping-fee-promotion` 列表操作列的 `编辑` 与 `结束` 能力；新增 `/shopee/marketing/shipping-fee-promotion/update` 编辑路由口径，要求页面与创建页布局一致并回填已创建活动内容；定义活动详情/bootstrap、更新活动和手动结束活动接口；明确编辑和结束后的 Redis 列表缓存、详情缓存与订单模拟可用活动缓存失效；规定编辑与结束只影响后续新订单，不回写历史订单促销快照、结算和统计。
+  - 游戏时间口径：活动编辑校验、状态判断与手动结束时间均使用对局游戏时间；真实世界时间只可作为审计更新时间，不参与业务判断。
+  - 影响范围：仅新增后续实现设计与进度记录；本次不修改前端路由、后端接口、数据库结构或 Redis 代码。
+
+### 新增
+- 实现 Shopee 签收破损退款客服首版。
+  - 涉及文件：`backend/apps/api-gateway/app/api/routes/shopee.py`、`frontend/src/modules/shopee/components/ChatDetailWindow.tsx`、`frontend/src/modules/shopee/views/CustomerServiceWebView.tsx`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：新增 `delivered_damage_refund` 客服剧本 seed；在 running 对局中扫描已签收/已完成且有签收时间或 delivered 物流轨迹的订单，按签收后 2-48 游戏小时窗口、未处理会话上限、每日上限、同订单同剧本去重、模型 ready、场景 enabled 和金额/数量/易碎关键词/远距离/低耐心等风险因子创建签收破损退款会话；写入 `delivered_damage_reported` 售后事件上下文、订单商品快照、破损类型、严重度和证据提示；新增买家首问与后续追问 prompt；结束会话时不展示数值满意度，改为输出七类处理方式之一、点评和建议；售前商品咨询和物流催单结束后在满意度下方展示点评与建议；触发失败时回滚并记录日志，不阻断订单列表/详情/物流读取，未成功创建时释放订单锁以便后续重试；前端签收破损会话标签展示为对应场景名；右侧客服抽屉与网页版客服界面“无订单咨询”仅统计 `product_detail_inquiry` 售前商品咨询，不计入物流催单和签收破损退款，分组红点按各自未读口径显示；网页版“无订单咨询”包含已结束的售前商品咨询，不再只看 open 会话；客服发送消息时按上一条消息时间递增写入，避免同一游戏时间内连续回复排序错位；客服详情接口新增 `order_context` 透传会话关联订单上下文，网页版客服右侧“订单”Tab 展示物流停滞催单对应买家的运输中订单、物流渠道、追踪号、预计送达、最新物流节点、停滞游戏小时和商品明细；物流停滞催单后续买家消息 prompt 改为仅在卖家回复笼统时追问具体物流，卖家已提供已揽收、准备运送、运输中、派送中等明确节点并承诺送达时间或后续跟进后，会表达理解、等待或轻微担心，不再像物流审计一样连续追问更细节点。
+  - 游戏时间口径：签收后窗口、售后事件生成时间、会话消息时间、关闭时间和每日上限均使用对局游戏时间；真实世界时间不参与签收破损触发判断。
+  - 影响范围：影响 Shopee 客服自动触发、会话消息生成、结束点评展示和客服网页版会话列表范围；不新增数据库表字段，不实现真实退款、退货、补发、资金或订单状态变更。
+
+### 新增
+- 新增 Shopee 签收破损退款前后端数据库 Redis 实现设计文档。
+  - 涉及文件：`docs/设计文档/54-Shopee签收破损退款前后端数据库Redis实现设计.md`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：设计虚拟客服第三个案例 `delivered_damage_refund`，明确签收破损退款必须由真实订单签收流程驱动；订单写入 `delivered_at` 或 delivered 物流轨迹后，在签收后 2-48 游戏小时窗口内进入售后观察窗口；系统不是识别图片破损，而是在签收事实基础上按商品、物流、金额、买家画像和随机种子生成 `delivered_damage_reported` 售后异常模拟事件，再由该事件创建签收破损退款客服会话；补充订单/商品/破损上下文快照、Redis 触发锁、同订单去重、未处理会话上限、买家边界、学生合规回复边界、处理方式归类、点评建议和验收标准；明确首版只做沟通与点评，不展示分数，不自动执行退款、退货或补发。
+  - 游戏时间口径：签收后等待时长、售后有效窗口、会话消息时间、评分时间和每日上限均使用对局游戏时间；真实世界时间只可用于 worker 调度频率，不参与业务判断。
+  - 影响范围：仅新增后续实现设计与进度记录；本次不修改前端接口、后端接口、数据库结构、Redis 代码或客服页面样式。
+
+### 调整
+- 实现 Shopee 客服会话已读红点闭环。
+  - 涉及文件：`backend/apps/api-gateway/app/models.py`、`backend/apps/api-gateway/app/db.py`、`backend/apps/api-gateway/app/api/routes/shopee.py`、`frontend/src/modules/shopee/ShopeePage.tsx`、`frontend/src/modules/shopee/components/ChatMessagesDrawer.tsx`、`frontend/src/modules/shopee/components/ChatDetailWindow.tsx`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：客服会话新增 `last_read_game_at` 已读游戏时间字段与历史库保障；新增会话标记已读接口；会话列表 `unread_count` 改为只统计最后已读游戏时间之后的买家消息；Chat 抽屉打开会话详情后自动标记已读并刷新抽屉红点和右侧 Chat Messages 数量徽标；右侧客服入口数量从未处理会话总数改为未读买家消息数合计。
+  - 游戏时间口径：标记已读使用当前对局游戏时间；卖家发送后自动生成的买家回复时间晚于卖家消息 1 秒，确保已读后新买家回复会重新计入未读。
+  - 影响范围：影响 Shopee 客服会话列表未读数、Chat 抽屉内部红点和右侧 Chat Messages 数量徽标；不改变客服触发概率、评分规则或页面布局。
+  - 验证结果：`python -m py_compile backend/apps/api-gateway/app/models.py backend/apps/api-gateway/app/db.py backend/apps/api-gateway/app/api/routes/shopee.py` 通过；`npm --prefix frontend run build` 通过。
+
+- 统一 Shopee 右侧客服入口数量徽标。
+  - 涉及文件：`frontend/src/modules/shopee/ShopeePage.tsx`、`frontend/src/modules/shopee/components/RightSidebar.tsx`、`frontend/src/modules/shopee/components/ChatMessagesDrawer.tsx`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：右侧 Chat Messages 客服入口新增与通知入口一致的红色数量徽标样式，包含位置、颜色、字号、边框、最小宽度和 `99+` 截断；Shopee 页面层加载客服未处理会话数量并传入右侧入口；Chat 抽屉会话列表改为读取全部客服剧本，避免物流停滞催单等新会话有数量但列表不可见；抽屉内部“与买家聊天”“今日接待”“全部聊天”红点改为仅在接口返回 `unread_count > 0` 时显示。
+  - 影响范围：影响 Shopee 右侧客服入口未处理会话数量展示、Chat 抽屉会话列表数据范围和抽屉内部未读红点显示；不改变后端接口、数据库结构或客服评分逻辑。
+  - 验证结果：`npm --prefix frontend run build` 通过。
+
+### 新增
+- 实现 Shopee 物流停滞催单后端 V1。
+  - 涉及文件：`backend/apps/api-gateway/app/api/routes/shopee.py`、`docs/设计文档/53-Shopee物流停滞催单前后端数据库Redis实现设计.md`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：新增 `logistics_stalled_urge` 客服剧本 seed；实现运输中订单物流停滞扫描、订单物流上下文快照、首条买家催单消息生成、后续买家追问 prompt 分支和物流催单满意度评分 rubric；扫描接入订单列表、订单详情和订单物流详情刷新路径，在物流按游戏时间推进后判断是否触发；同订单同剧本通过 `order_id/scenario_code` 去重，并使用 run/user 级与订单级 Redis 触发锁减少并发超额或重复创建。
+  - 游戏时间口径：停滞时长按当前对局游戏时间与最后物流轨迹 `event_time` 计算，无轨迹时用 `shipped_at` 兜底；ETA 超时、每日上限、消息时间和评分时间均继续使用对局游戏时间，不引入真实世界当前时间作为业务判断。
+  - 影响范围：影响 running 对局中已发货运输中订单自动生成客服会话，以及客服发送消息和结束评分时的物流催单场景 prompt；不新增数据库表，不调整前端样式布局。
+  - 验证结果：`python -m py_compile backend/apps/api-gateway/app/api/routes/shopee.py` 通过。
+
+- 新增 Shopee 物流停滞催单前后端数据库 Redis 实现设计文档。
+  - 涉及文件：`docs/设计文档/53-Shopee物流停滞催单前后端数据库Redis实现设计.md`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：设计虚拟客服第二个案例 `logistics_stalled_urge`，明确催单事件必须由真实运输流程驱动：订单已发货并进入运输中、物流轨迹按游戏时间推进后长时间停滞，才进入催单判断；复用现有订单、物流轨迹、客服通用表、客服消息接口、LLM 买家扮演和 Redis 缓存；补充订单与物流上下文快照、触发锁、待触发候选、评分维度和验收标准。
+  - 游戏时间口径：物流停滞判断、ETA 比较、会话消息时间、评分时间和每日上限均使用对局游戏时间；真实世界时间只可用于 worker 调度频率，不使用浏览器或服务器真实当前时间参与业务判断。
+  - 影响范围：仅新增后续实现设计与进度记录；本次不修改前端接口、后端接口、数据库结构、Redis 代码或客服页面样式。
+
+### 调整
+- 调整 Shopee 客服会话消息上限。
+  - 涉及文件：`backend/apps/api-gateway/app/api/routes/shopee.py`、`docs/设计文档/52-Shopee售前商品细节追问前后端数据库Redis实现设计.md`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：将单个客服会话消息上限从 10 条调整为 50 条，并同步后端达到上限时的错误提示和设计文档对话轮次口径；推荐 7 条的标准售前训练节奏保持不变。
+  - 影响范围：影响 Shopee 客服会话 `can_send` 的禁用阈值和继续生成买家回复的上限；不改变客服接口路径、数据库结构、模型配置或评分规则。
+  - 验证结果：`python -m py_compile backend/apps/api-gateway/app/api/routes/shopee.py` 通过；`npm --prefix frontend run build` 通过；已检查客服代码和文档无旧上限口径残留。
+
+- 统一 Shopee 客服抽屉买家首字母头像。
+  - 涉及文件：`frontend/src/modules/shopee/components/ChatMessagesDrawer.tsx`、`frontend/src/modules/shopee/components/ChatDetailWindow.tsx`、`docs/当前进度.md`、`docs/change-log.md`
+  - 修改内容：将右侧 Chat 抽屉会话列表和详情浮窗顶部的买家头像 fallback 从黑色圆点改为灰底白字首字母头像，与客服网页版列表保持一致。
+  - 影响范围：仅影响 Shopee 客服抽屉中无头像 URL 的买家头像展示；不改变接口、数据库、会话逻辑或客服评分规则。
+  - 验证结果：`npm --prefix frontend run build` 通过；未做浏览器视觉复核。
 
 ## 2026-05-12
 
@@ -45,7 +142,7 @@
 
 - 新增 Shopee 售前商品细节追问前后端数据库 Redis 实现设计文档。
   - 涉及文件：`docs/设计文档/52-Shopee售前商品细节追问前后端数据库Redis实现设计.md`、`docs/当前进度.md`、`docs/change-log.md`
-  - 修改内容：在虚拟客服 MVP 总设计基础上，单独拆出售前商品细节追问实现设计；明确商品上架后按游戏时间延迟、质量分、规格复杂度、描述完整度、概率、去重和未处理会话上限创建客服会话；设计会话列表、详情、发送消息、结束评分接口复用口径；补充 Redis 列表/详情缓存、商品触发锁、LLM 限流和模型配置缓存；定义商品准确性、响应完整度、服务态度、购买引导和平台合规评分重点；补充商品细节追问对话轮次为最少 5 条、推荐 7 条、最多 10 条消息；补充买家/LLM 复用我的产品商品详情、主图/图片 URL、AI 商品质量评分和 AI 主图/内容评分明细的上下文口径。
+  - 修改内容：在虚拟客服 MVP 总设计基础上，单独拆出售前商品细节追问实现设计；明确商品上架后按游戏时间延迟、质量分、规格复杂度、描述完整度、概率、去重和未处理会话上限创建客服会话；设计会话列表、详情、发送消息、结束评分接口复用口径；补充 Redis 列表/详情缓存、商品触发锁、LLM 限流和模型配置缓存；定义商品准确性、响应完整度、服务态度、购买引导和平台合规评分重点；补充商品细节追问对话轮次为最少 5 条、推荐 7 条、最多 50 条消息；补充买家/LLM 复用我的产品商品详情、主图/图片 URL、AI 商品质量评分和 AI 主图/内容评分明细的上下文口径。
   - 游戏时间口径：商品上架后的触发延迟、候选有效期、每日上限、消息时间和评分时间均使用对局游戏时间，不使用真实世界当前时间。
   - 影响范围：仅新增后续实现设计与进度记录；本次不修改前端样式布局、后端接口、数据库结构或 Redis 代码。
 

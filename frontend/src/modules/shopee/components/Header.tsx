@@ -1,4 +1,4 @@
-import { BookOpen, ArrowLeft } from 'lucide-react';
+import { ShoppingCart, ArrowLeft } from 'lucide-react';
 import shopeeLogo from '../assets/shopee-logo.svg';
 
 type VoucherDetailType = 'shop_voucher' | 'product_voucher' | 'private_voucher' | 'live_voucher' | 'video_voucher' | 'follow_voucher';
@@ -17,8 +17,8 @@ interface HeaderProps {
   runId: number | null;
   onBackToSetup: () => void;
   onBackToDashboard: () => void;
-  onNavigateToView: (view: 'dashboard' | 'my-orders' | 'my-products' | 'new-product' | 'my-income' | 'my-balance' | 'bank-accounts' | 'customer-service-web' | 'customer-service-chat-management' | 'customer-service-auto-reply' | 'customer-service-quick-reply' | 'customer-service-quick-reply-create' | 'customer-service-quick-reply-edit' | 'marketing-centre' | 'marketing-discount' | 'marketing-discount-create' | 'marketing-discount-detail' | 'marketing-discount-data' | 'marketing-addon-orders' | 'marketing-bundle-orders' | 'marketing-shop-flash-sale' | 'marketing-shop-flash-sale-create' | 'marketing-shop-flash-sale-detail' | 'marketing-shop-flash-sale-data' | 'marketing-shopee-ads' | 'marketing-shipping-fee-promotion' | 'marketing-shipping-fee-promotion-create' | 'marketing-vouchers' | 'marketing-voucher-create' | 'marketing-private-voucher-create' | 'marketing-live-voucher-create' | 'marketing-video-voucher-create' | 'marketing-follow-voucher-create' | 'marketing-product-voucher-create' | 'marketing-voucher-detail' | 'marketing-voucher-orders') => void;
-  activeView: 'dashboard' | 'my-orders' | 'my-products' | 'new-product' | 'my-income' | 'my-balance' | 'bank-accounts' | 'customer-service-web' | 'customer-service-chat-management' | 'customer-service-auto-reply' | 'customer-service-quick-reply' | 'customer-service-quick-reply-create' | 'customer-service-quick-reply-edit' | 'marketing-centre' | 'marketing-discount' | 'marketing-discount-create' | 'marketing-discount-detail' | 'marketing-discount-data' | 'marketing-addon-orders' | 'marketing-bundle-orders' | 'marketing-shop-flash-sale' | 'marketing-shop-flash-sale-create' | 'marketing-shop-flash-sale-detail' | 'marketing-shop-flash-sale-data' | 'marketing-shopee-ads' | 'marketing-shipping-fee-promotion' | 'marketing-shipping-fee-promotion-create' | 'marketing-vouchers' | 'marketing-voucher-create' | 'marketing-private-voucher-create' | 'marketing-live-voucher-create' | 'marketing-video-voucher-create' | 'marketing-follow-voucher-create' | 'marketing-product-voucher-create' | 'marketing-voucher-detail' | 'marketing-voucher-orders';
+  onNavigateToView: (view: 'dashboard' | 'buyer-centre' | 'my-orders' | 'my-products' | 'new-product' | 'my-income' | 'my-balance' | 'bank-accounts' | 'customer-service-web' | 'customer-service-chat-management' | 'customer-service-auto-reply' | 'customer-service-quick-reply' | 'customer-service-quick-reply-create' | 'customer-service-quick-reply-edit' | 'marketing-centre' | 'marketing-discount' | 'marketing-discount-create' | 'marketing-discount-detail' | 'marketing-discount-data' | 'marketing-addon-orders' | 'marketing-bundle-orders' | 'marketing-shop-flash-sale' | 'marketing-shop-flash-sale-create' | 'marketing-shop-flash-sale-detail' | 'marketing-shop-flash-sale-data' | 'marketing-shopee-ads' | 'marketing-shipping-fee-promotion' | 'marketing-shipping-fee-promotion-create' | 'marketing-shipping-fee-promotion-update' | 'marketing-vouchers' | 'marketing-voucher-create' | 'marketing-private-voucher-create' | 'marketing-live-voucher-create' | 'marketing-video-voucher-create' | 'marketing-follow-voucher-create' | 'marketing-product-voucher-create' | 'marketing-voucher-detail' | 'marketing-voucher-orders') => void;
+  activeView: 'dashboard' | 'buyer-centre' | 'my-orders' | 'my-products' | 'new-product' | 'my-income' | 'my-balance' | 'bank-accounts' | 'customer-service-web' | 'customer-service-chat-management' | 'customer-service-auto-reply' | 'customer-service-quick-reply' | 'customer-service-quick-reply-create' | 'customer-service-quick-reply-edit' | 'marketing-centre' | 'marketing-discount' | 'marketing-discount-create' | 'marketing-discount-detail' | 'marketing-discount-data' | 'marketing-addon-orders' | 'marketing-bundle-orders' | 'marketing-shop-flash-sale' | 'marketing-shop-flash-sale-create' | 'marketing-shop-flash-sale-detail' | 'marketing-shop-flash-sale-data' | 'marketing-shopee-ads' | 'marketing-shipping-fee-promotion' | 'marketing-shipping-fee-promotion-create' | 'marketing-shipping-fee-promotion-update' | 'marketing-vouchers' | 'marketing-voucher-create' | 'marketing-private-voucher-create' | 'marketing-live-voucher-create' | 'marketing-video-voucher-create' | 'marketing-follow-voucher-create' | 'marketing-product-voucher-create' | 'marketing-voucher-detail' | 'marketing-voucher-orders';
   voucherDetailType?: string;
   marketingCreateType?: 'discount' | 'bundle' | 'add_on';
   isOrderDetail?: boolean;
@@ -126,7 +126,7 @@ export default function Header({
         </div>
       );
     }
-    if (activeView === 'marketing-shopee-ads' || activeView === 'marketing-shipping-fee-promotion' || activeView === 'marketing-shipping-fee-promotion-create' || activeView === 'marketing-vouchers' || activeView === 'marketing-voucher-create' || activeView === 'marketing-private-voucher-create' || activeView === 'marketing-live-voucher-create' || activeView === 'marketing-video-voucher-create' || activeView === 'marketing-follow-voucher-create' || activeView === 'marketing-product-voucher-create' || activeView === 'marketing-voucher-detail' || activeView === 'marketing-voucher-orders') {
+    if (activeView === 'marketing-shopee-ads' || activeView === 'marketing-shipping-fee-promotion' || activeView === 'marketing-shipping-fee-promotion-create' || activeView === 'marketing-shipping-fee-promotion-update' || activeView === 'marketing-vouchers' || activeView === 'marketing-voucher-create' || activeView === 'marketing-private-voucher-create' || activeView === 'marketing-live-voucher-create' || activeView === 'marketing-video-voucher-create' || activeView === 'marketing-follow-voucher-create' || activeView === 'marketing-product-voucher-create' || activeView === 'marketing-voucher-detail' || activeView === 'marketing-voucher-orders') {
       return (
         <div className="flex items-center gap-2 text-[14px]">
           <span className="text-gray-300">{'>'}</span>
@@ -140,15 +140,15 @@ export default function Header({
           <span className="text-gray-300">{'>'}</span>
           <button
             type="button"
-            onClick={() => onNavigateToView(activeView === 'marketing-shipping-fee-promotion-create' ? 'marketing-shipping-fee-promotion' : activeView === 'marketing-voucher-create' || activeView === 'marketing-private-voucher-create' || activeView === 'marketing-live-voucher-create' || activeView === 'marketing-video-voucher-create' || activeView === 'marketing-follow-voucher-create' || activeView === 'marketing-product-voucher-create' || activeView === 'marketing-voucher-detail' || activeView === 'marketing-voucher-orders' ? 'marketing-vouchers' : activeView)}
+            onClick={() => onNavigateToView(activeView === 'marketing-shipping-fee-promotion-create' || activeView === 'marketing-shipping-fee-promotion-update' ? 'marketing-shipping-fee-promotion' : activeView === 'marketing-voucher-create' || activeView === 'marketing-private-voucher-create' || activeView === 'marketing-live-voucher-create' || activeView === 'marketing-video-voucher-create' || activeView === 'marketing-follow-voucher-create' || activeView === 'marketing-product-voucher-create' || activeView === 'marketing-voucher-detail' || activeView === 'marketing-voucher-orders' ? 'marketing-vouchers' : activeView)}
             className="text-gray-700 hover:text-[#ee4d2d]"
           >
-            {activeView === 'marketing-shopee-ads' ? 'Shopee 广告' : activeView === 'marketing-shipping-fee-promotion' || activeView === 'marketing-shipping-fee-promotion-create' ? '运费促销' : '代金券'}
+            {activeView === 'marketing-shopee-ads' ? 'Shopee 广告' : activeView === 'marketing-shipping-fee-promotion' || activeView === 'marketing-shipping-fee-promotion-create' || activeView === 'marketing-shipping-fee-promotion-update' ? '运费促销' : '代金券'}
           </button>
-          {activeView === 'marketing-shipping-fee-promotion-create' ? (
+          {activeView === 'marketing-shipping-fee-promotion-create' || activeView === 'marketing-shipping-fee-promotion-update' ? (
             <>
               <span className="text-gray-300">{'>'}</span>
-              <span className="text-gray-700">创建运费促销</span>
+              <span className="text-gray-700">{activeView === 'marketing-shipping-fee-promotion-update' ? '编辑运费促销' : '创建运费促销'}</span>
             </>
           ) : activeView === 'marketing-voucher-create' || activeView === 'marketing-private-voucher-create' || activeView === 'marketing-live-voucher-create' || activeView === 'marketing-video-voucher-create' || activeView === 'marketing-follow-voucher-create' || activeView === 'marketing-product-voucher-create' || activeView === 'marketing-voucher-detail' || activeView === 'marketing-voucher-orders' ? (
             <>
@@ -277,24 +277,15 @@ export default function Header({
       </div>
       
       <div className="flex items-center gap-6">
-        <div className="flex items-center gap-4 text-gray-500">
-          <button className="hover:text-[#ee4d2d] cursor-pointer">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <rect width="7" height="7" x="3" y="3" rx="1" />
-              <rect width="7" height="7" x="14" y="3" rx="1" />
-              <rect width="7" height="7" x="14" y="14" rx="1" />
-              <rect width="7" height="7" x="3" y="14" rx="1" />
-            </svg>
-          </button>
-          <button className="hover:text-[#ee4d2d] cursor-pointer">
-            <BookOpen size={20} />
-          </button>
-        </div>
-        
+        <button
+          type="button"
+          onClick={() => onNavigateToView('buyer-centre')}
+          className="inline-flex items-center gap-1 rounded-full border border-slate-200 px-3 py-1.5 text-[12px] font-semibold text-slate-700 hover:bg-slate-50"
+        >
+          <ShoppingCart size={14} />
+          买家中心
+        </button>
         <div className="h-6 w-[1px] bg-gray-200"></div>
-        
-        <div className="h-6 w-[1px] bg-gray-200"></div>
-
         <button
           type="button"
           onClick={onBackToSetup}

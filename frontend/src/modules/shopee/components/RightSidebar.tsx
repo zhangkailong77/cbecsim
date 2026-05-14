@@ -4,11 +4,14 @@ interface RightSidebarProps {
   onToggleNotification: () => void;
   onToggleChatMessages: () => void;
   notificationCount: number;
+  chatUnreadCount: number;
 }
 
-export default function RightSidebar({ notificationOpen, chatMessagesOpen, onToggleNotification, onToggleChatMessages, notificationCount }: RightSidebarProps) {
+export default function RightSidebar({ notificationOpen, chatMessagesOpen, onToggleNotification, onToggleChatMessages, notificationCount, chatUnreadCount }: RightSidebarProps) {
   const showBadge = notificationCount > 0;
   const badgeText = notificationCount > 99 ? '99+' : String(notificationCount);
+  const showChatBadge = chatUnreadCount > 0;
+  const chatBadgeText = chatUnreadCount > 99 ? '99+' : String(chatUnreadCount);
   return (
     <div className="w-[60px] bg-white border-l border-gray-200 h-full flex flex-col items-center py-8 gap-8 flex-shrink-0">
       {/* Notification Bell */}
@@ -65,6 +68,11 @@ export default function RightSidebar({ notificationOpen, chatMessagesOpen, onTog
             />
           </svg>
         </div>
+        {showChatBadge ? (
+          <span className="absolute -top-1 -right-2 bg-[#ee4d2d] text-white text-[10px] font-bold px-1 rounded-full border border-white min-w-[20px] text-center">
+            {chatBadgeText}
+          </span>
+        ) : null}
       </button>
     </div>
   );
